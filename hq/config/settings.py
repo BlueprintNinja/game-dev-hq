@@ -506,20 +506,9 @@ if RUNNING_TESTS:
 
     _enforce_warning_policy(BASE_DIR)
 
-    # Tests upload receipts and write exports as real files. Without this they
-    # landed in var/ inside the working tree. One directory each per run, made by
-    # the process that starts it and inherited by parallel workers through the
-    # environment, removed when the run ends. An explicit setting still wins.
-    import atexit as _atexit
-    import shutil as _shutil
+    from hq.config.sandbox import isolate as _isolate_test_run
 
-    for _variable, _kind in (
-        ("SEVERINO_MEDIA_ROOT", "media"),
-        ("SEVERINO_EXPORTS_ROOT", "exports"),
-    ):
-        if _variable not in os.environ:
-            os.environ[_variable] = tempfile.mkdtemp(prefix=f"severino-test-{_kind}-")
-            _atexit.register(_shutil.rmtree, os.environ[_variable], True)
+    _isolate_test_run()
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -708,6 +697,7 @@ SEVERINO_REQUEST_PATH_SECONDS = env_int("SEVERINO_REQUEST_PATH_SECONDS", 300)
 # Where HQ leaves each marker. The doorbell has to be somewhere the host can
 # watch; the in-use marker is read only by HQ and defaults beside the database.
 SEVERINO_CONTROLLER_DOORBELL = os.environ.get("SEVERINO_CONTROLLER_DOORBELL", "")
+SEVERINO_CONTROLLER_HEARTBEAT = os.environ.get("SEVERINO_CONTROLLER_HEARTBEAT", "")
 SEVERINO_ACTIVITY_MARKER = os.environ.get("SEVERINO_ACTIVITY_MARKER", "")
 # The Unix socket the controller bridge is served on, in a directory only this
 # account can enter. Unset, the process serves no bridge; set, it serves one or

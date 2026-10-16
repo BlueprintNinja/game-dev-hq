@@ -65,34 +65,6 @@ version = "0.10.8"
 backend = "github:DeusData/codebase-memory-mcp"
 specifiers = ["0.10.8"]
 
-[tools."github:DeusData/codebase-memory-mcp".options]
-asset_pattern = "codebase-memory-mcp-linux-arm64-portable.tar.gz"
-
-[tools."github:DeusData/codebase-memory-mcp"."platforms.linux-arm64"]
-checksum = "sha256:5697d986d9716c913163b4bff7b3a294287f3b843e993bc1ff71e78dcdc21781"
-url = "https://github.com/DeusData/codebase-memory-mcp/releases/download/v0.10.8/codebase-memory-mcp-linux-arm64-portable.tar.gz"
-url_api = "https://api.github.com/repos/DeusData/codebase-memory-mcp/releases/assets/520282427"
-provenance = "github-attestations"
-
-[[tools."github:DeusData/codebase-memory-mcp"]]
-version = "0.10.8"
-backend = "github:DeusData/codebase-memory-mcp"
-specifiers = ["0.10.8"]
-
-[tools."github:DeusData/codebase-memory-mcp".options]
-asset_pattern = "codebase-memory-mcp-linux-amd64-portable.tar.gz"
-
-[tools."github:DeusData/codebase-memory-mcp"."platforms.linux-x64"]
-checksum = "sha256:6eef49652bc0c7820f43114125044d40bf7f4d97c11b2592f6b0f6a307702325"
-url = "https://github.com/DeusData/codebase-memory-mcp/releases/download/v0.10.8/codebase-memory-mcp-linux-amd64-portable.tar.gz"
-url_api = "https://api.github.com/repos/DeusData/codebase-memory-mcp/releases/assets/520282432"
-provenance = "github-attestations"
-
-[[tools."github:DeusData/codebase-memory-mcp"]]
-version = "0.10.8"
-backend = "github:DeusData/codebase-memory-mcp"
-specifiers = ["0.10.8"]
-
 [tools."github:DeusData/codebase-memory-mcp"."platforms.macos-arm64"]
 checksum = "sha256:9bd840dfb3ec7eaef4f310382057adaa5b0e904df883104d03ffcf39836afd07"
 url = "https://github.com/DeusData/codebase-memory-mcp/releases/download/v0.10.8/codebase-memory-mcp-darwin-arm64.tar.gz"
@@ -105,33 +77,30 @@ url = "https://github.com/DeusData/codebase-memory-mcp/releases/download/v0.10.8
 url_api = "https://api.github.com/repos/DeusData/codebase-memory-mcp/releases/assets/520282435"
 provenance = "github-attestations"
 
-[[tools."github:github/codeql-action"]]
-version = "2.26.4"
-backend = "github:github/codeql-action"
-specifiers = ["2.26.4"]
+[[tools."github:DeusData/codebase-memory-mcp"]]
+version = "0.10.8"
+backend = "github:DeusData/codebase-memory-mcp"
 
-[tools."github:github/codeql-action".options]
-version_prefix = "codeql-bundle-v"
+[tools."github:DeusData/codebase-memory-mcp".options]
+asset_pattern = "codebase-memory-mcp-linux-arm64-portable.tar.gz"
 
-[tools."github:github/codeql-action"."platforms.linux-arm64"]
-checksum = "sha256:a9872c9075f85374a8d03546263c6dc01fde50a29baea9fc08dcc6b25cc2efd5"
-url = "https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.26.4/codeql-bundle-linux64.tar.zst"
-url_api = "https://api.github.com/repos/github/codeql-action/releases/assets/523665811"
+[tools."github:DeusData/codebase-memory-mcp"."platforms.linux-arm64"]
+checksum = "sha256:5697d986d9716c913163b4bff7b3a294287f3b843e993bc1ff71e78dcdc21781"
+url = "https://github.com/DeusData/codebase-memory-mcp/releases/download/v0.10.8/codebase-memory-mcp-linux-arm64-portable.tar.gz"
+url_api = "https://api.github.com/repos/DeusData/codebase-memory-mcp/releases/assets/520282427"
 provenance = "github-attestations"
 
-[[tools."github:github/codeql-action"]]
-version = "2.26.4"
-backend = "github:github/codeql-action"
-specifiers = ["2.26.4"]
+[[tools."github:DeusData/codebase-memory-mcp"]]
+version = "0.10.8"
+backend = "github:DeusData/codebase-memory-mcp"
 
-[tools."github:github/codeql-action".options]
-asset_pattern = "codeql-bundle-linux64.tar.zst"
-version_prefix = "codeql-bundle-v"
+[tools."github:DeusData/codebase-memory-mcp".options]
+asset_pattern = "codebase-memory-mcp-linux-amd64-portable.tar.gz"
 
-[tools."github:github/codeql-action"."platforms.linux-x64"]
-checksum = "sha256:a9872c9075f85374a8d03546263c6dc01fde50a29baea9fc08dcc6b25cc2efd5"
-url = "https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.26.4/codeql-bundle-linux64.tar.zst"
-url_api = "https://api.github.com/repos/github/codeql-action/releases/assets/523665811"
+[tools."github:DeusData/codebase-memory-mcp"."platforms.linux-x64"]
+checksum = "sha256:6eef49652bc0c7820f43114125044d40bf7f4d97c11b2592f6b0f6a307702325"
+url = "https://github.com/DeusData/codebase-memory-mcp/releases/download/v0.10.8/codebase-memory-mcp-linux-amd64-portable.tar.gz"
+url_api = "https://api.github.com/repos/DeusData/codebase-memory-mcp/releases/assets/520282432"
 provenance = "github-attestations"
 
 [[tools."github:github/codeql-action"]]
@@ -153,6 +122,33 @@ provenance = "github-attestations"
 checksum = "sha256:546ab3318398602ca1861253ea3b772a3f76512476938e8f03a0c0adf07e0ef7"
 url = "https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.26.4/codeql-bundle-osx64.tar.zst"
 url_api = "https://api.github.com/repos/github/codeql-action/releases/assets/523666465"
+provenance = "github-attestations"
+
+[[tools."github:github/codeql-action"]]
+version = "2.26.4"
+backend = "github:github/codeql-action"
+
+[tools."github:github/codeql-action".options]
+version_prefix = "codeql-bundle-v"
+
+[tools."github:github/codeql-action"."platforms.linux-arm64"]
+checksum = "sha256:a9872c9075f85374a8d03546263c6dc01fde50a29baea9fc08dcc6b25cc2efd5"
+url = "https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.26.4/codeql-bundle-linux64.tar.zst"
+url_api = "https://api.github.com/repos/github/codeql-action/releases/assets/523665811"
+provenance = "github-attestations"
+
+[[tools."github:github/codeql-action"]]
+version = "2.26.4"
+backend = "github:github/codeql-action"
+
+[tools."github:github/codeql-action".options]
+asset_pattern = "codeql-bundle-linux64.tar.zst"
+version_prefix = "codeql-bundle-v"
+
+[tools."github:github/codeql-action"."platforms.linux-x64"]
+checksum = "sha256:a9872c9075f85374a8d03546263c6dc01fde50a29baea9fc08dcc6b25cc2efd5"
+url = "https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.26.4/codeql-bundle-linux64.tar.zst"
+url_api = "https://api.github.com/repos/github/codeql-action/releases/assets/523665811"
 provenance = "github-attestations"
 
 [[tools.jq]]
@@ -185,50 +181,50 @@ url_api = "https://api.github.com/repos/jqlang/jq/releases/assets/453012782"
 provenance = "github-attestations"
 
 [[tools.node]]
-version = "24.21.0"
+version = "24.22.0"
 backend = "core:node"
-specifiers = ["24.21.0"]
+specifiers = ["24.22.0"]
 
 [tools.node."platforms.linux-arm64"]
-checksum = "sha256:724282c3b43aec998aa9527380465b45d229e021b58035f5f4f63095eabfe5d5"
-url = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-arm64.tar.gz"
+checksum = "sha256:b7e7991d5407815adfa74a2a9cd4db683552c8ce32ff4a295c22e972849c3f5d"
+url = "https://nodejs.org/dist/v24.22.0/node-v24.22.0-linux-arm64.tar.gz"
 
 [tools.node."platforms.linux-x64"]
-checksum = "sha256:6e1db87ef58b8819e5d5402eff1536491b18edd8eb7bee5ef7897876e88dc5ff"
-url = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.gz"
+checksum = "sha256:28ea0a438de9a13bd7891fd758eee6c7819ee8af5442dfd8d45bd65e56d4228c"
+url = "https://nodejs.org/dist/v24.22.0/node-v24.22.0-linux-x64.tar.gz"
 
 [tools.node."platforms.macos-arm64"]
-checksum = "sha256:bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057"
-url = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-arm64.tar.gz"
+checksum = "sha256:6a9724d9b50a5f22b4816cded441b5a8d9ddae546191a5e5b7efa5a5e2ee26d5"
+url = "https://nodejs.org/dist/v24.22.0/node-v24.22.0-darwin-arm64.tar.gz"
 
 [tools.node."platforms.macos-x64"]
-checksum = "sha256:1462cb3b3046b815cf8ea436d3da450ec1a9f11dac7e5a46b0ada5305d7e8097"
-url = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-x64.tar.gz"
+checksum = "sha256:495e3f273c645f3c4677d438304cdfc701729ea5dec5728f5c8e76a2dece4b91"
+url = "https://nodejs.org/dist/v24.22.0/node-v24.22.0-darwin-x64.tar.gz"
 
 [[tools.scorecard]]
-version = "5.5.0"
+version = "5.6.0"
 backend = "aqua:ossf/scorecard"
-specifiers = ["5.5.0"]
+specifiers = ["5.6.0"]
 
 [tools.scorecard."platforms.linux-arm64"]
-checksum = "sha256:3ce59d20c1d53e540c4a14e0da1e0d96b3b294e8ddc96a3c5a7b8a637b32991e"
-url = "https://github.com/ossf/scorecard/releases/download/v5.5.0/scorecard_5.5.0_linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/ossf/scorecard/releases/assets/403812978"
+checksum = "sha256:3eacaceb3fdee6d0ba5df6ede45d1ada73321949029921bb63633802e8ec5951"
+url = "https://github.com/ossf/scorecard/releases/download/v5.6.0/scorecard_5.6.0_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/ossf/scorecard/releases/assets/632187120"
 
 [tools.scorecard."platforms.linux-x64"]
-checksum = "sha256:83b90a05c1540ef1390db1cd5711e5fd04be9c1d8537fb84d39d02092d6a8dff"
-url = "https://github.com/ossf/scorecard/releases/download/v5.5.0/scorecard_5.5.0_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/ossf/scorecard/releases/assets/403812999"
+checksum = "sha256:19bde07129450cb65a95c6e3b9f34e034341579e6f0e241546ec3ae6efb2dd9a"
+url = "https://github.com/ossf/scorecard/releases/download/v5.6.0/scorecard_5.6.0_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/ossf/scorecard/releases/assets/632187119"
 
 [tools.scorecard."platforms.macos-arm64"]
-checksum = "sha256:bac6371a4f810d6bdd0b65d63c3311906bdfe3ba0d76a5ea743ce24ced170fcf"
-url = "https://github.com/ossf/scorecard/releases/download/v5.5.0/scorecard_5.5.0_darwin_arm64.tar.gz"
-url_api = "https://api.github.com/repos/ossf/scorecard/releases/assets/403812997"
+checksum = "sha256:1537183c0fcc6d8d1572aabc7a949091a36a2ee6be5bcb65f487cbb0a7b40381"
+url = "https://github.com/ossf/scorecard/releases/download/v5.6.0/scorecard_5.6.0_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/ossf/scorecard/releases/assets/632187121"
 
 [tools.scorecard."platforms.macos-x64"]
-checksum = "sha256:979487ca20e726f6a4d2bd63a0a4c544184f589724b3d12d2ba8d0ea80889063"
-url = "https://github.com/ossf/scorecard/releases/download/v5.5.0/scorecard_5.5.0_darwin_amd64.tar.gz"
-url_api = "https://api.github.com/repos/ossf/scorecard/releases/assets/403812977"
+checksum = "sha256:6eb92048bc537810d383d7e28233b2f118e78b6fef9e47b2c427c4d01fc096ad"
+url = "https://github.com/ossf/scorecard/releases/download/v5.6.0/scorecard_5.6.0_darwin_amd64.tar.gz"
+url_api = "https://api.github.com/repos/ossf/scorecard/releases/assets/632187117"
 
 [[tools.shellcheck]]
 version = "0.11.0"

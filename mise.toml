@@ -36,7 +36,7 @@ actionlint = "1.7.12"
 yq = "4.54.1"
 jq = "1.8.2"
 # The Scorecard the pinned ossf/scorecard-action builds against (its go.mod).
-scorecard = "5.5.0"
+scorecard = "5.6.0"
 # Seals a failed Compose run's output (scripts/seal-failure-logs.sh).
 age = "1.3.2"
 
@@ -448,11 +448,11 @@ set -eu
 '''
 
 [tasks."image:verify:python"]
-description = "It runs Python 3.14 without package managers"
+description = "It runs Python 3.15 without package managers"
 depends = ["image:build"]
 run = '''
 docker run --rm --entrypoint python "${IMAGE:-severino-hq:ci-local}" -c \
-    "import importlib.util, shutil, sys; sys.exit(0 if sys.version_info[:2] == (3, 14) and importlib.util.find_spec('pip') is None and shutil.which('pip') is None and shutil.which('uv') is None else 1)"
+    "import importlib.util, shutil, sys; sys.exit(0 if sys.version_info[:2] == (3, 15) and importlib.util.find_spec('pip') is None and shutil.which('pip') is None and shutil.which('uv') is None else 1)"
 '''
 
 [tasks."image:verify:healthy"]
@@ -498,21 +498,22 @@ docker run --rm --entrypoint python \
 '''
 
 [tasks."image:verify:secrets"]
-description = "It carries the secret renderer, inside the manifested root tree"
+description = "It carries the host programs, which refuse to run unprivileged"
 depends = ["image:build"]
 run = '''
 set -eu
 image="${IMAGE:-severino-hq:ci-local}"
-listed="$(docker run --rm --entrypoint sh "$image" -c \
-    'test -x /app/deploy/bin/hq-secrets && grep -c "  deploy/bin/hq-secrets$" /app/root-tree.sha256')"
-[ "$listed" = 1 ]
-# The image's user is not root, so it must refuse and say why.
-if said="$(docker run --rm --entrypoint /app/deploy/bin/hq-secrets "$image" 2>&1)"; then
-    echo "hq-secrets ran as an unprivileged user." >&2
-    exit 1
-fi
-case "$said" in
-    *"hq-secrets must run as root."*) ;;
-    *) echo "$said" >&2; exit 1 ;;
-esac
+# The image's user is not root, so each must refuse and say why.
+for command in hq-secrets "hq-host verify"; do
+    program="${command%% *}"
+    # shellcheck disable=SC2086  # the command's argument is meant to split off
+    if said="$(docker run --rm --entrypoint "/app/deploy/bin/$program" "$image" ${command#"$program"} 2>&1)"; then
+        echo "$program ran as an unprivileged user." >&2
+        exit 1
+    fi
+    case "$said" in
+        *"$program must run as root."*) ;;
+        *) echo "$program: $said" >&2; exit 1 ;;
+    esac
+done
 '''
