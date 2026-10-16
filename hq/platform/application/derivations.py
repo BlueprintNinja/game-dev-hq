@@ -19,7 +19,7 @@ exactly one state of the tables. The cache is a database table: a value stored
 inside a transaction commits or rolls back with the rows it was derived from.
 
 The clock is an input too. A derivation never reads it directly: it asks
-``reached``, ``passed``, ``since``, ``whole`` or ``today`` here, and each answer also
+``reached``, ``passed``, ``since``, ``whole``, ``today`` or ``this_year`` here, and each answer also
 records the moment it stops being true. A stored value is good until the
 earliest such moment and is derived again after it, so a threshold is crossed
 on time and no age is served stale.
@@ -42,7 +42,6 @@ triggers, the cache cannot be read or a stored value does not load, the
 function runs and its answer is used.
 """
 
-import copyreg
 import hashlib
 import logging
 import math
@@ -56,7 +55,6 @@ from contextvars import Context, ContextVar, copy_context
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from functools import wraps
-from types import MappingProxyType
 from typing import Any
 
 from django.core.exceptions import ImproperlyConfigured
@@ -67,17 +65,10 @@ from .projection import projection_scope, read_once, seeded
 logger = logging.getLogger("severino.derivations")
 
 
-# A read-only mapping has no pickle of its own. A stored value carries it as a
-# dict and loads it read-only again.
-def _read_only(mapping: dict[Any, Any]) -> MappingProxyType[Any, Any]:
-    return MappingProxyType(mapping)
-
-
-copyreg.pickle(MappingProxyType, lambda mapping: (_read_only, (dict(mapping),)))
-
 # The clock, as the module holds it. Derivations reach it only through the
 # functions below, which is what lets a test forbid every other way in.
 _clock = timezone.now
+
 
 # The longest a stored value is kept, in seconds; its key outlives its use.
 _LONGEST = 24 * 60 * 60
@@ -217,6 +208,15 @@ def today() -> date:
     return local.date()
 
 
+def this_year() -> int:
+    """The local year, which holds until the next local New Year: an answer that
+    only asks the year is not derived again every midnight."""
+
+    local = timezone.localtime(_clock())
+    holds_until(timezone.make_aware(datetime(local.year + 1, 1, 1), timezone.get_current_timezone()))
+    return local.year
+
+
 def _midnight_after(local: datetime) -> datetime:
     following = datetime.combine(local.date() + timedelta(days=1), time.min)
     return timezone.make_aware(following, timezone.get_current_timezone())
@@ -270,14 +270,14 @@ class Derivation:
         return bool(new)
 
 
-def derivation[T](
+def derivation[**P, T](
     name: str,
     *,
     reads: tuple[str, ...],
     vary: Callable[..., Any] | None = None,
     unseen: bool = False,
     ahead: int = REMEMBERED,
-) -> Callable[[Callable[..., T]], Callable[..., T]]:
+) -> Callable[[Callable[P, T]], Callable[P, T]]:
     """Declare a function as a derived fact of the tables in ``reads``.
 
     ``reads`` names every model the function queries, directly or through
@@ -293,14 +293,14 @@ def derivation[T](
     first, and 0 keeps none.
     """
 
-    def declare(function: Callable[..., T]) -> Callable[..., T]:
+    def declare(function: Callable[P, T]) -> Callable[P, T]:
         if name in DERIVATIONS:
             raise ImproperlyConfigured(f"Derivation {name!r} is declared twice.")
         declared = Derivation(name, tuple(sorted(set(reads))), function, vary, unseen, ahead)
         DERIVATIONS[name] = declared
 
         @wraps(function)
-        def answer(*args: Any, **kwargs: Any) -> T:
+        def answer(*args: P.args, **kwargs: P.kwargs) -> T:
             variant = repr(vary(*args, **kwargs) if vary else (args, sorted(kwargs.items())))
             _may_ask(declared)
             value, until = read_once(
@@ -312,7 +312,7 @@ def derivation[T](
             _tell(declared, until)
             return value
 
-        answer.derivation = declared  # type: ignore[attr-defined]
+        answer.derivation = declared  # type: ignore[attr-defined]  # a function carries its declaration
         return answer
 
     return declare
@@ -381,7 +381,7 @@ def _answer(declared: Derivation, variant: str, args: tuple, kwargs: dict) -> tu
 
     key = None if _UNCACHED.get() else _key(declared, variant)
     value, until, found = _stored(key)
-    if not found and (_awaited(key) or _awaited_pass(declared, key)):
+    if not found and (_awaited(key) or _awaited_pass(declared, variant, key)):
         # Another thread was deriving this very answer, or was asking again
         # everything that no longer stood: it is stored now.
         value, until, found = _stored(key)
@@ -440,14 +440,24 @@ GIVES_WAY = 2.0
 _TURN = threading.Condition()
 _PASS_STORED: set[str] = set()
 _WANTED: Counter[str] = Counter()
+# How many times the pass in flight has asked each question, by name and
+# variant. A write that lands while it derives moves the revisions, so the key
+# it stores need not be the one a waiting request holds: once its question has
+# been asked, the request looks for its own answer and derives it if absent.
+_PASS_ASKED: Counter[tuple[str, str]] = Counter()
+# The questions the pass in flight has yet to ask: a request waits only for one
+# of these, never for a question this pass will not reach.
+_PASS_PENDING: set[tuple[str, str]] = set()
 
 
-def _awaited_pass(declared: Derivation, key: str | None) -> bool:
-    """Wait for the pass in flight, if one is, to store what this request asks.
+def _awaited_pass(declared: Derivation, variant: str, key: str | None) -> bool:
+    """Wait for the pass in flight, if one is, to ask what this request asks.
 
     Only at a request's own top-level question, where it holds nothing the
     pass could be waiting for, and never inside a transaction. The pass asks
-    what is waited on first, and the wait ends when that answer is stored.
+    what is waited on first, and the wait ends when it has: its answer is then
+    stored under this request's key, or the tables moved on while it derived
+    and the request derives its own.
     """
 
     from django.db import connection
@@ -457,10 +467,14 @@ def _awaited_pass(declared: Derivation, key: str | None) -> bool:
     if connection.in_atomic_block:
         return False
     deadline = monotonic_time.monotonic() + WAITS
+    question = (declared.name, variant)
     with _TURN:
+        if question not in _PASS_PENDING:
+            return False
+        asked = _PASS_ASKED[question]
         _WANTED[declared.name] += 1
         try:
-            while not _NO_PASS.is_set() and key not in _PASS_STORED:
+            while not _NO_PASS.is_set() and key not in _PASS_STORED and _PASS_ASKED[question] == asked:
                 remaining = deadline - monotonic_time.monotonic()
                 if remaining <= 0:
                     break
@@ -591,8 +605,21 @@ def _keep(key: str | None, value: Any, until: datetime | None) -> bool:
         lifetime = min((until - _clock()).total_seconds(), _LONGEST)
         if lifetime <= 0:
             return False
+    from django.db import OperationalError
+
+    from hq.platform.core.database import without_waiting
+
+    # The pass stores what it asks. A request stores what it derived only if
+    # the write lock is free: waiting behind an import would hold the page for
+    # an answer it already has, and the pass stores it once the import commits.
+    waits = _AHEAD.get()
     try:
-        _store().set(key, (value, until), timeout=lifetime)
+        with nullcontext() if waits else without_waiting():
+            _store().set(key, (value, until), timeout=lifetime)
+    except OperationalError:
+        if waits:
+            logger.exception("A derived value could not be stored.")
+        return False
     except Exception:  # a value that cannot be stored is still the answer
         logger.exception("A derived value could not be stored.")
         return False
@@ -727,28 +754,23 @@ def _remembered() -> list[tuple[str, str, _Ask]]:
         return [(name, variant, ask) for name, asks in _ASKS.items() for variant, ask in asks.items()]
 
 
-def derive_ahead(more: Callable[[], bool] | None = None) -> list[str]:
+def derive_ahead() -> list[str]:
     """Ask again every remembered question whose answer no longer stands.
 
     Returns the derivations asked. One that fails is forgotten and logged: the
-    next request asks it afresh and is told what went wrong. ``more`` says
-    whether something was written while this was asking; while it does, the
-    questions are gone through again before a waiting request is let go.
+    next request asks it afresh and is told what went wrong.
     """
 
-    asked: list[str] = []
     _NO_PASS.clear()
     try:
-        while True:
-            asked += _pass()
-            if more is None or not more():
-                break
+        return _pass()
     finally:
         with _TURN:
             _PASS_STORED.clear()
+            _PASS_ASKED.clear()
+            _PASS_PENDING.clear()
             _NO_PASS.set()
             _TURN.notify_all()
-    return asked
 
 
 def _pass() -> list[str]:
@@ -756,31 +778,43 @@ def _pass() -> list[str]:
 
     asked: list[str] = []
     pending = _remembered()
+    with _TURN:
+        _PASS_PENDING.update((name, variant) for name, variant, _ask in pending)
     while pending:
         # A request deriving for itself goes first: what it stores, this pass
         # then finds standing.
         _NO_REQUEST.wait(GIVES_WAY)
         name, variant, ask = pending.pop(_next_asked(pending))
-        try:
-            derived, key = ask.context.copy().run(_again, ask)
-        except Exception:  # one question failing must not stop the rest
-            logger.exception("Derivation %s could not be asked again ahead.", name)
-            with _ASKS_LOCK:
-                _ASKS.get(name, {}).pop(variant, None)
-            continue
+        derived, key = _ask_once(name, variant, ask)
         if derived:
             asked.append(name)
+        # Asked, answered or not: a request waiting on it looks for itself.
         with _TURN:
-            _PASS_STORED.add(key)
+            if key:
+                _PASS_STORED.add(key)
+            _PASS_ASKED[name, variant] += 1
+            _PASS_PENDING.discard((name, variant))
             _TURN.notify_all()
     return asked
+
+
+def _ask_once(name: str, variant: str, ask: _Ask) -> tuple[bool, str]:
+    """One question of the pass; one that fails is forgotten, never raised."""
+
+    try:
+        return ask.context.copy().run(_again, ask)
+    except Exception:  # one question failing must not stop the rest
+        logger.exception("Derivation %s could not be asked again ahead.", name)
+        with _ASKS_LOCK:
+            _ASKS.get(name, {}).pop(variant, None)
+        return False, ""
 
 
 def _again(ask: _Ask) -> tuple[bool, str]:
     """Ask once more as it was first asked: whether there was anything to
     derive, and the key the answer stands under ("" when none is kept)."""
 
-    declared: Derivation = ask.answer.derivation  # type: ignore[attr-defined]
+    declared: Derivation = ask.answer.derivation  # type: ignore[attr-defined]  # set by @derivation
     token = _AHEAD.set(True)
     try:
         with projection_scope(ask.seed, apart=True):

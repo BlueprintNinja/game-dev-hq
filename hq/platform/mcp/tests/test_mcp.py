@@ -12,9 +12,9 @@ from hq.domains.projects.models import Project
 from hq.platform.application import projection
 from hq.platform.application.security import Capability, Principal, is_interactive
 
-from . import services
-from .security import MCPBoundary
-from .server import mcp
+from .. import services
+from ..security import MCPBoundary
+from ..server import mcp
 
 TOKEN = "a" * 48
 
@@ -64,15 +64,15 @@ class ServiceTests(TestCase):
     def setUp(self):
         from hq.platform.application.security import mcp_principal
 
-        from .identity import reset_principal, set_principal
+        from ..identity import reset_principal, set_principal
 
         bound = set_principal(mcp_principal())
         self.addCleanup(reset_principal, bound)
 
     def test_registered_tools_are_async_safe(self):
         async def call_health():
-            tool = mcp._tool_manager.get_tool("system_health")
-            return await tool.run({})
+            tool = mcp.tools.get("system_health")
+            return await tool.call({})
 
         result = async_to_sync(call_health)()
 
@@ -104,7 +104,7 @@ class ServiceTests(TestCase):
     def test_a_caller_that_may_read_nothing_is_answered_by_no_read_tool(self):
         from hq.platform.application.security import AuthorizationError
 
-        from .identity import reset_principal, set_principal
+        from ..identity import reset_principal, set_principal
 
         bound = set_principal(Principal("example-writer", "mcp", frozenset({"write_projects"})))
         self.addCleanup(reset_principal, bound)
@@ -153,28 +153,39 @@ class ServiceTests(TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["orphan_projects"], ["unreferenced"])
-        self.assertIsNotNone(mcp._tool_manager.get_tool("audit_registry"))
+        self.assertIsNotNone(mcp.tools.get("audit_registry"))
 
     def test_operating_snapshot_is_a_registered_read_tool(self):
-        self.assertIsNotNone(mcp._tool_manager.get_tool("dashboard_snapshot"))
+        self.assertIsNotNone(mcp.tools.get("dashboard_snapshot"))
 
     def test_resource_kinds_are_derived_from_the_live_document(self):
         from hq.platform.api.openapi import document
 
-        from .contract import catalogue, resource_contract
+        from ..contract import catalogue, resource_contract
 
         contract = resource_contract(document())
         listable = [resource.name for resource in contract.listable]
         addressable = [resource.name for resource in contract.addressable]
-        tools = {tool.name: tool for tool in mcp._tool_manager.list_tools()}
+        tools = {tool.name: tool for tool in mcp.tools.values()}
 
-        self.assertEqual(tools["list_resource"].parameters["properties"]["name"]["enum"], listable)
-        self.assertEqual(tools["get_resource"].parameters["properties"]["name"]["enum"], addressable)
+        self.assertEqual(tools["list_resource"].input_schema["properties"]["name"]["enum"], listable)
+        self.assertEqual(tools["get_resource"].input_schema["properties"]["name"]["enum"], addressable)
         self.assertIn(catalogue(contract.listable), tools["list_resource"].description)
         self.assertIn(catalogue(contract.addressable), tools["get_resource"].description)
 
+    def test_the_listed_tools_carry_their_annotations(self):
+        from hq.platform.mcp.server import mcp as served
+
+        async def listed():
+            return await served._list(None, None)
+
+        tools = {tool.name: tool for tool in async_to_sync(listed)().tools}
+
+        self.assertTrue(tools["system_health"].annotations.read_only_hint)
+        self.assertFalse(tools["execute_capability"].annotations.read_only_hint)
+
     def test_resource_reads_have_one_path(self):
-        names = {tool.name for tool in mcp._tool_manager.list_tools()}
+        names = {tool.name for tool in mcp.tools.values()}
 
         self.assertEqual(len(names), 15)
         for wrapper in (
@@ -206,9 +217,9 @@ class ServiceTests(TestCase):
         self.assertEqual(project_create["resource"], "projects")
         self.assertEqual(listed["items"][0]["slug"], project.slug)
         self.assertEqual(detail["slug"], project.slug)
-        self.assertIsNotNone(mcp._tool_manager.get_tool("describe_resources"))
-        self.assertIsNotNone(mcp._tool_manager.get_tool("list_resource"))
-        self.assertIsNotNone(mcp._tool_manager.get_tool("get_resource"))
+        self.assertIsNotNone(mcp.tools.get("describe_resources"))
+        self.assertIsNotNone(mcp.tools.get("list_resource"))
+        self.assertIsNotNone(mcp.tools.get("get_resource"))
 
     def test_connections_are_discoverable_without_credential_material(self):
         described = services.describe_connections()
@@ -219,8 +230,8 @@ class ServiceTests(TestCase):
             [item["name"] for item in described["connections"]],
         )
         self.assertTrue(listed["ok"])
-        self.assertIsNotNone(mcp._tool_manager.get_tool("describe_connections"))
-        self.assertIsNotNone(mcp._tool_manager.get_tool("list_connections"))
+        self.assertIsNotNone(mcp.tools.get("describe_connections"))
+        self.assertIsNotNone(mcp.tools.get("list_connections"))
 
     def test_derived_topology_is_a_registered_safe_read_tool(self):
         from hq.domains.control_plane.models import ManagedResource
@@ -236,7 +247,7 @@ class ServiceTests(TestCase):
         self.assertIn("resource:mcp-zone", {node["id"] for node in topology["nodes"]})
         self.assertEqual(topology["trace"]["focus"], "resource:mcp-zone")
         self.assertEqual(topology["trace"]["direction"], "inbound")
-        self.assertIsNotNone(mcp._tool_manager.get_tool("get_topology"))
+        self.assertIsNotNone(mcp.tools.get("get_topology"))
         self.assertNotIn("secret", json.dumps(topology).lower())
 
     def test_an_agent_can_ask_the_topology_one_standing_question(self):
@@ -258,7 +269,7 @@ class ServiceTests(TestCase):
             found = services.get_findings()
         self.assertTrue(found["ok"])
         self.assertTrue(found["rules"])
-        self.assertIsNotNone(mcp._tool_manager.get_tool("get_findings"))
+        self.assertIsNotNone(mcp.tools.get("get_findings"))
         self.assertNotIn("secret", json.dumps(found).lower())
 
     def test_an_unknown_payload_field_is_named_to_the_agent(self):
@@ -266,7 +277,7 @@ class ServiceTests(TestCase):
 
         from hq.platform.application.security import mcp_principal
 
-        from .identity import reset_principal, set_principal
+        from ..identity import reset_principal, set_principal
 
         with override_settings(SEVERINO_MCP_ENABLE_DOC_SYNC=True):
             bound = set_principal(mcp_principal())
@@ -282,7 +293,7 @@ class ServiceTests(TestCase):
 
         from hq.platform.application.security import mcp_principal
 
-        from .identity import reset_principal, set_principal
+        from ..identity import reset_principal, set_principal
 
         with override_settings(SEVERINO_MCP_ENABLE_DOC_SYNC=True):
             bound = set_principal(mcp_principal())
@@ -295,13 +306,11 @@ class ServiceTests(TestCase):
         self.assertNotIn("hunter2", json.dumps(result, default=repr))
 
     def test_an_invalid_resource_filter_is_named_by_the_tool(self):
-        from mcp.server.fastmcp.exceptions import ToolError
-
         async def call():
-            tool = mcp._tool_manager.get_tool("list_resource")
-            return await tool.run({"name": "projects", "filters": {"limti": "hunter2-not-for-logs"}})
+            tool = mcp.tools.get("list_resource")
+            return await tool.call({"name": "projects", "filters": {"limti": "hunter2-not-for-logs"}})
 
-        with self.assertRaises(ToolError) as refused:
+        with self.assertRaises(ValueError) as refused:
             async_to_sync(call)()
 
         self.assertIn("projects: limti is not a known field.", str(refused.exception))
@@ -480,7 +489,7 @@ class AgentIdentityTests(MCPBoundaryTests):
         seen: dict = {}
 
         async def app(scope, receive, send):
-            from .identity import current_principal
+            from ..identity import current_principal
 
             seen["principal"] = current_principal()
             await self._allowed_app(scope, receive, send)
@@ -562,7 +571,7 @@ class AgentIdentityTests(MCPBoundaryTests):
         self.assertEqual(status, 204)
 
     def test_the_caller_does_not_outlive_the_request(self):
-        from .identity import current_principal
+        from ..identity import current_principal
 
         agent = Principal("example-agent", "mcp", frozenset({Capability.READ}))
         self._request(token=self.A_JWT, verifier=self._verifier_returning(agent))
@@ -635,7 +644,7 @@ class GrantCeilingTests(TestCase):
     def test_a_grant_the_deployment_withholds_is_not_held(self):
         from django.test import override_settings
 
-        from .identity import token_principal
+        from ..identity import token_principal
 
         with override_settings(SEVERINO_MCP_ENABLE_WRITES=False):
             agent = token_principal(self._claims("read", "write_projects"))
@@ -646,7 +655,7 @@ class GrantCeilingTests(TestCase):
     def test_a_grant_the_deployment_allows_is_held(self):
         from django.test import override_settings
 
-        from .identity import token_principal
+        from ..identity import token_principal
 
         with override_settings(SEVERINO_MCP_ENABLE_WRITES=True):
             agent = token_principal(self._claims("read", "write_projects"))
@@ -656,7 +665,7 @@ class GrantCeilingTests(TestCase):
     def test_the_ceiling_never_widens_a_grant(self):
         from django.test import override_settings
 
-        from .identity import token_principal
+        from ..identity import token_principal
 
         with override_settings(SEVERINO_MCP_ENABLE_WRITES=True):
             agent = token_principal(self._claims("read"))
@@ -759,7 +768,7 @@ class TheCallerReachesTheToolTests(TestCase):
     """
 
     def test_a_tool_call_runs_as_the_agent_that_presented_the_token(self):
-        import httpx
+        import httpx2
         from starlette.applications import Starlette
         from starlette.routing import Mount
 
@@ -770,17 +779,15 @@ class TheCallerReachesTheToolTests(TestCase):
             seen["actor"] = principal.actor
             return {"connections": []}
 
-        # A fresh manager for this run: FastMCP's can be started only once,
-        # and the original put back, so nothing here leaks into another test.
-        original_manager = mcp._session_manager
-        mcp._session_manager = None
-        self.addCleanup(setattr, mcp, "_session_manager", original_manager)
+        # An application and session manager of this run's own: a manager is
+        # started once, and the one the ASGI module mounts is left alone.
+        served = mcp.served()
         application = Starlette(
             routes=[
                 Mount(
                     "/mcp",
                     app=MCPBoundary(
-                        mcp.streamable_http_app(),
+                        served.application,
                         allowed_hosts=("testserver",),
                         allowed_networks=("100.64.0.0/10",),
                         verifier=lambda bearer: agent,
@@ -789,17 +796,17 @@ class TheCallerReachesTheToolTests(TestCase):
             ],
         )
 
-        # Driven over httpx's own ASGI transport, as the static-asset tests are,
+        # Driven over httpx2's own ASGI transport, as the static-asset tests are,
         # rather than Starlette's TestClient: that one wants a second HTTP
         # client installed, and a test is no reason to ship one. The session
         # manager is entered first and by hand, which is all an app lifespan
         # does, so its task group still exists before any caller is bound,
         # the order that makes a lost context observable.
         async def call():
-            transport = httpx.ASGITransport(app=application, client=("100.64.0.10", 50000))
+            transport = httpx2.ASGITransport(app=application, client=("100.64.0.10", 50000))
             async with (
-                mcp.session_manager.run(),
-                httpx.AsyncClient(transport=transport, base_url="http://testserver") as client,
+                served.sessions.run(),
+                httpx2.AsyncClient(transport=transport, base_url="http://testserver") as client,
             ):
                 return await client.post(
                     "/mcp/",
@@ -853,7 +860,7 @@ class ResourceContractTests(SimpleTestCase):
         }
 
     def test_an_injected_document_owns_the_catalog(self):
-        from .contract import catalogue, resource_contract
+        from ..contract import catalogue, resource_contract
 
         with mock.patch(
             "hq.platform.application.resources.resource_registry", side_effect=AssertionError("registry walk")
@@ -864,7 +871,7 @@ class ResourceContractTests(SimpleTestCase):
         self.assertIn("`example.notes`: Synthetic notes. Identifier: `slug`.", catalogue(contract.addressable))
 
     def test_altering_the_document_changes_the_catalog(self):
-        from .contract import resource_contract
+        from ..contract import resource_contract
 
         document = self._document()
         operation = document["paths"]["/resources/example.events/"]["get"]
@@ -875,7 +882,7 @@ class ResourceContractTests(SimpleTestCase):
         self.assertEqual(contract.listable[0].summary, "Changed summary.")
 
     def test_missing_metadata_and_duplicate_operations_fail_closed(self):
-        from .contract import resource_contract
+        from ..contract import resource_contract
 
         for field in ("description", "x-hq-identifier"):
             document = self._document()
@@ -888,7 +895,7 @@ class ResourceContractTests(SimpleTestCase):
             resource_contract(document)
 
     def test_external_and_recursive_parameter_references_are_refused(self):
-        from .contract import resource_contract
+        from ..contract import resource_contract
 
         for reference in ("https://example.com/parameter", "#/components/parameters/Identifier"):
             document = self._document()

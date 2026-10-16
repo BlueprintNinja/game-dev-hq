@@ -19,6 +19,7 @@ from hq.domains.content.models import ContentItem
 from hq.domains.control_plane.models import ManagedResource
 from hq.domains.docs_index.models import DocumentationRecord
 from hq.platform.application import derivations
+from hq.platform.application.derivation_testing import frozen
 from hq.platform.application.derivations import DERIVATIONS, counting, derivation
 from hq.platform.application.expiry import days_until
 from hq.platform.application.projection import projection_scope
@@ -397,6 +398,20 @@ class ClockTests(SimpleTestCase):
         self.assertEqual(timezone.localtime(until).date(), day + timedelta(days=1))
         self.assertEqual(timezone.localtime(until).hour, 0)
 
+    def test_the_year_holds_until_local_new_year(self):
+        year, until = self._held(derivations.this_year)
+
+        self.assertEqual(year, timezone.localtime(MOMENT).year)
+        self.assertEqual(timezone.localtime(until).timetuple()[:4], (year + 1, 1, 1, 0))
+
+    def test_a_date_worded_without_its_time_survives_midnight(self):
+        from ..moments import when_day
+
+        # This year's date reads without the year, and only the year was asked.
+        _, until = self._held(lambda: when_day(timezone.localtime(MOMENT).date()))
+
+        self.assertEqual(timezone.localtime(until).timetuple()[:3], (timezone.localtime(MOMENT).year + 1, 1, 1))
+
     def test_days_left_agrees_with_itself_until_the_day_it_names_ends(self):
         for hours in (-60.2, -24.1, -1, 0.5, 11, 13, 35, 36.1, 37, 24 * 30 + 3):
             when = MOMENT + timedelta(hours=hours)
@@ -527,6 +542,7 @@ class ActionItemCountTests(TestCase):
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
+        self.enterContext(frozen())
         self.url = reverse("action_item_count")
 
     def test_an_unchanged_count_is_answered_not_modified_from_one_stored_number(self):

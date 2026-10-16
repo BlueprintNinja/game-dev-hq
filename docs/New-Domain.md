@@ -57,15 +57,16 @@ this page in the same commit as the rule. Extensions take a different path:
 
 Outside the architecture tests, `mise run check` also needs its migrations
 committed (`makemigrations --check`), the API document regenerated
-(`manage.py api_openapi`; `api_openapi --check`), and its tests in a `tests/`
-package or a `test*.py` module.
+(`manage.py api_openapi`; `api_openapi --check`), and its tests in its `tests/`
+package.
 
 ## Always on
 
 Rules that hold for every change, not a domain in particular; the class docstring
 is the rule. `StyleContractTests` and `SharedPrimitiveStyleTests` (CSS, tokens,
 layers, spacing, colour), `TemplateCommentTests` (what a `{# #}` comment left open is),
-`CognitiveComplexityTests` (score 20 per function), `CommentHistoryTests` (comments
+`CognitiveComplexityTests` (score 20 per function), `FileSizeTests` (no source
+file past 1,000 lines), `CommentHistoryTests` (comments
 describe the present), `AssertionPrecisionTests` (`assertEqual(a, b)`, not
 `assertTrue(a == b)`), `SourceEscapeTests` (no invalid string escapes),
 `CountedTests` (plurals), `InterfaceTextTests` (no em dash, hand-built plural,
@@ -75,4 +76,7 @@ system check reads source), `PlainWordsTests` (no word HQ keeps to itself in
 what its owner reads; `hq/platform/core/plain_words.py` holds the words and
 what to say instead), `PostButtonTests` (the shared post button),
 `WorkflowSecrecyTests` (no secret interpolated into a workflow script),
-`ComposedQueueTests` (a domain's attention items and cards reach the shared queue).
+`ComposedQueueTests` (a domain's attention items and cards reach the shared queue),
+`TestPlacementTests` (every test module is in its package's `tests/`),
+`RuntimeDependencyTests` (every runtime dependency is imported by host code or
+says in `pyproject.toml` why it is installed).

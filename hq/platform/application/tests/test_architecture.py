@@ -6,10 +6,9 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import httpx
+import httpx2
 from asgiref.sync import async_to_sync
 from django.test import SimpleTestCase, override_settings
-from starlette.middleware.gzip import GZipMiddleware
 from starlette.staticfiles import StaticFiles
 
 from hq.platform.core.network import TrustedNetworkASGI
@@ -80,6 +79,9 @@ class DeliveryAdapterArchitectureTests(SimpleTestCase):
             self.assertNotIn(forbidden, imported)
 
     def test_asgi_routes_static_assets_before_django(self):
+        from django.conf import settings
+
+        from hq.config import asgi
         from hq.config.asgi import application
 
         static_route, django_route = application.routes[-2:]
@@ -92,7 +94,9 @@ class DeliveryAdapterArchitectureTests(SimpleTestCase):
         self.assertIsInstance(static_route.app.app, StaticFiles)
         self.assertIsInstance(static_route.app.app, CachedStaticFiles)
         self.assertEqual(django_route.path, "")
-        self.assertIsInstance(django_route.app, GZipMiddleware)
+        # Django's own stack, compressed by Django's own middleware.
+        self.assertIs(django_route.app, asgi.django_application)
+        self.assertIn("django.middleware.gzip.GZipMiddleware", settings.MIDDLEWARE)
 
     def test_static_assets_have_one_server(self):
         from django.conf import settings
@@ -103,8 +107,8 @@ class DeliveryAdapterArchitectureTests(SimpleTestCase):
     @override_settings(STATIC_LIVE=False)
     def test_versioned_static_assets_are_compressed_and_immutable(self):
         async def request(root):
-            transport = httpx.ASGITransport(app=CachedStaticFiles(directory=root))
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            transport = httpx2.ASGITransport(app=CachedStaticFiles(directory=root))
+            async with httpx2.AsyncClient(transport=transport, base_url="http://testserver") as client:
                 return await client.get(
                     "/bundle.0123456789ab.css",
                     headers={"Accept-Encoding": "gzip"},
@@ -1218,7 +1222,7 @@ class AssertionPrecisionTests(SimpleTestCase):
     def test_no_assertion_hides_a_comparison_inside_a_boolean(self):
         root = Path(__file__).resolve().parents[4]
         offenders = []
-        for path in sorted(root.rglob("test*.py")) + sorted(root.rglob("tests.py")):
+        for path in sorted(root.rglob("test*.py")):
             # Any virtualenv in the tree, whatever it happens to be called, and
             # anything installed into one. Matching only ".venv" would miss a
             # sibling such as `.venv312` and report third-party test files as
@@ -1720,7 +1724,7 @@ class OnePrimitiveTests(SimpleTestCase):
             path
             for package in ("hq", "hq_sdk")
             for path in sorted((self.ROOT / package).rglob("*.py"))
-            if "tests" not in path.parts and path.name != "tests.py"
+            if "tests" not in path.parts
         ]
         self.assertTrue(sources)
         found = [
@@ -1865,18 +1869,45 @@ class CognitiveComplexityTests(SimpleTestCase):
         self.assertEqual(over, {}, "split these into named steps")
 
 
+class FileSizeTests(SimpleTestCase):
+    """No source file is longer than ``LIMIT`` lines.
+
+    A file grows freely below it; one past it is split by responsibility.
+    Tests and migrations are not counted.
+    """
+
+    LIMIT = 1000
+    ROOT = Path(__file__).resolve().parents[4]
+
+    def test_no_source_file_exceeds_the_ceiling(self):
+        sizes = {
+            str(path.relative_to(self.ROOT)): len(path.read_text(encoding="utf-8").splitlines())
+            for path in source_files(self.ROOT, "*.py")
+            if not path.name.startswith("test")
+            and not path.name.endswith("_tests.py")
+            and not {"tests", "migrations", "node_modules"} & set(path.relative_to(self.ROOT).parts)
+        }
+        self.assertGreater(len(sizes), 100, "the walk found almost nothing; its root is wrong")
+        over = {path: lines for path, lines in sizes.items() if lines > self.LIMIT}
+        self.assertEqual(over, {}, "split these by responsibility")
+
+
 class RouteOwnerTests(SimpleTestCase):
     """Routes are resolved in one place, so the answer can be remembered."""
 
     def test_the_application_resolves_routes_through_its_one_owner(self):
         root = Path(__file__).resolve().parents[4]
+        modules = [
+            path
+            for package in ("hq/platform/application", "hq/domains/control_plane")
+            for path in (root / package).rglob("*.py")
+            if "tests" not in path.parts and path.name != "routes.py"
+        ]
+        self.assertGreater(len(modules), 50, "the walk found almost nothing; its packages are not where it looks")
         offenders = [
             str(path.relative_to(root))
-            for package in ("application", "control_plane")
-            for path in (root / package).rglob("*.py")
-            if "tests" not in path.parts
-            and path.name != "routes.py"
-            and re.search(r"django\.urls import[^\n]*\breverse\b", path.read_text(encoding="utf-8"))
+            for path in modules
+            if re.search(r"django\.urls import[^\n]*\breverse\b", path.read_text(encoding="utf-8"))
         ]
 
         self.assertEqual(offenders, [], "import reverse from application.routes")
@@ -2074,3 +2105,60 @@ class FragmentPrimitiveTests(SimpleTestCase):
             for retired in self.RETIRED:
                 with self.subTest(file=name, retired=retired):
                     self.assertNotIn(retired, text)
+
+
+class TestPlacementTests(SimpleTestCase):
+    """Every test lives in its package's tests/ directory (CLAUDE.md), so
+    coverage, discovery and the fast gate's selection see the same tree."""
+
+    def test_no_test_module_lives_outside_a_tests_directory(self):
+        root = Path(__file__).resolve().parents[4]
+        modules = [
+            path
+            for package in ("hq", "hq_sdk")
+            for path in (root / package).rglob("test*.py")
+            if path.name.startswith("test_") or path.name == "tests.py"
+        ]
+        self.assertTrue(modules)
+
+        misplaced = sorted(
+            path.relative_to(root).as_posix()
+            for path in modules
+            if "tests" not in path.parts and path.name != "test_runner.py"
+        )
+        self.assertEqual(misplaced, [])
+
+
+class RuntimeDependencyTests(SimpleTestCase):
+    """Every runtime dependency earns its place: host code imports it, or
+    pyproject.toml says why it is installed without being imported."""
+
+    def test_every_runtime_dependency_is_imported_or_explained(self):
+        import ast
+        import importlib.metadata
+        import tomllib
+
+        root = Path(__file__).resolve().parents[4]
+        project = tomllib.loads((root / "pyproject.toml").read_text())
+        explained = set(project["tool"]["severino-hq"]["unimported"])
+        imported: set[str] = set()
+        for package in ("hq", "hq_sdk"):
+            for path in (root / package).rglob("*.py"):
+                if "tests" in path.parts:
+                    continue
+                for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                    if isinstance(node, ast.Import):
+                        imported |= {alias.name.split(".")[0] for alias in node.names}
+                    elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                        imported.add(node.module.split(".")[0])
+        providers = importlib.metadata.packages_distributions()
+        used = {distribution.lower() for name in imported for distribution in providers.get(name, ())}
+        declared = {
+            re.split(r"[<>=!~\[ ;]", requirement, maxsplit=1)[0].lower()
+            for requirement in project["project"]["dependencies"]
+        }
+
+        self.assertEqual(sorted(declared - used - explained), [])
+        # A reason for something that is imported, or no longer installed, is stale.
+        self.assertEqual(sorted(explained & used), [])
+        self.assertEqual(sorted(explained - declared), [])

@@ -37,14 +37,14 @@ from .plugins import (
     PluginManifest,
     clear_plugin_composition_cache,
 )
-from .ui import Insight
+from .ui import DomainOverview, Insight
 
 # Deliberately not a name any real extension would take. A synthetic sibling
 # that collided with a real id would silently displace it.
 SIBLING_PREFIX = "example."
 
 
-def undefined_style_classes(template_root) -> list[str]:
+def undefined_style_classes(template_root: str | Path) -> list[str]:
     """Class names an extension's templates use that the host does not define.
 
     An extension that invents a class gets no error and no styling: the page
@@ -82,7 +82,7 @@ def sibling(
     name: str = "Alpha",
     cards: Iterable[dict[str, Any]] = (),
     attention: Iterable[Insight] = (),
-    overview: Any = None,
+    overview: DomainOverview | None = None,
     **manifest_fields: Any,
 ) -> tuple[PluginManifest, PluginIntegration]:
     """One synthetic extension: a manifest plus what it reports.
@@ -137,6 +137,7 @@ def providers_derived_again(plugin_id: str, *, window: tuple[date, date] | None 
 
     from django.utils import timezone
 
+    from .derivation_testing import frozen
     from .derivations import counting
     from .plugins import DERIVED_PROVIDERS, installed_integrations
     from .projection import projection_scope
@@ -157,16 +158,19 @@ def providers_derived_again(plugin_id: str, *, window: tuple[date, date] | None 
             asked[f"calendar {source.id}"] = partial(source.events, first, last)
         return asked
 
-    with projection_scope():
-        stored = {name: ask() for name, ask in questions().items()}
-    again: list[str] = []
-    for name, ask in questions().items():
-        with projection_scope(), counting() as (ran, served):
-            answer = ask()
-        if ran or not served:
-            again.append(f"{name}: derived again, its answer was not kept")
-        elif answer != stored[name]:
-            again.append(f"{name}: the stored answer is not equal to the one derived")
+    # Held, so an answer that lapses with the clock is not mistaken for one
+    # that was never kept.
+    with frozen():
+        with projection_scope():
+            stored = {name: ask() for name, ask in questions().items()}
+        again: list[str] = []
+        for name, ask in questions().items():
+            with projection_scope(), counting() as (ran, served):
+                answer = ask()
+            if ran or not served:
+                again.append(f"{name}: derived again, its answer was not kept")
+            elif answer != stored[name]:
+                again.append(f"{name}: the stored answer is not equal to the one derived")
     return again
 
 
@@ -179,7 +183,7 @@ class ComposedPluginTestCase:
 
     siblings: tuple = ()
 
-    def setUp(self):
+    def setUp(self) -> None:
         super().setUp()
         self._composition = ExitStack()
         self.addCleanup(self._composition.close)

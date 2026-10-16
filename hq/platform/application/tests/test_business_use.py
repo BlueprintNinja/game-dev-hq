@@ -12,7 +12,7 @@ from django.urls import reverse
 
 from hq.domains.assets.models import Asset
 from hq.domains.expenses.models import Expense
-from hq.platform.api.tests import ISSUER, RESOURCE, _serving, _token
+from hq.platform.api.tests.test_api import ISSUER, RESOURCE, _serving, _token
 from hq.platform.mcp.identity import reset_principal, set_principal
 from hq.platform.mcp.server import mcp
 
@@ -108,8 +108,8 @@ class ServiceTests(TestCase):
 class MCPTests(TestCase):
     def _call(self, name: str, payload: dict) -> dict:
         async def call():
-            tool = mcp._tool_manager.get_tool("execute_capability")
-            return await tool.run({"name": name, "payload": payload})
+            tool = mcp.tools.get("execute_capability")
+            return await tool.call({"name": name, "payload": payload})
 
         bound = set_principal(mcp_principal())
         try:

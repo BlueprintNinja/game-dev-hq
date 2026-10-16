@@ -5,6 +5,18 @@ package host
 import (
 	"fmt"
 	"regexp"
+	"time"
+)
+
+// The bounds a boot nests: the web unit waits out one render, then HQ's
+// start, and stops HQ within its own stop timeout. The unit files restate
+// them, and a test holds each to these.
+const (
+	// RenderBound is the longest one render runs: the secrets unit's
+	// TimeoutStartSec, and how long the web unit waits for its environment.
+	RenderBound = 4 * time.Minute
+	// HealthStartPeriod is how long HQ may take to answer healthy.
+	HealthStartPeriod = 60 * time.Second
 )
 
 const (
@@ -21,6 +33,16 @@ const (
 	SecretsUnit = "severino-hq-secrets.service"
 	// ControllerUnit runs one controller pass.
 	ControllerUnit = "severino-hq-controller.service"
+	// BackupUnit snapshots HQ's volumes.
+	BackupUnit = "severino-hq-backup.service"
+	// StopSeconds is how long HQ is given to stop before it is killed; the
+	// web unit's TimeoutStopSec allows more, so systemd never kills the stop.
+	StopSeconds = "30"
+
+	// Lib is the root-owned tree a release installs and every unit runs from.
+	Lib = "/usr/local/lib/severino-hq"
+	// DeployEntry is the one program the runner may run as root.
+	DeployEntry = Lib + "/scripts/deploy-image.sh"
 
 	// SecretDir is the root-only, noswap tmpfs the renderer installs into.
 	SecretDir = "/run/severino-hq-secrets"
@@ -73,6 +95,13 @@ var Volumes = []Volume{
 	{"severino-hq_severino_exports", "/exports"},
 	{"severino-hq_severino_bridge", "/run/hq-bridge"},
 }
+
+// On the data volume: the database, and the copy of it a boot keeps before
+// changing its schema, which a release that fails puts back.
+const (
+	Database       = "severino.sqlite3"
+	SchemaSnapshot = Database + ".before-migrate"
+)
 
 // pinned is an image reference that names its content: a repository and an
 // optional tag, then the digest. A tag alone could be moved under a host.
