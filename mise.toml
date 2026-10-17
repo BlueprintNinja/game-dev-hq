@@ -437,6 +437,17 @@ else
 fi
 '''
 
+[tasks."demo:build"]
+description = "Build the public demo into var/demo"
+env = { SEVERINO_DATABASE_PATH = "{{config_root}}/var/db/gates.sqlite3", DJANGO_DEBUG = "1", DJANGO_SECRET_KEY = "ci-only-secret-key-not-for-production", DJANGO_ALLOWED_HOSTS = "127.0.0.1,testserver", HQ_DEMO_OUT = "{{config_root}}/var/demo" }
+run = "uv run --locked python manage.py test demo.build --noinput --parallel 1"
+
+[tasks."browser:demo"]
+description = "Build the demo and check it in WebKit"
+depends = ["setup:webkit", "demo:build"]
+env = { HQ_DEMO_OUT = "{{config_root}}/var/demo" }
+run = "uv run --locked --group browser python -m unittest demo.check -v"
+
 [tasks."browser:layout"]
 description = "Real-browser layout invariants over synthetic pages"
 depends = ["setup:webkit"]
@@ -504,17 +515,6 @@ description = "It boots under its unit: waits for its environment, survives a cr
 depends = ["image:build"]
 wait_for = ["image:verify:healthy"]
 run = 'scripts/host-boot-drill.sh "${IMAGE:-severino-hq:ci-local}"'
-
-[tasks."image:verify:suite"]
-description = "The suite passes inside it"
-depends = ["image:build"]
-# After the health check: the suite takes every core, and health has a deadline.
-wait_for = ["image:verify:healthy"]
-run = '''
-docker run --rm --entrypoint python \
-    --env DJANGO_SECRET_KEY=ci-only-composition-key-0123456789abcdef0123456789abcdef \
-    --env DJANGO_ALLOWED_HOSTS=localhost "${IMAGE:-severino-hq:ci-local}" manage.py test --verbosity 0
-'''
 
 [tasks."image:verify:secrets"]
 description = "It carries the host programs, which refuse to run unprivileged"

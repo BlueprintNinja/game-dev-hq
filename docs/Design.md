@@ -191,8 +191,20 @@ and one card partial (`partials/_work_queue.html`). A card reads, in order:
 - what to do: a command or an instruction is a step, one standing alone and
   several numbered, folded under "Steps" only when long;
 - the reason it cannot be done from here, as a sentence and never as a step;
+- what was read that shows it (`Insight(facts=...)`), each label once with its
+  values beside it;
 - buttons: the owner's actions, the first step that can be taken now when the
-  owner offered none, and the check that reads again.
+  owner offered none, and the check that reads again. At most one is primary;
+- the pages that help look into it (`Insight(links=...)`), quiet links, the
+  topology's as icons with HQ's tooltip.
+
+Buttons and links stand at the card's end, beside what it says, so neither
+takes a row of its own. The queue, a thing's own page and the findings page
+draw this one card; a command is `partials/_command.html`, with its copy
+button in its corner. Its urgency is `partials/_urgency_pill.html`: a Cmd- or
+Ctrl-click opens what raised it (the finding rule, its severity and the line
+its detector is defined at, or the domain and key of anything else), read
+from the code rather than written down.
 
 Nothing that explains a card or acts on it sits behind a toggle. A next step
 an owner names as a short label with a `url` is a link to that page; one it
@@ -203,6 +215,25 @@ title and the way back.
 
 A queue of three or fewer is read on the dashboard, under the greeting, on the
 same cards. A longer one is a count and a link to its page.
+
+**A frame is filled.** Facts are `.kv`: each label beside its value, as many
+pairs to a row as the width holds, never a two-column table stretched to the
+page. A thing's state and what it is at a glance sit on its title's line
+(`page_aside`), as words or as tiles, each as wide as it is. The sections that
+close a thing's page are `.section-flow`: each a card holding its own heading,
+two to a row at one height, with a wide one (four columns or more, or folded)
+across the row and the short ones collected to pair. The browser gate fails a
+frame across the page whose content stops short of half of it
+(`test_a_wide_frame_is_filled`).
+
+**Only what is urgent is framed.** A thing's page draws the problems about it
+from `partials/_problems.html`. An urgent one is the queue's card in a box
+above the page; anything less is one unframed line (how urgent, what is wrong,
+what it means, its button) and, on a page made of parts, sits under the part it
+is about. The status at the top counts them by urgency ("1 urgent · 1 needs
+attention") and links to the first, and a figure in the summary band takes the
+tone of its part's problems. A link to a part of a page lands below the sticky
+header, from one `scroll-padding-top`.
 
 **An item is open until its owner stops raising it.** Nobody closes one by
 looking at it. What a reader can do with one they are not acting on is dismiss
@@ -246,7 +277,10 @@ side by side when space permits; empty contributors take no space.
   parts are only a count; `Dots((Dot(...), ...))` when each is something with a
   page of its own, which then names itself when pointed at and links there.
   The figure's own link moves from the cell to its value, since a link cannot
-  hold links. Past a dozen, dots are a texture and are not drawn.
+  hold links. Past a dozen, dots are a texture and are not drawn. A history is
+  `Dots(..., ordered=True)`, drawn in its own order, oldest first, as the HQ
+  page draws a piece of scheduled work's recent runs, each linking to its job.
+  `partials/_dots.html` draws either, wherever it stands.
 - `Trend`, recent readings oldest first, drawn as a line where the card has
   room, each reading saying what it is when pointed at.
 

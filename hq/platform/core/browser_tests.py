@@ -19,6 +19,7 @@ render. JavaScript below queries by tag only.
 import json
 import mimetypes
 import os
+import re
 import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -75,7 +76,8 @@ SELECTORS = {
     # Each reading in the dashboard's row: a mark, then its lines.
     "readings": ".dash-readings .glance-panel-head",
     "patterns": ".dashboard-patterns > .card",
-    "pill": ".pill",
+    # What reads as one unit and so never breaks across lines: a state, a time.
+    "one_line": ".pill, td time",
     # Everything pressed: a button, a link drawn as one, a disclosure's handle.
     "control": "button, .btn, .icon-link, summary",
     # Anything in a table cell: its words stay inside its own box, or they are
@@ -85,10 +87,16 @@ SELECTORS = {
     "spoken": ".ask-said",
     # The one box allowed to scroll sideways.
     "table_scroll": ".table-scroll",
+    # What a parser leaves where a <p> was closed early by a block inside it.
+    "broken_paragraph": "main p:empty:not([hidden])",
+    # A box that holds content: a card, a table's frame.
+    "frame": ".card, .table-scroll",
+    # What reaches across a frame besides its text.
+    "frame_content": "img, svg, canvas, button, .btn, input, select, pre",
     # Frames by design: a control, a chip, a path's steps, a diagram's nodes.
     "frame_exempt": ".btn, .pill, .request-path li, .topology-node, label",
     # Everything inside a menu or a dialog, which float over the page.
-    "frame_exempt_within": "dialog, [data-menu]",
+    "frame_exempt_within": "dialog, [popover], [data-menu]",
     # The lead control renders first, so it is the one a narrow head keeps.
     "head_lead": ".page-head .page-actions > :first-child",
     "head_title": ".page-head .page-title-row",
@@ -109,7 +117,7 @@ SELECTORS = {
     # A band's cells. Stats inside a card are the one band laid out with real
     # gaps instead of padded cells, so the KPI band is not listed.
     "band_cell": (
-        ":is(.control-summary, .service-band, .fact-band, .finding-facts, .insight-grid,"
+        ":is(.control-summary, .service-band, .fact-band, .insight-grid,"
         " .connection-control-grid, .sweep-grid,"
         " .machine-telemetry-metrics) > *"
     ),
@@ -411,11 +419,11 @@ _PAIRS = (
 }"""
 )
 
-_WRAPPED_PILLS = (
+_WRAPPED_PHRASES = (
     "(selector) => {"
     + _DESCRIBE
     + """
-  // A pill is one short state: no taller than the same pill holding one letter.
+  // A pill or a time is one phrase: no taller than the same element holding one letter.
   const found = [];
   for (const pill of document.querySelectorAll(selector)) {
     if (!pill.getClientRects().length) continue;
@@ -581,6 +589,97 @@ _CONTRAST = (
 # A band cell with no padding: its content touches the hairlines around it.
 # The frame rule zeroes the inset of anything nested in a surface, and a band
 # is one, so a component placed in a band loses its padding without a trace.
+# A frame across most of the page whose content stops short of half of it: a
+# short table stretched to the page, a card of one short line. The width is
+# the content's to set; a frame that is mostly empty says nothing with it.
+_EMPTY_FRAMES = (
+    "([selector, content]) => {"
+    + _DESCRIBE
+    + """
+  const page = document.querySelector('main').clientWidth;
+  const found = [];
+  const range = document.createRange();
+  for (const frame of document.querySelectorAll('main :is(' + selector + ')')) {
+    const r = frame.getBoundingClientRect();
+    if (r.width < page * 0.8 || r.height < 40 || !frame.checkVisibility()) continue;
+    let right = r.left;
+    const walker = document.createTreeWalker(frame, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!node.textContent.trim() || !node.parentElement.checkVisibility()) continue;
+      range.selectNodeContents(node);
+      for (const line of range.getClientRects()) right = Math.max(right, line.right);
+    }
+    for (const el of frame.querySelectorAll(content)) {
+      const box = el.getBoundingClientRect();
+      if (box.width) right = Math.max(right, box.right);
+    }
+    const used = (right - r.left) / r.width;
+    if (used < 0.5) found.push(`${describe(frame)} fills ${Math.round(used * 100)}% of its width`);
+  }
+  return found;
+}"""
+)
+
+
+# Every style rule's selector the browser kept, nested rules included. A rule
+# whose selector does not parse is dropped whole and silently: the stylesheet
+# still loads and nothing reports it.
+_KEPT_SELECTORS = """() => {
+  const sheet = [...document.styleSheets].find((s) => s.href && s.href.includes('/css/app.css'));
+  const found = [];
+  const walk = (rules) => {
+    for (const rule of rules) {
+      if (rule.selectorText !== undefined) found.push(rule.selectorText);
+      if (rule.cssRules) walk(rule.cssRules);
+    }
+  };
+  walk(sheet.cssRules);
+  return found;
+}"""
+
+
+def authored_selectors(css: str) -> list[str]:
+    """Every style rule's selector as ``app.css`` writes it, nested rules
+    included: the text before each ``{`` that does not open an at-rule."""
+
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    found, start, quote = [], 0, ""
+    for at, char in enumerate(css):
+        if quote:
+            quote = "" if char == quote else quote
+        elif char in "\"'":
+            quote = char
+        elif char in "{};":
+            if char == "{":
+                header = css[start:at].strip()
+                # A keyframe's step is not a selector.
+                if header and not header.startswith("@") and not re.fullmatch(r"[\d.%,\s]+|from|to", header):
+                    found.append(header)
+            start = at + 1
+    return found
+
+
+def _opaque(colour: str) -> tuple[int, ...]:
+    """A computed colour's red, green and blue, without its opacity, as 0-255:
+    ``rgb(255, 255, 255)`` and ``color(srgb 1 1 1 / 0.8)`` are one colour."""
+
+    numbers = [float(n) for n in re.findall(r"[\d.]+", colour.split("/")[0])]
+    if colour.startswith("color("):
+        return tuple(round(n * 255) for n in numbers[:3])
+    return tuple(round(n) for n in numbers[:3])
+
+
+def _plain_selector(selector: str) -> str:
+    """A selector as the browser writes it back: no whitespace, double quotes,
+    no ``*`` before what already names an element, and every attribute value
+    quoted."""
+
+    plain = re.sub(r"\s+", "", selector).replace("'", '"')
+    plain = re.sub(r"\*(?=[:.\[#])", "", plain)
+    plain = plain.replace("(odd)", "(2n+1)").replace("(even)", "(2n)")
+    return re.sub(r'(\[[^\]=]+?[~|^$*]?=)([^"\]]+)\]', r'\1"\2"]', plain)
+
+
 _UNPADDED_CELLS = (
     "(selector) => {"
     + _DESCRIBE
@@ -1080,6 +1179,18 @@ class LayoutBrowserTests(BrowserGate):
                     self.open(name, width)
                     check(name)
 
+    def test_every_selector_parses(self):
+        authored = authored_selectors(Path(finders.find("css/app.css")).read_text())
+        self.open(next(iter(PAGES)), OVERFLOW_WIDTHS[-1])
+        kept = {_plain_selector(selector) for selector in self.page.evaluate(_KEPT_SELECTORS)}
+
+        self.assertEqual([selector for selector in authored if _plain_selector(selector) not in kept], [])
+
+    def test_no_block_breaks_a_paragraph(self):
+        # A block written inside a <p> closes it early and leaves an empty <p>
+        # where its end tag was: the rest of the line falls out of it.
+        self.across(lambda _name: self.assertEqual(self.page.locator(SELECTORS["broken_paragraph"]).count(), 0))
+
     def test_nothing_is_framed_inside_a_frame(self):
         def check(_name):
             self.assertEqual(
@@ -1117,7 +1228,7 @@ class LayoutBrowserTests(BrowserGate):
             self.assertEqual(self.page.evaluate(_SIDEWAYS, SELECTORS["table_scroll"]), [])
             self.assertEqual(self.page.evaluate(_CELLS), [])
             self.assertEqual(self.page.evaluate(_BROKEN_WORDS), [])
-            self.assertEqual(self.page.evaluate(_WRAPPED_PILLS, SELECTORS["pill"]), [])
+            self.assertEqual(self.page.evaluate(_WRAPPED_PHRASES, SELECTORS["one_line"]), [])
             self.assertEqual(self.page.evaluate(_UNSEEN_COLUMNS, SELECTORS["table_scroll"]), [])
             self.assertEqual(self.page.evaluate(_SPILLED_LABELS, SELECTORS["control"]), [])
             self.assertEqual(self.page.evaluate(_SPILLED_LABELS, SELECTORS["cell_content"]), [])
@@ -1168,7 +1279,7 @@ class LayoutBrowserTests(BrowserGate):
         def check(_name):
             self.assertEqual(self.page.evaluate(_ESCAPES), [])
             self.assertEqual(self.page.evaluate(_OVERLAPS), [])
-            self.assertEqual(self.page.evaluate(_WRAPPED_PILLS, SELECTORS["pill"]), [])
+            self.assertEqual(self.page.evaluate(_WRAPPED_PHRASES, SELECTORS["one_line"]), [])
 
         self.across(check, DENSE_PAGES)
 
@@ -1187,7 +1298,7 @@ class LayoutBrowserTests(BrowserGate):
         self.each(lambda _name: self.assertEqual(self.page.evaluate(_PAIRS), []))
 
     def test_a_pill_never_wraps(self):
-        self.each(lambda _name: self.assertEqual(self.page.evaluate(_WRAPPED_PILLS, SELECTORS["pill"]), []))
+        self.each(lambda _name: self.assertEqual(self.page.evaluate(_WRAPPED_PHRASES, SELECTORS["one_line"]), []))
 
     def test_nothing_overlaps(self):
         self.each(lambda _name: self.assertEqual(self.page.evaluate(_OVERLAPS), []))
@@ -1222,30 +1333,47 @@ class LayoutBrowserTests(BrowserGate):
 
         self.across(check)
 
+    def card_rows(self, key):
+        """The cards of one dashboard grid, grouped by the row they sit on."""
+        rows = {}
+        for box in self.page.locator(SELECTORS[key]).evaluate_all(
+            "elements => elements.map(e => { const r = e.getBoundingClientRect(), "
+            "edge = e.parentElement.getBoundingClientRect().right; "
+            "return {top: r.top, bottom: r.bottom, left: r.left, right: r.right, edge}; })"
+        ):
+            rows.setdefault(round(box["top"]), []).append(box)
+        return list(rows.values())
+
+    def assert_rows_filled(self, key):
+        # Cards in a row are the same height, and the last one reaches the
+        # grid's right edge.
+        for row in self.card_rows(key):
+            self.assertEqual({round(box["bottom"]) for box in row}, {round(row[0]["bottom"])}, row)
+            self.assertAlmostEqual(row[-1]["right"], row[-1]["edge"], delta=1)
+
     def test_the_dashboard_pairs_its_cards_on_a_wide_screen(self):
         self.open("dashboard", 1280)
         for key in ("highlights", "patterns"):
             with self.subTest(cards=key):
-                first, second = self.boxes(key)
-                self.assertAlmostEqual(first["top"], second["top"], delta=1)
-                self.assertAlmostEqual(first["bottom"], second["bottom"], delta=1)
+                self.assertGreater(max(len(row) for row in self.card_rows(key)), 1)
+                self.assert_rows_filled(key)
 
     def test_the_dashboard_stacks_its_cards_on_a_phone(self):
         for width in (320, PHONE_SCREEN[0]):
             self.open("dashboard", width)
             for key in ("highlights", "patterns"):
                 with self.subTest(cards=key, width=width):
-                    first, second = self.boxes(key)
-                    self.assertGreater(second["top"], first["bottom"])
-                    self.assertAlmostEqual(first["left"], second["left"], delta=1)
+                    rows = self.card_rows(key)
+                    self.assertGreater(len(rows), 1)
+                    self.assertEqual({len(row) for row in rows}, {1})
+                    self.assertEqual({round(row[0]["left"]) for row in rows}, {round(rows[0][0]["left"])})
 
     def test_a_dashboard_without_contributors_draws_no_empty_pairs(self):
         self.open("dashboard-bare", 1280)
-        # The dashboard's card rows, not every selector the gate knows: a
-        # bare dashboard still has buttons and labels.
+        # Without extensions, the cards that remain still fill their rows.
         for key in ("highlights", "patterns"):
             with self.subTest(cards=key):
-                self.assertEqual(self.boxes(key), [])
+                self.assert_rows_filled(key)
 
     def test_a_row_toggle_is_owed_only_to_what_a_reader_cannot_see(self):
         """The row expander measures what is cut off, so it runs with script on.
@@ -1403,6 +1531,14 @@ class LayoutBrowserTests(BrowserGate):
 
     def test_a_link_sits_on_the_line_it_continues(self):
         self.across(lambda _name: self.assertEqual(self.page.evaluate(_RAISED_LINKS), []))
+
+    def test_a_wide_frame_is_filled(self):
+        for name in ALL_PAGES:
+            with self.subTest(page=name):
+                self.open(name, OVERFLOW_WIDTHS[-1])
+                self.assertEqual(
+                    self.page.evaluate(_EMPTY_FRAMES, [SELECTORS["frame"], SELECTORS["frame_content"]]), []
+                )
 
     def test_a_row_has_one_disclosure(self):
         self.across(lambda _name: self.assertEqual(self.page.evaluate(_NESTED_DISCLOSURES), []))
@@ -1599,7 +1735,9 @@ class ReferenceBrowserTests(BrowserGate):
     def assert_painted_as_hq(self, paint, mode):
         self.assertIn(mode, paint["mode"].split())
         self.assertEqual(paint["viewer"], paint["page"])
-        self.assertEqual(paint["sidebar"], paint["header"])
+        # The header lets the page show through its surface; the sidebar is that
+        # surface, so they match in colour whatever the header's opacity.
+        self.assertEqual(_opaque(paint["sidebar"]), _opaque(paint["header"]))
         self.assertEqual(paint["title"], paint["ink"])
         self.assertEqual(paint["title_face"], paint["face"])
 

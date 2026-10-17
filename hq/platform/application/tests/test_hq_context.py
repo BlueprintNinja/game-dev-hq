@@ -1,20 +1,26 @@
 """HQ as a subject: its page and its resource, from what HQ already holds."""
 
+import importlib
 from datetime import UTC, timedelta
 from unittest import mock
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
 from hq.domains.control_plane.models import ManagedResource
 from hq.domains.control_plane.observations.host import RENDER_STATUS_KIND, UNIT_KIND
+from hq.domains.jobs.models import Job
 
 from ..container_words import UP_TO_DATE, UPDATE_AVAILABLE
+from ..drawings import Dot, Dots
 from ..hq_context import hq_context
 from ..inventory_testing import store
 from ..ui import Insight
+
+# The package exports a function named work, so the module is named by its path.
+work_module = importlib.import_module("hq.platform.application.hq_context.work")
 
 DIGEST = "sha256:" + "a" * 64
 PREVIOUS = "sha256:" + "b" * 64
@@ -228,6 +234,9 @@ class ProblemTests(TestCase):
 
         self.assertTrue(any("credentials" in item["label"] for item in found.problems))
         self.assertEqual(found.status[0], "serious")
+        # A controller is what HQ sees through, so its problems are drawn there.
+        self.assertEqual(set(found.parts), {"sight"})
+        self.assertEqual({tile.label: tile.tone for tile in found.tiles}["Sees"], "serious")
 
     def test_only_problems_about_hq_are_its_own(self):
         from ..ui import ActionLink
@@ -260,7 +269,11 @@ class ProblemTests(TestCase):
             found = hq_context()
 
         self.assertEqual([item["label"] for item in found.problems], ["A job failed on example-box", "Alerts"])
-        self.assertEqual(found.status, ("serious", "Has a problem"))
+        self.assertEqual(found.status, ("serious", "1 urgent · 1 needs attention"))
+        # Each beside the fact it explains: the machine where HQ runs, the repository its release.
+        self.assertEqual(found.parts, ("where", "release"))
+        tones = {tile.label: tile.tone for tile in found.tiles}
+        self.assertEqual((tones["Runs on"], tones["Release"]), ("serious", "attention"))
 
 
 @SITE
@@ -279,9 +292,47 @@ class PageTests(TestCase):
         response = self.client.get(reverse("hq_self"))
 
         self.assertEqual(response.status_code, 200)
-        for text in ("Release", "Where it runs", "How you reached it", "Its own work", "What it can see"):
+        for text in ("Release", "Runs on", "Reached through", "Jobs", "Readings"):
             self.assertContains(response, text)
         self.assertContains(response, "Delete old routine log entries")
+
+    def test_a_problem_is_drawn_under_the_part_it_is_about_and_the_status_leads_to_it(self):
+        from ..ui import ActionLink
+
+        estate()
+        machine = reverse("control_plane:machine", args=["example-box"])
+        problem = Insight(
+            status="attention", eyebrow="Finding", title="A job failed on example-box", value="", body="",
+            key="about-machine", subject=ActionLink("subject", "example-box", "read", machine),
+        )  # fmt: skip
+        with mock.patch("hq.platform.application.problems._host_entries", return_value=(entry(problem),)):
+            response = self.client.get(reverse("hq_self"))
+
+        html = response.content.decode()
+        self.assertContains(response, '<a class="pill pill-attention" href="#hq-where-heading">1 needs attention</a>')
+        # Not urgent, so a line under its part and nothing framed above the page.
+        self.assertNotContains(response, "problems-here")
+        where, line = html.index('id="hq-where-heading"'), html.index('class="problem-line"')
+        self.assertLess(where, line)
+        self.assertLess(line, html.index('id="hq-work-heading"'))
+
+    def test_an_urgent_problem_is_framed_above_the_page(self):
+        from ..ui import ActionLink
+
+        estate()
+        machine = reverse("control_plane:machine", args=["example-box"])
+        problem = Insight(
+            status="serious", eyebrow="Finding", title="A job failed on example-box", value="", body="",
+            key="about-machine", subject=ActionLink("subject", "example-box", "read", machine),
+        )  # fmt: skip
+        with mock.patch("hq.platform.application.problems._host_entries", return_value=(entry(problem),)):
+            response = self.client.get(reverse("hq_self"))
+
+        html = response.content.decode()
+        self.assertContains(response, 'href="#problems-here">1 urgent</a>')
+        self.assertContains(response, "1 urgent problem")
+        self.assertLess(html.index('id="problems-here"'), html.index('class="fact-band"'))
+        self.assertNotContains(response, 'class="problem-line"')
 
     def test_unreadable_units_render_as_a_sentence(self):
         estate()
@@ -349,3 +400,73 @@ class ResourceTests(TestCase):
 
         with self.assertRaises(InvalidResourceInput):
             list_resource("hq", {"limit": 1}, principal=cli_principal())
+
+
+class ScheduledWorkTests(TestCase):
+    """The page's scheduled work: derived from the declarations and their jobs."""
+
+    def setUp(self):
+        # The host's declarations only; an installed extension's are its own suite's.
+        self.enterContext(mock.patch("hq.platform.application.outbound_work.declared_work", return_value={}))
+
+    def ran(self, kind, ago, state=Job.State.SUCCEEDED):
+        job = Job.objects.create(kind=kind, label=kind, state=state, finished_at=timezone.now() - ago)
+        Job.objects.filter(pk=job.pk).update(created_at=timezone.now() - ago)
+        return job
+
+    def rows(self):
+        return {item.name: item for item in work_module._scheduled_work()}
+
+    def test_a_piece_of_work_shows_its_recent_runs_oldest_first_and_when_it_is_due(self):
+        oldest = self.ran("audit.prune", timedelta(days=2))
+        failed = self.ran("audit.prune", timedelta(days=1), state=Job.State.FAILED)
+        newest = self.ran("audit.prune", timedelta(hours=2))
+
+        row = self.rows()["audit.prune"]
+
+        self.assertEqual((row.every, row.result, row.tone), ("Daily", "Succeeded", "good"))
+        self.assertEqual([dot.filled for dot in row.runs.shown], [True, False, True])
+        self.assertEqual(
+            [dot.url for dot in row.runs.shown],
+            [reverse("jobs:status", args=[job.pk]) for job in (oldest, failed, newest)],
+        )
+        self.assertAlmostEqual(row.next_due, newest.finished_at + timedelta(days=1), delta=timedelta(seconds=1))
+
+    def test_work_never_done_is_due_now_and_says_so(self):
+        row = self.rows()["contacts.inbox"]
+
+        self.assertEqual((row.every, row.result, row.next_due, row.runs), ("Hourly", "Not done yet", None, None))
+
+    def test_every_piece_with_a_cadence_has_a_row_and_none_without(self):
+        self.assertEqual(
+            set(self.rows()), {"audit.prune", "contacts.inbox", "content.sync", "registry.refresh", "sessions.clear"}
+        )
+
+    def test_three_queries_however_many_jobs_there_are(self):
+        for hours in range(40):
+            self.ran("contacts.inbox", timedelta(hours=hours))
+
+        with self.assertNumQueries(3):
+            rows = self.rows()
+
+        self.assertEqual(len(rows["contacts.inbox"].runs.shown), 12)
+
+    def test_the_resource_carries_the_rows_without_the_drawing(self):
+        self.ran("sessions.clear", timedelta(hours=1))
+
+        (row,) = [
+            item
+            for item in work_module.work_json(work_module.Work(scheduled=tuple(self.rows().values())))["scheduled"]
+            if item["name"] == "sessions.clear"
+        ]
+
+        self.assertEqual((row["label"], row["every"], row["result"]), ("Delete expired sessions", "Daily", "Succeeded"))
+        self.assertEqual(len(row["recent"]), 1)
+
+
+class OrderedDotsTests(SimpleTestCase):
+    def test_a_history_keeps_its_order_and_a_part_of_a_whole_leads_with_what_it_counts(self):
+        dots = (Dot(filled=True, tip="a"), Dot(filled=False, tip="b"), Dot(filled=True, tip="c"))
+
+        self.assertEqual([dot.tip for dot in Dots(dots, ordered=True).shown], ["a", "b", "c"])
+        self.assertEqual([dot.tip for dot in Dots(dots).shown], ["a", "c", "b"])
