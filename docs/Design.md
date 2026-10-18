@@ -152,6 +152,33 @@ this network"), or the record's own details. Never a table of contents of the
 page, a pointer to another page (link to it instead), or how HQ works inside
 (a file path, a background mechanism).
 
+**Say what HQ knows, once.** A sentence on a page is derived from the record
+that holds its answer (the registrar the zone record names, the issuer and
+expiry a certificate's status holds), never a generic placeholder or a
+hardcoded string. Each fact appears once, where it belongs: a card does not
+repeat the strip beside it.
+
+**A title states the fact it checks.** "Tokens hold only the permissions HQ
+uses", "Keys are kept in a vault": what was checked, in plain words. Not a
+sweeping claim ("every credential is limited to what HQ needs"), and not
+"knows", "ensures" or "limited".
+
+**A zero is information.** A count of zero says the thing was checked and there
+is none; it stays on the page. Hiding it leaves the reader wondering whether it
+was counted.
+
+**Dense, never empty.** Content sits on a surface; when one is too big or too
+loud, make it compact (one row, tighter padding, an urgent tone only when
+urgent), never bare on the page background. A verdict sits where it belongs (on
+the link between two ends), evidence beside its value, one line per check with
+detail on demand, side-by-side cards of similar height. A card that is mostly
+empty, or a row with a gulf in it, is a layout to redesign, not padding to trim.
+
+**The header is one row.** When room runs out, the search field collapses to a
+button that opens over the navigation, then the sections move behind the
+toggle. The navigation never shrinks below its own content, and the bar's
+controls all take their size from `--control-size`.
+
 **One menu.** `.overflow-menu` for "more actions", the nav dropdown for
 navigation. Every dropdown carries `data-menu`, which gives it the shared
 dismissal (outside click, Escape). Inside a menu every control is a plain row;
@@ -393,6 +420,9 @@ depends on its server having been taught about it. A view may compose only
 what the part shows (the dashboard does for its calendar and links). A part
 whose inputs are known by revision answers an unchanged question with 304.
 
+Pressing a control moves nothing else: its feedback is drawn out of the layout
+or in a line already reserved for it, never inserted beside the button.
+
 A swap keeps what the reader did: the keyboard stays on the control that was
 pressed, a disclosure with an id stays as it was, the page does not scroll,
 and the region is `aria-busy` while it waits. A newer question for a region
@@ -431,6 +461,10 @@ page and fails on one that writes.
    saying what it now covers and why.
 3. A new container of content is a surface: add its selector to the surface
    list, write only its layout.
-4. Run `mise run check` and `mise run browser`, then look at the page at a phone,
+4. A new state of a page (empty, failing, waiting, crowded) gets a fixture in
+   the browser gate, so the layout rules run over it.
+5. Run `mise run check` and `mise run browser`, then look at the page at a phone,
    a tablet and a desktop width. The gates catch classes of mistakes; they do
-   not tell you it reads well.
+   not tell you it reads well. Review by walking a real workflow end to end, not
+   page by page: every entity named is a link, every relationship is visible
+   from both ends, and nothing shows a raw kind name, an empty table or a nag.

@@ -87,9 +87,9 @@ export's parameters, fields, enum members and public methods, without
 annotations so it is identical across the interpreter matrix. A test fails when
 the exports drift from the file, because an extension's binding to a renamed
 field or a new required parameter is a change this repository cannot otherwise
-see. Regenerate it with `python manage.py sdk_contract`, read the diff as the
-review, and decide there whether `PLUGIN_API_VERSION` moves;
-`sdk_contract --check` is the CI form.
+see. Regenerate it with `mise run regen`, read the diff as the review, and
+decide there whether `PLUGIN_API_VERSION` moves; `mise run regen --check`
+fails on drift.
 
 Capability input models inherit `StrictCommand`, so unknown JSON keys fail at
 the boundary instead of being dropped. Class-based views inherit
@@ -136,6 +136,48 @@ clean host environment. That last step reproduces production's dependency
 boundary and catches a missing host pin before composition. In CI it runs
 against host `main`, or the host branch named like the extension's branch when
 one exists ([Coordinated changes](#coordinated-changes)).
+
+### Several extensions in one repository
+
+One repository may hold several extensions, each still its own package (its
+own `pyproject.toml`, `uv.lock` and `src/<package>/`), plugin and signed wheel.
+One repository is one trust domain: its extensions share one signer, that
+repository and its admission workflow, so whoever can sign for one can sign for
+all of them, and the composition set names the same `workflow` for every entry
+of one `repository`, with each entry's `path` (its package directory, `.` when
+omitted).
+
+`plugin-checks.yml` takes the package's `package-dir`, called once per package
+with `secret-scan: false` on all but one call. One run admits them all: the
+admission job is a matrix over the package directories, each leg passing
+`dispatch: "false"`, and a final job that needs every leg starts the
+composition once, so it reads a run in which every package was admitted. That
+job dispatches **Compose** as the action does, with `admission-run` set to
+`$GITHUB_RUN_ID`: the run is still finishing, and Compose takes that
+repository's extensions from it once it has checked that the run is that
+repository's admission workflow on `main` and has not failed.
+
+```yaml
+  admit:
+    # as above, plus:
+    strategy:
+      matrix:
+        package: [packages/example-alpha, packages/example-beta]
+    steps:
+      - uses: joeseverino/severino-hq/.github/actions/admit-plugin@main
+        with:
+          package-dir: ${{ matrix.package }}
+          dispatch: "false"
+          app-client-id: ${{ secrets.HQ_APP_CLIENT_ID }}
+          app-private-key: ${{ secrets.HQ_APP_KEY }}
+```
+
+Each leg retains its own artifact, `admission-<plugin id>`. Compose resolves
+each repository's admission run once and reads every listed extension's
+artifact from it by id (`scripts/admissions.sh`); a listed id with no artifact
+in that run fails the composition. A coordinated branch builds each listed
+extension from its `path`, which must declare that id, and nothing else in the
+repository.
 
 ## Cordon admission
 
@@ -390,28 +432,72 @@ topology template, route, callback or host edit.
 
 ## Shared UI contract
 
-An extension renders HQ's design system and ships no parallel stylesheet for
-ordinary structure. The plugin API guarantees these host templates:
+An extension renders HQ's design system and ships no stylesheet or script of
+its own. Its templates use only the public pieces below, and
+`python -m hq_sdk.validation src` (part of `scripts/check-plugin.sh`) refuses
+anything else: a frame or block not listed, a private partial, a parameter a
+partial does not read, a required one left to whatever the page has in scope,
+or a host tag, filter, class or `data-` hook not listed. The record is the
+`templates` section of `hq_sdk/contract.json`, derived from the host's own
+templates by `manage.py sdk_contract`, which writes these tables too.
 
-| Template | Contract |
-| --- | --- |
-| `base.html` | Authenticated shell, navigation, messages, static assets and security metadata |
-| `partials/_page_head.html` | Page title, lede and optional primary action |
-| `partials/_page_navigation.html` | Sticky, responsive local navigation from `hq_sdk.ui.PageNavigation` |
-| `partials/_kpi_grid.html` | Responsive linked or static KPI collection |
-| `partials/_timeline.html` | Chronological linked events from `hq_sdk.ui.Timeline` |
-| `partials/_stacked_bar_chart.html` | Accessible chart from `hq_sdk.ui.StackedBarChart` |
-| `partials/_empty_state.html` | Empty state and optional action |
-| `partials/_form_field.html` | Label, control, help text and validation errors |
-| `partials/_pagination.html` | Query-preserving pagination |
-| `partials/_referenced_by.html` | What names a thing, drawn by `{% referenced_by %}` |
+A page extends a frame and fills its blocks. It never extends `base.html` or
+draws its own head: the view declares the page (`hq_sdk.pages`), and a head
+action that opens a dialog declares that as well,
+`PageAction("Import", url, modal=PageDialog("import", "Import records", "notes/_import_form.html"))`,
+which `page.html` draws once with the page's context. A block a frame does not
+list is the host's, and an override of it is refused rather than silently
+ignored the day the frame stops rendering it.
 
-Cards, section headings, data tables, list rows, forms, buttons, tags and
-two-column layouts use the classes `tests/fixtures/example_hq_plugin`
-demonstrates. Plugin templates supply domain content; HQ owns layout, tokens,
-responsive rules, accessibility states and visual change. A new shared pattern
-belongs in HQ first; copying host CSS or markup into a plugin is a contract
-failure. The rules those classes follow are in [Design](Design.md).
+<!-- sdk_contract: shared UI contract -->
+
+| Frame | Blocks a page fills | What it is |
+| --- | --- | --- |
+| `confirm_page.html` | `consequences` | A destructive action's confirmation: `consequences` says what will happen. |
+| `list_page.html` | `foot`, `row` (given `forloop`, `row`), `summary` | A `TableListMixin` list: toolbar, table, empty state and pagination. `row` is one row's cells, `summary` sits above the table, `foot` is its `<tfoot>`. |
+| `page.html` | `page` | Any page: the head, actions, dialogs and section navigation, drawn from `page`. |
+
+| Partial | Required | Optional | What it is |
+| --- | --- | --- | --- |
+| `partials/_activity_calendar.html` | `calendar` | `calendar_id` | One month of plan against execution, from `hq_sdk.ui.ActivityCalendar`. |
+| `partials/_ask.html` | `ask` | `extra` | A do-this-now control and how its work stands, from `hq_sdk.outbound.ask`. |
+| `partials/_attention_list.html` | `empty`, `entries` | nothing | Decisions waiting on the operator, from `hq_sdk.ui.Insight` entries. |
+| `partials/_cadence.html` | `cadence` | nothing | Whether a thing happened, period by period, from `hq_sdk.ui.Cadence`. |
+| `partials/_cadence_matrix.html` | `matrix` | `compact`, `label` | Several cadences over the same periods, from `hq_sdk.ui.CadenceMatrix`. |
+| `partials/_chart_tabs.html` | `charts`, `group` | nothing | Up to four charts of one thing in the space of one. |
+| `partials/_dropzone.html` | `field` | `hint`, `title` | A file field that also accepts a drop. |
+| `partials/_empty_state.html` | `message` | `action_label`, `action_url`, `remedy`, `why` | The one empty state: what is missing, then what would fill it. |
+| `partials/_form_field.html` | `field` | nothing | Label, control, help text and validation errors for one form field. |
+| `partials/_insight_grid.html` | `items` | `label` | Readings that need interpreting, each with its next step. |
+| `partials/_job_progress.html` | `job` | nothing | A running job and what it is doing. |
+| `partials/_kpi_grid.html` | `items` | `featured`, `label` | Responsive linked or static figures. |
+| `partials/_line_chart.html` | `chart` | nothing | A measure over time on an axis fitted to it. |
+| `partials/_record_list.html` | `rows` | `empty`, `label` | A compact list of records, from `hq_sdk.ui.ListRow`. |
+| `partials/_stacked_bar_chart.html` | `chart` | nothing | Quantities that add up, from `hq_sdk.ui.StackedBarChart`. |
+| `partials/_timeline.html` | nothing | `plain`, `timeline` | Chronological linked events, from `hq_sdk.ui.Timeline`. |
+| `partials/_week_plan.html` | `plan` | nothing | Which days of the week a thing is scheduled for, from `hq_sdk.ui.WeekPlan`. |
+
+Host tags: `{% empty_value %}`, `{% entity %}`, `{% post_button %}`, `{% reference %}`, `{% referenced_by %}`. Host filters: `|ago`, `|counted:arg`, `|money[:arg]`, `|or_empty`, `|span`, `|web_url`, `|when[:arg]`. Django's own tags and filters, and `{% load %}` of `humanize`, `static` or the extension's own libraries.
+
+Classes: `allocation`, `allocation-legend`, `btn`, `card`, `card-columns`, `chart-axis`, `chart-card`, `chart-data`, `chart-legend`, `compact`, `compact-table`, `count`, `danger`, `data-table`, `date-col`, `domain-charts`, `domain-head`, `domain-head-copy`, `domain-stack`, `errors`, `eyebrow`, `field`, `field-row`, `figure-hero`, `figure-hero-note`, `figure-stats`, `finding`, `finding-evidence`, `form`, `form-actions`, `ghost`, `help`, `inline`, `kv`, `list-rows`, `msg`, `msg-error`, `msg-warning`, `muted`, `notice`, `notice-attention`, `num-col`, `optional-col`, `page-lede`, `pie-chart`, `pie-row`, `pill`, `pill-attention`, `pill-good`, `pill-neutral`, `pill-serious`, `primary`, `print-footer`, `print-only`, `prose-list`, `route-frame`, `route-line`, `route-map`, `route-marker`, `route-scale`, `route-swatch`, `row-actions`, `row-empty`, `row-group`, `row-less`, `row-main`, `row-meta`, `row-more`, `save-bar`, `section-foot`, `section-head`, `section-period`, `split`, `stacked`, `status-tabs`, `subtle-link`, `table-scroll`, `tight-col`, `two-col`, `visually-hidden`, `worth`, `worth-attention`, `worth-good`, `worth-neutral`.
+
+Script hooks: `data-chart`, `data-sort`, `data-submit-busy`, `data-submit-label`, `data-submit-status`, `data-tip`.
+
+<!-- /sdk_contract -->
+
+Plugin templates supply domain content; HQ owns layout, tokens, responsive
+rules, accessibility states and visual change. A class, partial or hook an
+extension needs and this contract lacks belongs in HQ first; copying host CSS
+or markup into a plugin is a contract failure. The rules the classes follow are
+in [Design](Design.md).
+
+What the host writes for a value is pinned by example in
+`hq_sdk/text_examples.json`: `span`, `when`, `when_day`, `counted`, `money` and
+`ago`, regenerated and reviewed like the contract. An extension's test asserts
+what it composed from them (`f"Due in {span(days)}"`) or reads a page through
+`hq_sdk.testing.plain`, which reads the host's no-break spaces as spaces; it
+never writes the host's words or markup out itself. Text that names the
+deployment reads `hq_sdk.site.host()`, never a setting.
 
 An amount is written by `{{ amount|money }}` in a template and
 `hq_sdk.money.money` in Python: "$1,234.50", a true minus sign before the
@@ -430,10 +516,9 @@ filtered list, from those.
 
 Wrap a `.data-table` in `.table-scroll`; HQ keeps its headings visible
 through long result sets with sticky cells, and the table stays the one
-semantic and interactive source. Dense pages declare their sections
-with `PageNavigation((PageSection("overview", "Overview"), ...))`, include
-`partials/_page_navigation.html`, and put the stable `id` and
-`data-page-section` on each section; HQ owns overflow, sticky positioning,
+semantic and interactive source. Dense pages declare their sections on the
+page, `navigation=PageNavigation((PageSection("overview", "Overview"), ...))`,
+which `page.html` draws, and put the stable `id` on each section; HQ owns overflow, sticky positioning,
 scroll-aware current state and fragment history. Labels may change; section
 IDs are durable links.
 

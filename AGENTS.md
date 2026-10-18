@@ -5,14 +5,18 @@ authoritative for human and agentic development in this public repository.
 
 ## Start here
 
-1. Run `git status --short`; preserve unrelated work.
+1. Run `git status --short`; preserve unrelated work. `git fetch` and compare
+   with `origin/main` before designing: work lands from more than one place,
+   and the mechanism you need may already exist there.
 2. Read the nearest code and tests before changing an interface.
 3. While editing, run `mise run fast` (see below). Run `mise run check` before
-   handing work back.
-4. Run `mise run ci` before pushing.
-5. Run `mise run preflight` before calling a change ready. On a small machine,
-   push first and run `mise run preflight --remote`: it reads every check
-   GitHub ran on that commit instead of running `mise run ci`.
+   handing work back when the machine can hold it.
+4. Push. CI runs every gate; `mise run ci` runs the same set locally when you
+   want an answer before pushing.
+5. Run `mise run preflight --remote` before calling a change ready: it reads
+   every check GitHub ran on the pushed commit and adds the local composed
+   suite and the deploy host checks. `mise run preflight` runs `mise run ci`
+   itself instead.
 
 Setup is [mise](https://mise.jdx.dev), `mise install` and uv on the PATH: the
 pinned tools, at the versions in `mise.toml` and the checksums in `mise.lock`.
@@ -21,25 +25,29 @@ virtualenv is made by hand. uv's own pin is in `pyproject.toml` with its hashes
 in `uv.lock`, which is the uv the pipeline installs. The images take uv from its
 own image, pinned by digest in `Dockerfile` and `composition/Dockerfile`. Every
 gate is a task in `mise.toml` named `<job>:<gate>`;
-`mise tasks` lists them and `mise run checks:ruff` runs one. Outside a task,
-run a command with the same dependencies as `uv run --locked python
-manage.py ...`.
+`mise tasks` lists them and `mise run checks:ruff` runs one. `mise run manage --
+<command>` runs `manage.py` with the development settings the gates use.
 
 `mise run fast [BASE]` is the inner loop: the changed files against the merge
 base (`BASE`, `$CHECK_BASE`, then `origin/main`, `main`) are mapped through the
-tree's import graph to the test modules that reach them, plus every test of the
-changed Django apps, the architecture tests, ruff on the changed files, `manage.py
-check`, migration and API document drift, and mypy on changed typed modules.
-`--list` prints the selection. Tens of seconds for a one-domain change; a change
-to a shared layer reaches most of the suite and says so. It reads Python imports
-and app names, so a rule tested only through a string or a template it cannot
-see needs `mise run check`. It never replaces `mise run check`, which also runs
-the suite with `DEBUG` off. A new host domain: `docs/New-Domain.md`.
+tree's import graph to the test modules that import them directly or through
+one module between, plus every test of the changed Django apps and every test
+that names one (its URL namespace or app label), the architecture tests, ruff on the changed files, `manage.py
+check`, drift in every derived file (`mise run regen --check` less the Go
+types), and mypy on changed typed modules. Its tests run with `DEBUG` on, the
+one pass that does. A change to what extensions render
+through (`templates/`, `static/`, `hq_sdk/`, the shared table, page, UI and
+moment modules, template tags) also runs the extensions' own suites, composed,
+when `mise.local.toml` names a set. `--list` prints the selection. Tens of
+seconds for a one-domain change; a change to a shared layer reaches most of the
+suite and says so. It reads Python imports and app names, so a rule tested
+only through a string or a template it cannot see needs `mise run check`. It
+never replaces `mise run check`. A new host domain: `docs/New-Domain.md`.
 
 `mise run check` answers "do my changes work?". `mise run ci` answers "will the
 pipeline accept them?": the aggregates `checks` (ruff and mypy at the locked
-versions, the lockfile, the workflows, the shell gates, the Django deployment
-check, `pip-audit`, the structural bar, Scorecard), `tests` on every Python in
+versions, the lockfile, the workflows, the shell gates, the source tests, the
+Django deployment check, `pip-audit`, the structural bar, Scorecard), `tests` on every Python in
 `PYTHON_VERSIONS` (`scripts/toolchain.env`), `browser`, `controller`, `scan`
 (CodeQL) and `image`: the image build and what an image must pass (it comes
 up healthy and under its unit, carries the host programs and the controller,
@@ -49,11 +57,22 @@ gate list exists once: a gate is added in `mise.toml`, never in a workflow. A
 gate that cannot run fails. `mise run -c ci` keeps going past a failure and
 names every gate that failed.
 
-`mise run check` runs the suite three ways: with `DEBUG` on (`tests:suite`),
-with it off as production runs it (`suite:production`), and (when an extension
-set is supplied) composed with the extensions (`suite:composed`). That third
-pass is the one that catches what CI cannot, because the host and its
-extensions first meet during compose, long after the merge button.
+`mise run check` runs every gate of the Checks job (`checks:*`), the Tests
+job's gates on the default Python (`tests:*`, the suite among them as
+production configures it, with `DJANGO_DEBUG` unset and the coverage floor),
+and, when an extension set is supplied, the suite composed with the extensions
+(`suite:composed`), one task at a time so no two suites share the machine's
+memory. The composed pass is the one that catches what CI cannot, because the
+host and its extensions first meet during compose, long after the merge
+button. A setting whose default follows `DEBUG` is held by a test that loads
+the settings both ways.
+
+A test that reads the repository rather than running the product (the docs,
+the workflows, the Dockerfile, the source itself) carries `@tag("source")`. It
+runs once, on the checkout, in `checks:source`. A whole-suite run leaves the
+tag out, so no image or composed pass runs a test against files the image does
+not ship; a run that names a label runs what it names. A run that asks for a
+tag no test carries fails.
 
 Name the extension set once in a gitignored `mise.local.toml` (copy
 `scripts/mise.local.example.toml`): `HQ_LOCAL_PYTHONPATH` says where the
@@ -63,7 +82,9 @@ by accident. Without it the
 composed pass says it did not run and passes, so public CI and a fresh checkout
 are unaffected, but locally that means the gate covers less, which is the
 reason the file exists. `REQUIRE_COMPOSED=1 mise run suite:composed` fails
-instead; `mise run preflight` runs it that way.
+instead. `mise run suite:as-image` runs the composed suite as the image does:
+in a copy of only the files `Dockerfile.dockerignore` admits, with `DEBUG` off
+and `SEVERINO_HQ_SOURCE` stamped. `mise run preflight` runs it, required.
 
 Local development uses `mise run dev`. It collects assets and runs the same
 ASGI/Uvicorn path as production with reload enabled.
@@ -139,7 +160,8 @@ topology edges its readings declare are all derived from those, and admission
 fails at import on a duplicate or undeclared name. So is the bridge contract:
 `manage.py bridge_contract` writes the kinds, the connection providers, each
 reading's record and the values both sides check from the same declarations,
-then `go generate ./...` in `controller/` regenerates the Go types. The
+then `go generate ./...` in `controller/` regenerates the Go types
+(`mise run regen` runs both). The
 controller half (its readers, actions and probe) is Go, in
 `controller/providers/`, registered in `providers.New`; a provider is handed
 its own connection as a typed value (`r.Supplied.For`), never a setting by name.
@@ -156,6 +178,11 @@ same review, and should fail when its path matches nothing rather than pass.
 
 ## Rules that eliminate bug classes
 
+- A new mechanism states its security properties in its design. What a
+  resource can do is derived from topology facts, never from a per-kind flag.
+- Never interpolate a newline-separated file list into `eval` or `bash -c`:
+  each line runs as a command. Split it with `set --` or an array and pass
+  `"$@"`.
 - Reject unknown input; Pydantic plugin commands inherit `StrictCommand`.
 - Enforce authorization in the shared capability/view layer, not ad hoc in a
   template or handler.
@@ -175,7 +202,7 @@ same review, and should fail when its path matches nothing rather than pass.
   app. `python -m hq_sdk.validation src` enforces this.
 - The shape of `hq_sdk` is committed in `hq_sdk/contract.json` and a test holds
   the exports to it. A change there is a fleet change: regenerate with
-  `manage.py sdk_contract`, review the diff, and decide whether
+  `mise run regen`, review the diff, and decide whether
   `PLUGIN_API_VERSION` moves. What the annotations promise is held from an
   extension's side by `tests/sdk_consumer/consumer.py`, which mypy checks: a
   valid call pins its return with `assert_type`, and a call an extension must
@@ -183,7 +210,7 @@ same review, and should fail when its path matches nothing rather than pass.
   new export a case there; an annotation that slides to `Any` fails it.
 - The machine API's OpenAPI 3.2 document is derived (`hq/platform/api/openapi.py`) and
   served at `/api/v2/openapi.json`; `hq/platform/api/hq-api.openapi.json` is the host's
-  copy for clients. Regenerate it with `manage.py api_openapi` after changing a
+  copy for clients. Regenerate it with `mise run regen` after changing a
   route, capability, resource or domain; `--check` fails the gate on drift.
   The signed-in operator reads it rendered at `/api/docs/` (System > API), a
   vendored Scalar bundle: to upgrade it, replace
@@ -193,8 +220,8 @@ same review, and should fail when its path matches nothing rather than pass.
   messages in `hq/domains/control_plane/bridge_base.json`, joined to what the
   registry declares), `controller/api/hq-connections.openapi.json` and
   `hq/config/controller-connections.json`; `--check` fails the gate when one
-  is behind. Never edit those three files, and regenerate the Go types after
-  (`go generate ./...` in `controller/`).
+  is behind. Never edit those three files: `mise run regen` rewrites them and
+  then the Go types.
 - List views use `TableListMixin`; direct view mutations and MCP model access
   are rejected by architecture tests.
 - A link to a command's form is built by `hq.platform.application.action_links.command_url`
@@ -282,8 +309,9 @@ this repository's graph will report as safe. Grep the extension checkouts.
 
 ## Definition of done
 
-"Ready" means `mise run preflight` exits 0. It runs `mise run ci`, where a
-gate that cannot run fails, the composed suite with the extension set required,
+"Ready" means `mise run preflight` exits 0, or `mise run preflight --remote`
+for a pushed commit. It runs `mise run ci` (or reads every check GitHub ran),
+where a gate that cannot run fails, the composed suite with the extension set required,
 and read-only checks of the deploy host over SSH (`SEVERINO_HQ_DEPLOY_HOST`): the checkout's
 ownership, the runner's sudo rule, the root-owned programs against this commit,
 the installed units and free disk. `--skip-host` runs the local gates only and
@@ -298,7 +326,7 @@ exits 2, never 0.
   `mise run browser` (it installs the WebKit the locked Playwright pins: HQ is read in Safari).
   A UI change is also walked in a real browser
   through the workflow it serves, not checked page by page.
-- `mise run ci` passes before a push, including its code scanning gates (no
+- Every CI gate passes on the pushed commit, including its code scanning gates (no
   CodeQL alert and every file-based Scorecard check at 10) and the browser
   layout gate, which it always runs.
 - A browser check selects markup only through `SELECTORS` in

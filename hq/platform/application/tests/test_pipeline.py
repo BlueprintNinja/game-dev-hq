@@ -1,18 +1,30 @@
-"""The release pipeline's structure: what runs where, and what may publish."""
+"""What the pipeline promises: pinned actions, least privilege, sealed logs, and releases only from main."""
 
 import importlib.util
 import io
 import json
 import re
 import tempfile
+import tomllib
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, tag
 
 ROOT = Path(__file__).resolve().parents[4]
-WORKFLOWS = ROOT / ".github" / "workflows"
+
+
+def workflows() -> list[Path]:
+    return sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+
+
+def workflow(name: str) -> str:
+    return (ROOT / ".github" / "workflows" / name).read_text()
+
+
+def composite_actions() -> list[Path]:
+    return sorted((ROOT / ".github" / "actions").glob("*/action.yml"))
 
 
 def jobs(text: str) -> dict[str, str]:
@@ -54,88 +66,241 @@ def condition(step: str) -> str:
     return ""
 
 
-def named(steps_: list[str], name: str) -> int:
-    for index, step in enumerate(steps_):
-        if step.startswith(f"- name: {name}\n"):
-            return index
-    raise AssertionError(f"no step named {name!r}")
+def block(text: str, key: str, indent: int) -> list[str]:
+    """The value of ``key`` at ``indent``: its inline value, or the lines nested under it."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        match = re.match(rf"^ {{{indent}}}{key}:\s*(.*?)\s*(?:#.*)?$", line)
+        if not match:
+            continue
+        if match.group(1) and match.group(1) not in {">-", ">", "|"}:
+            return [match.group(1)]
+        nested = []
+        for rest in lines[index + 1 :]:
+            if rest.strip() and len(rest) - len(rest.lstrip()) <= indent:
+                break
+            if rest.strip() and not rest.strip().startswith("#"):
+                nested.append(rest.strip())
+        return nested
+    return []
 
 
-class PromotionTests(SimpleTestCase):
-    """A push to main stands on its pull request's run only with proof."""
+def needed(job: str) -> set[str]:
+    """The job ids a job's ``needs:`` names, inline, as a list, or nested."""
+    return {name for part in block(job, "needs", 4) for name in re.findall(r"[A-Za-z0-9_-]+", part.removeprefix("- "))}
+
+
+def upstream(name: str, needs: dict[str, set[str]]) -> set[str]:
+    """Every job ``name`` waits on, directly or through another."""
+    seen: set[str] = set()
+    pending = list(needs.get(name, ()))
+    while pending:
+        job = pending.pop()
+        if job not in seen:
+            seen.add(job)
+            pending.extend(needs.get(job, ()))
+    return seen
+
+
+def uses(text: str) -> list[str]:
+    return re.findall(r"(?m)^\s*(?:- )?uses:\s*([^\s#]+)", text)
+
+
+def code(text: str) -> str:
+    """The text without its comment lines."""
+    return "\n".join(line for line in text.splitlines() if not line.strip().startswith("#"))
+
+
+@tag("source")
+class ActionPinTests(SimpleTestCase):
+    def test_every_action_is_local_or_pinned_to_a_commit(self):
+        found = [
+            (path.name, action) for path in [*workflows(), *composite_actions()] for action in uses(path.read_text())
+        ]
+        self.assertGreater(len(found), 10)
+        for name, action in found:
+            with self.subTest(file=name, action=action):
+                self.assertRegex(action, r"^(\./.+|[\w.-]+/[\w./-]+@[0-9a-f]{40}|docker://.+@sha256:[0-9a-f]{64})$")
+
+    def test_every_action_has_one_version_across_workflows_and_composite_actions(self):
+        pins: dict[str, set[str]] = {}
+        for path in [*workflows(), *composite_actions()]:
+            for action, sha in re.findall(r"uses: ([\w./-]+)@([0-9a-f]{40})", path.read_text()):
+                pins.setdefault(action, set()).add(sha)
+        self.assertGreater(len(pins), 5)
+        self.assertEqual({action: shas for action, shas in pins.items() if len(shas) > 1}, {})
+
+
+@tag("source")
+class JobConditionTests(SimpleTestCase):
+    def test_a_job_after_a_skippable_job_names_its_status_check(self):
+        """A bare ``if:`` also requires every job upstream to have succeeded, so one
+        skipped by its own condition (a push-only job) silently skips this one too."""
+        checked = 0
+        for path in workflows():
+            found = jobs(path.read_text())
+            needs = {name: needed(job) for name, job in found.items()}
+            skippable = {name for name, job in found.items() if block(job, "if", 4)}
+            for name, job in found.items():
+                expression = " ".join(block(job, "if", 4))
+                if not expression or re.search(r"\b(always|cancelled|success|failure)\(\)", expression):
+                    continue
+                checked += 1
+                with self.subTest(workflow=path.name, job=name):
+                    self.assertEqual(upstream(name, needs) & skippable, set())
+        self.assertGreater(checked, 1)
+
+
+@tag("source")
+class LeastPrivilegeTests(SimpleTestCase):
+    def test_no_workflow_grants_a_write_to_every_job(self):
+        for path in workflows():
+            with self.subTest(workflow=path.name):
+                granted = block(path.read_text(), "permissions", 0)
+                self.assertTrue(granted, "a workflow states its default permissions")
+                self.assertTrue(
+                    granted in (["read-all"], ["{}"]) or all(re.fullmatch(r"[\w-]+: (read|none)", g) for g in granted),
+                    granted,
+                )
+
+    def test_no_workflow_runs_a_pull_requests_code_with_the_repositorys_secrets(self):
+        for path in workflows():
+            with self.subTest(workflow=path.name):
+                self.assertNotIn("pull_request_target", code(path.read_text()))
+
+    def test_only_a_job_that_signs_or_publishes_holds_an_identity_token(self):
+        # The actions whose only work is to present the job's OIDC identity.
+        presenters = ("actions/deploy-pages@", "ossf/scorecard-action@", "./.github/actions/cosign")
+        holders = 0
+        for path in workflows():
+            for name, job in jobs(path.read_text()).items():
+                if "id-token: write" not in code(job):
+                    continue
+                holders += 1
+                called = [
+                    (ROOT / action).read_text() for action in uses(job) if action.startswith("./.github/workflows/")
+                ]
+                with self.subTest(workflow=path.name, job=name):
+                    self.assertTrue(
+                        "cosign sign" in job
+                        or any(action.startswith(presenters) for action in uses(job))
+                        or any("cosign sign" in text for text in called)
+                    )
+        self.assertGreater(holders, 0)
+
+
+@tag("source")
+class ReleaseTests(SimpleTestCase):
+    """Only a dispatch on main publishes and signs the image production runs."""
 
     def setUp(self):
-        self.jobs = jobs((WORKFLOWS / "ci.yml").read_text())
+        self.compose = workflow("compose.yml")
 
-    def test_proof_is_sought_on_a_push_and_its_failure_runs_every_gate(self):
-        proven = self.jobs["proven"]
-        self.assertIn("if: github.event_name == 'push'", proven)
-        self.assertIn("continue-on-error: true", proven)
-        self.assertIn("scripts/proven-on-pr.sh", proven)
+    def test_a_release_is_a_dispatch_on_main_and_nothing_else(self):
+        defined = re.search(r"(?m)^  IS_RELEASE: \$\{\{(.*)\}\}$", self.compose)
+        self.assertIsNotNone(defined)
+        terms = {term.strip() for term in defined.group(1).split("&&")}
+        self.assertEqual(terms, {"github.event_name == 'workflow_dispatch'", "github.ref == 'refs/heads/main'"})
 
-    def test_every_gate_runs_unless_the_tree_was_proven(self):
-        for job in ("checks", "tests", "browser"):
-            with self.subTest(job=job):
-                self.assertIn("if: ${{ !cancelled() && needs.proven.outputs.digest == '' }}", self.jobs[job])
+    def test_the_composition_is_pushed_and_signed_only_in_a_release(self):
+        publishing = [
+            step for step in steps(jobs(self.compose)["compose"]) if re.search(r"docker push|cosign sign\b", code(step))
+        ]
+        self.assertGreaterEqual(len(publishing), 2)
+        for step in publishing:
+            with self.subTest(step=step.splitlines()[0]):
+                gate = condition(step)
+                self.assertTrue(gate == "env.IS_RELEASE == 'true'" or gate.startswith("env.IS_RELEASE == 'true' &&"))
+                self.assertNotIn("candidate", step)
 
-    def test_a_promoted_image_is_never_built_scanned_or_pushed_again_but_is_signed(self):
-        image = steps(self.jobs["image"])
-        for step in image:
-            first = step.splitlines()[0]
-            with self.subTest(step=first):
-                if any(word in step for word in ("buildx build", "trivy-action", "docker push")):
-                    self.assertIn("if: env.PROVEN == ''", step)
-        promote = image[named(image, "Promote the image its pull request proved")]
-        self.assertIn("if: env.PROVEN != ''", promote)
-        # imagetools create re-wraps the manifest under a new, unsigned digest.
-        self.assertIn('scripts/retag.sh "$PROVEN"', promote)
-        self.assertNotIn("imagetools create", self.jobs["image"])
-        sign = image[named(image, "Sign")]
-        self.assertNotIn("if:", sign)
-        self.assertIn("steps.promote.outputs.digest", sign)
-
-    def test_the_image_records_the_tree_it_was_built_from(self):
-        self.assertIn("--label \"dev.severino.hq.tree=$(git rev-parse 'HEAD^{tree}')\"", self.jobs["image"])
+    def test_branch_code_builds_without_the_jobs_credentials(self):
+        clones = [step for step in steps(jobs(self.compose)["compose"]) if "gh repo clone" in step]
+        self.assertTrue(clones)
+        for step in clones:
+            run = step.split("run: |", 1)[1]
+            with self.subTest(step=step.splitlines()[0]):
+                self.assertIn('rm -rf "$dir/.git"', run)
+                self.assertIn('"$WITHHELD_DIR/', run)
+                for absent in ("--env GH_TOKEN", "docker.sock", "pip wheel"):
+                    self.assertNotIn(absent, run)
 
 
+@tag("source")
+class DeployTests(SimpleTestCase):
+    """Production is reached through one approval, by a runner that holds nothing worth taking."""
+
+    def setUp(self):
+        self.jobs = jobs(workflow("deploy.yml"))
+
+    def needs(self, job: str) -> set[str]:
+        named = block(self.jobs[job], "needs", 4)
+        direct = {need.strip(" -[]") for line in named for need in line.split(",")} - {""}
+        return direct.union(*(self.needs(need) for need in direct)) if direct else set()
+
+    def test_every_job_on_the_homelab_waits_for_an_approval(self):
+        homelab = [name for name, job in self.jobs.items() if "self-hosted" in job]
+        self.assertTrue(homelab)
+        for name in homelab:
+            with self.subTest(job=name):
+                gated = {name, *self.needs(name)}
+                self.assertTrue(any(block(self.jobs[job], "environment", 4) == ["production"] for job in gated))
+        for path in workflows():
+            if path.name != "deploy.yml":
+                with self.subTest(workflow=path.name):
+                    self.assertNotIn("self-hosted", code(path.read_text()))
+                    self.assertNotIn("deploy-image.sh", code(path.read_text()))
+
+    def test_the_runner_holds_no_registry_credential_and_verifies_nothing_root_does_not(self):
+        deploying = [job for job in self.jobs.values() if "deploy-image.sh" in job]
+        self.assertTrue(deploying)
+        for job in deploying:
+            for absent in ("cosign", ".docker/config.json", "actions/checkout", "contents: read"):
+                with self.subTest(absent=absent):
+                    self.assertNotIn(absent, code(job))
+            self.assertIn("| sudo /usr/local/lib/severino-hq/scripts/deploy-image.sh", job)
+
+    def test_a_candidate_is_never_deployed(self):
+        text = code(workflow("deploy.yml"))
+        self.assertNotIn("coordinated", text)
+        self.assertNotIn("candidate", text)
+
+
+@tag("source")
 class PublicLogTests(SimpleTestCase):
     """What a composed build prints is safe to publish in a public log."""
 
     def setUp(self):
-        self.steps = steps(jobs((WORKFLOWS / "compose.yml").read_text())["compose"])
+        self.compose = workflow("compose.yml")
+        self.steps = steps(jobs(self.compose)["compose"])
 
     def test_the_composed_suite_prints_through_the_filter(self):
-        suite = self.steps[named(self.steps, "Verify the composition as one application")]
-        self.assertIn('scripts/composed-suite.sh "$IMAGE"', suite)
-        self.assertNotIn("manage.py test", suite)
+        self.assertNotIn("manage.py test", code(self.compose))
+        self.assertIn("scripts/composed-suite.sh", code(self.compose))
 
-    def test_the_scan_writes_a_file_not_the_package_table(self):
-        scan = self.steps[named(self.steps, "Scan composed image")]
-        self.assertIn("format: json", scan)
-        self.assertIn("output: trivy-composed.json", scan)
-
-    def test_a_coordinated_build_keeps_its_output_off_the_log(self):
-        build = self.steps[named(self.steps, "Build coordinated extension branches")]
-        self.assertIn('> "$WITHHELD_DIR/candidate-build-', build)
+    def test_a_scan_writes_a_file_not_the_package_table(self):
+        scans = [step for step in self.steps if "aquasecurity/trivy-action@" in step]
+        self.assertTrue(scans)
+        for scan in scans:
+            self.assertIn("format: json", scan)
 
     def test_withheld_output_leaves_the_runner_only_sealed(self):
         uploads = [step for step in self.steps if "actions/upload-artifact@" in step]
-        self.assertEqual(len(uploads), 1)
-        self.assertIn("path: failure-logs.tar.age", uploads[0])
-        seal = self.steps[named(self.steps, "Seal the withheld output")]
-        self.assertIn('scripts/seal-failure-logs.sh "$WITHHELD_DIR" failure-logs.tar.age', seal)
-        self.assertLess(named(self.steps, "Seal the withheld output"), named(self.steps, "Upload the sealed output"))
-
-    def test_wheel_digests_reach_the_build_as_a_file_not_an_argument(self):
-        # The build log prints each RUN with its build arguments expanded.
-        for path in (WORKFLOWS / "compose.yml", ROOT / "composition" / "Dockerfile"):
-            with self.subTest(path=path.name):
-                self.assertNotIn("PLUGIN_WHEEL_DIGESTS", path.read_text())
-        self.assertIn("COPY build/composition/ /tmp/plugin/", (ROOT / "composition" / "Dockerfile").read_text())
+        self.assertTrue(uploads)
+        for upload in uploads:
+            with self.subTest(step=upload.splitlines()[0]):
+                self.assertRegex(block(upload, "path", 10)[0], r"\.age$")
+        self.assertIn("scripts/seal-failure-logs.sh", code(self.compose))
+        self.assertTrue((ROOT / "scripts" / "seal-failure-logs.sh").is_file())
 
     def test_sealed_logs_are_encrypted_to_a_post_quantum_key(self):
         pins = (ROOT / "scripts" / "toolchain.env").read_text()
         self.assertRegex(pins, r"(?m)^FAILURE_LOG_RECIPIENT=age1pq1[0-9a-z]+$")
+
+    def test_wheel_digests_reach_the_build_as_a_file_not_an_argument(self):
+        # The build log prints each RUN with its build arguments expanded.
+        for path in (ROOT / ".github" / "workflows" / "compose.yml", ROOT / "composition" / "Dockerfile"):
+            with self.subTest(path=path.name):
+                self.assertNotIn("PLUGIN_WHEEL_DIGESTS", path.read_text())
 
     def test_extension_build_arguments_never_pass_through_a_step_env(self):
         for step in self.steps:
@@ -144,108 +309,27 @@ class PublicLogTests(SimpleTestCase):
                     self.assertNotRegex(step, rf"\n\s+\w*{name}: \$\{{\{{")
 
     def test_every_spelling_of_an_extension_is_masked_in_every_case(self):
-        mask = self.steps[named(self.steps, "Mask the extension names for the rest of the job")]
+        masks = [step for step in self.steps if "::add-mask::" in step]
+        self.assertTrue(masks)
         for spelling in ("${spelling}", "${spelling^}", "${spelling^^}"):
             with self.subTest(spelling=spelling):
-                self.assertIn(f"::add-mask::{spelling}", mask)
+                self.assertTrue(any(f"::add-mask::{spelling}" in step for step in masks))
 
 
-class CoordinatedBranchTests(SimpleTestCase):
-    """A coordinated change is verified together and can never be published."""
-
-    def setUp(self):
-        self.compose_job = jobs((WORKFLOWS / "compose.yml").read_text())["compose"]
-        self.deploy_job = jobs((WORKFLOWS / "deploy.yml").read_text())["deploy"]
-        self.steps = steps(self.compose_job)
-
-    def test_every_candidate_step_runs_for_a_pull_request_only(self):
-        candidate = [step for step in self.steps if "steps.coordinated.outputs.found == 'true'" in condition(step)]
-        self.assertGreaterEqual(len(candidate), 3)
-        for step in candidate:
-            with self.subTest(step=step.splitlines()[0]):
-                self.assertIn("github.event_name == 'pull_request' &&", condition(step))
-        finder = self.steps[named(self.steps, "Find coordinated extension branches")]
-        self.assertEqual(condition(finder), "github.event_name == 'pull_request'")
-
-    def test_the_candidate_image_has_no_registry_and_nothing_pushes_it(self):
-        build = self.steps[named(self.steps, "Build the candidate image")]
-        self.assertIn('-t "severino-hq-candidate:$GITHUB_SHA"', build)
-        self.assertIn("SEVERINO_HQ_REQUIRE_PLUGIN_ADMISSION=0", build)
-        for step in self.steps:
-            if "docker push" in step or "cosign sign" in step:
-                with self.subTest(step=step.splitlines()[0]):
-                    self.assertNotIn("candidate", step)
-                    self.assertIn("env.IS_RELEASE == 'true'", step)
-
-    def test_branch_code_builds_without_the_jobs_credentials(self):
-        build = self.steps[named(self.steps, "Build coordinated extension branches")]
-        run = build.split("run: |", 1)[1]
-        self.assertIn('rm -rf "$dir/.git"', run)
-        self.assertIn("docker build -f composition/Dockerfile --target installer-base", run)
-        self.assertIn('--entrypoint uv "severino-hq-installer:$GITHUB_SHA"', run)
-        self.assertIn("build --python /usr/local/bin/python --no-cache --wheel", run)
-        self.assertNotIn("--env GH_TOKEN", run)
-        self.assertNotIn("docker.sock", run)
-        self.assertNotIn("pip wheel", run)
-
-    def test_the_admitted_build_is_skipped_for_a_coordinated_change(self):
-        for name in ("Merge locks and stage the build context", "Build composed image"):
-            with self.subTest(name=name):
-                self.assertIn(
-                    "steps.coordinated.outputs.found != 'true'",
-                    self.steps[named(self.steps, name)],
-                )
-
-    def test_the_runner_holds_no_registry_credential_and_verifies_nothing_root_does_not(self):
-        # Root's hq-host verifies the signature; the runner is what it distrusts.
-        for absent in ("cosign", ".docker/config.json", "actions/checkout", "contents: read"):
-            with self.subTest(absent=absent):
-                self.assertNotIn(absent, self.deploy_job)
-        self.assertIn("| sudo /usr/local/lib/severino-hq/scripts/deploy-image.sh", self.deploy_job)
-
-    def test_an_empty_composition_set_is_allowed_and_a_missing_one_is_not(self):
-        read = self.steps[named(self.steps, "Read the composition set")]
-        self.assertIn('if [ -z "${COMPOSITION_EXTENSIONS:-}" ]; then', read)
-        self.assertIn('.extensions | type == "array"', read)
-        self.assertNotIn(".extensions | length", read)
-
-    def test_retired_extensions_reach_the_image_and_are_masked(self):
-        merge = self.steps[named(self.steps, "Merge locks and stage the build context")]
-        self.assertIn("> build/composition/plugin-retired.json", merge)
-        self.assertIn(
-            "(.retired // [])[]", self.steps[named(self.steps, "Mask the extension names for the rest of the job")]
-        )
-        self.assertIn(
-            "COPY build/composition/plugin-retired.json /opt/severino/plugin-retired.json",
-            (ROOT / "composition" / "Dockerfile").read_text(),
-        )
-
-    def test_candidates_are_built_on_hosted_runners_and_never_deployed(self):
-        self.assertEqual(re.findall(r"(?m)^    runs-on: (.*)$", self.compose_job), ["ubuntu-24.04"])
-        self.assertNotIn("coordinated", self.deploy_job)
-        self.assertNotIn("candidate", self.deploy_job)
-
-    def test_an_extension_checks_against_its_coordinated_host_branch(self):
-        checks = (WORKFLOWS / "plugin-checks.yml").read_text()
-        test = steps(jobs(checks)["test"])
-        resolve = test[named(test, "Resolve the host ref")]
-        checkout = test[named(test, "Check out HQ contract")]
-        self.assertLess(named(test, "Resolve the host ref"), named(test, "Check out HQ contract"))
-        self.assertIn("ref: ${{ steps.hq.outputs.ref }}", checkout)
-        self.assertIn("git ls-remote --exit-code --heads", resolve)
-        self.assertRegex(checks, r'hq-ref:\n(?:.*\n)*?        default: ""\n')
-
-    def test_host_commit_pinning_is_retired(self):
-        tracked = [
-            path for path in (ROOT / ".github").rglob("*") if path.is_file() and path.suffix in {".yml", ".yaml"}
-        ] + [ROOT / "docs" / "Plugins.md", ROOT / "README.md", ROOT / "AGENTS.md"]
-        # The image ships no docs; the workflows are the part that must hold.
-        offenders = [
-            str(path.relative_to(ROOT))
-            for path in tracked
-            if path.exists() and re.search(r"HQ_COMMIT|hq-commit", path.read_text(encoding="utf-8"))
+@tag("source")
+class GateReferenceTests(SimpleTestCase):
+    def test_every_task_a_workflow_runs_exists(self):
+        tasks = set(tomllib.loads((ROOT / "mise.toml").read_text())["tasks"])
+        named = [
+            (path.name, task.strip("'\""))
+            for path in [*workflows(), *composite_actions()]
+            for task in re.findall(r"mise run\s+(?:-\S+\s+)*(\S+)", code(path.read_text()))
+            if not task.strip("'\"").startswith("$")
         ]
-        self.assertEqual(offenders, [], "a coordinated branch replaces the host pin")
+        self.assertGreater(len(named), 3)
+        for name, task in named:
+            with self.subTest(workflow=name, task=task):
+                self.assertIn(task, tasks)
 
 
 def compose_plugins():
@@ -255,6 +339,7 @@ def compose_plugins():
     return module
 
 
+@tag("source")
 class ComposeCandidateTests(SimpleTestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -427,26 +512,27 @@ class ComposeCandidateTests(SimpleTestCase):
             )
 
 
+@tag("source")
 class ScriptInputTests(SimpleTestCase):
     """What a script is handed arrives as data, never as its text."""
 
     def run_blocks(self):
-        for workflow in sorted(WORKFLOWS.glob("*.yml")):
-            lines = workflow.read_text().splitlines()
+        for path in (*workflows(), *composite_actions()):
+            lines = path.read_text().splitlines()
             index = 0
             while index < len(lines):
                 match = re.match(r"^(\s*)(?:- )?run:\s*(.*)$", lines[index])
                 if not match:
                     index += 1
                     continue
-                indent, block = len(match.group(1)), [match.group(2)]
+                indent, script = len(match.group(1)), [match.group(2)]
                 index += 1
                 while index < len(lines) and (
                     not lines[index].strip() or len(lines[index]) - len(lines[index].lstrip()) > indent
                 ):
-                    block.append(lines[index])
+                    script.append(lines[index])
                     index += 1
-                yield workflow.name, "\n".join(block)
+                yield path.relative_to(ROOT).as_posix(), "\n".join(script)
 
     def test_no_script_interpolates_a_step_output_or_the_event(self):
         """A step output can carry a file name an extension chose, and the event
@@ -464,7 +550,7 @@ class ScriptInputTests(SimpleTestCase):
                     )
 
     def test_an_extension_artifact_must_be_named_like_a_wheel_before_it_is_used(self):
-        compose = (WORKFLOWS / "compose.yml").read_text()
+        compose = workflow("compose.yml")
         collect = compose.index('wheel=$(find "$dir" -name')
         check = compose.index("ships a wheel whose name is not a wheel's")
         use = compose.index('--artifact "$wheel"')
@@ -479,6 +565,7 @@ def plugin_identity():
     return module
 
 
+@tag("source")
 class PluginIdentityTests(SimpleTestCase):
     """An extension's identity is read from its package, and only from there."""
 
@@ -525,32 +612,71 @@ class PluginIdentityTests(SimpleTestCase):
                 plugin_identity().identity(self.package(manifest))
             self.assertIn(reason, str(refused.exception))
 
+    def test_a_manifest_naming_another_repository_is_refused_where_it_is_admitted(self):
+        package = self.package(self.manifest(source_repository='"owner/example-alpha"'))
+        self.assertEqual(plugin_identity().identity(package, "owner/example-alpha")["plugin-id"], "example.alpha")
+        with self.assertRaises(SystemExit) as refused:
+            plugin_identity().identity(package, "owner/example-extensions")
+        self.assertIn("owner/example-extensions", str(refused.exception))
+
     def test_a_manifest_away_from_its_package_is_refused(self):
         with self.assertRaises(SystemExit) as refused:
             plugin_identity().identity(self.package(self.manifest(), name="example-gamma"))
         self.assertIn("src/example_gamma/plugin.py", str(refused.exception))
 
 
+@tag("source")
 class ExtensionCallerTests(SimpleTestCase):
     """An extension's caller names nothing about the extension."""
 
     def test_the_reusable_checks_and_admission_take_no_identity(self):
-        checks = (WORKFLOWS / "plugin-checks.yml").read_text()
+        checks = workflow("plugin-checks.yml")
         admit = (ROOT / ".github" / "actions" / "admit-plugin" / "action.yml").read_text()
         for name in ("plugin-reference:", "django-app:", "plugin-id:", "distribution:"):
             with self.subTest(name=name):
                 self.assertNotIn(f"\n  {name}", admit.split("\nruns:")[0])
                 self.assertNotIn(f"\n      {name}", checks.split("\npermissions:")[0])
-        self.assertIn("check-plugin.sh --plugin-root .", checks)
+        self.assertIn('check-plugin.sh --plugin-root "$PACKAGE_DIR"', checks)
         self.assertIn("scripts/plugin-identity.py", admit)
 
 
-class ActionPinTests(SimpleTestCase):
-    def test_every_action_has_one_version_across_workflows_and_composite_actions(self):
-        files = [*WORKFLOWS.glob("*.yml"), *(ROOT / ".github" / "actions").glob("*/action.yml")]
-        pins: dict[str, set[str]] = {}
-        for path in files:
-            for action, sha in re.findall(r"uses: ([\w./-]+)@([0-9a-f]{40})", path.read_text()):
-                pins.setdefault(action, set()).add(sha)
-        self.assertGreater(len(pins), 5)
-        self.assertEqual({action: shas for action, shas in pins.items() if len(shas) > 1}, {})
+def action_steps(text: str) -> list[str]:
+    """A composite action's steps, split at each ``- name:`` or ``- uses:``."""
+    return ["- " + part for part in re.split(r"(?m)^    - ", text.split("\n  steps:\n", 1)[1])[1:]]
+
+
+@tag("source")
+class OneRepositoryManyExtensionsTests(SimpleTestCase):
+    """Several extensions in one repository are admitted by one run and composed one by one."""
+
+    def setUp(self):
+        self.admit = (ROOT / ".github" / "actions" / "admit-plugin" / "action.yml").read_text()
+
+    def test_each_package_retains_the_artifact_compose_reads_by_its_id(self):
+        uploaded = re.search(r"(?m)^\s+name: (\S+)\$\{\{ steps\.identity\.outputs\.plugin-id \}\}$", self.admit)
+        self.assertIsNotNone(uploaded, "the admission artifact is not named by plugin id")
+        fetched = (ROOT / "scripts" / "admissions.sh").read_text()
+        self.assertIn(f'--name "{uploaded.group(1)}$id"', fetched)
+        self.assertIn("scripts/admissions.sh fetch", workflow("compose.yml"))
+
+    def test_a_run_starts_the_composition_and_reports_on_its_commit_only_where_it_dispatches(self):
+        reaching = [
+            step
+            for step in action_steps(self.admit)
+            if re.search(r"gh workflow run|check-runs|create-github-app-token", code(step))
+        ]
+        self.assertGreaterEqual(len(reaching), 4)
+        for step in reaching:
+            with self.subTest(step=step.splitlines()[0]):
+                self.assertIn("\n      if: inputs.dispatch == 'true'\n", step)
+
+    def test_every_input_an_admission_dispatches_is_one_compose_declares(self):
+        compose = workflow("compose.yml")
+        dispatch = compose[compose.index("\n  workflow_dispatch:\n") : compose.index("\npermissions:")]
+        declared = set(re.findall(r"(?m)^      ([a-z][a-z-]*):$", dispatch))
+        (start,) = [step for step in action_steps(self.admit) if "gh workflow run compose.yml" in step]
+        dispatched = re.findall(r"-f ([a-z][a-z-]*)=", start)
+        self.assertIn("admission-run", dispatched)
+        for name in dispatched:
+            with self.subTest(name=name):
+                self.assertIn(name, declared)

@@ -28,7 +28,9 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 from django.conf import settings
 from django.db import connections
@@ -39,6 +41,8 @@ from django.test.runner import (
     RemoteTestRunner,
     _init_worker,
 )
+
+from hq.config.sandbox import sweep_abandoned
 
 
 def performance_cores() -> int | None:
@@ -255,10 +259,39 @@ def require_tests_from(suite: unittest.TestSuite, modules: list[str]) -> None:
         raise RuntimeError(f"{len(silent)} installed plugin(s) contributed no test to this run.")
 
 
+# Tests that read the repository rather than run the product: the docs, the
+# workflows, the Dockerfile, the source itself. They hold for a checkout, so
+# they run once, on one (`mise run checks:source`), and never in an image,
+# which ships none of what they read.
+SOURCE = "source"
+
+
+def excluded_tags(labels: list[str] | None, tags: set[str], exclude: set[str]) -> set[str]:
+    """The tags a run leaves out: a whole-suite run leaves out the source
+    tests unless it asks for them. A named label runs what it names."""
+
+    if labels or SOURCE in tags:
+        return exclude
+    return exclude | {SOURCE}
+
+
 class SeverinoTestRunner(DiscoverRunner):
     """Django's runner, with parallel workers on checkpointed database files."""
 
     parallel_test_suite = FileClonedParallelSuite
+
+    def __init__(self, *args, installed_plugins=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.installed_plugins = installed_plugins
+
+    @classmethod
+    def add_arguments(cls, parser):
+        super().add_arguments(parser)
+        parser.add_argument(
+            "--installed-plugins",
+            action="store_true",
+            help="Run every installed plugin's tests and none of the host's.",
+        )
 
     def setup_test_environment(self, **kwargs):
         # Environment first, so spawned workers load the same settings.
@@ -273,17 +306,27 @@ class SeverinoTestRunner(DiscoverRunner):
         # A run with no labels is the whole suite: the host's and every
         # installed plugin's, so a composed run tests what it composes. Named
         # labels run what they name.
+        self.exclude_tags = excluded_tags(test_labels, self.tags, self.exclude_tags)
         if test_labels:
-            return super().build_suite(test_labels, **kwargs)
-        modules = plugin_test_modules()
-        suite = super().build_suite([".", *modules], **kwargs)
-        require_tests_from(suite, modules)
+            suite = super().build_suite(test_labels, **kwargs)
+        else:
+            modules = plugin_test_modules()
+            if self.installed_plugins and not modules:
+                raise RuntimeError("--installed-plugins: no plugin is installed.")
+            suite = super().build_suite([*modules] if self.installed_plugins else [".", *modules], **kwargs)
+            require_tests_from(suite, modules)
+        if self.tags and next(tests_in(suite), None) is None:
+            # A gate that selects by tag and finds nothing has checked nothing.
+            raise RuntimeError(f"No test carries the tag(s) {', '.join(sorted(self.tags))}.")
         return suite
 
     def get_resultclass(self):
         return super().get_resultclass() or CompositionTextResult
 
     def setup_databases(self, **kwargs):
+        # Here, in the process that starts the run and before it makes files
+        # of its own: a killed run never reached its teardown.
+        sweep_abandoned(Path(tempfile.gettempdir()), os.getpid())
         # Build the database first and clone it second, rather than letting one
         # call do both, because the checkpoint has to happen between the two.
         requested = self.parallel
