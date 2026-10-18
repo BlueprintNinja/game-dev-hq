@@ -6,31 +6,46 @@ rules, the host/extension boundary and the definition of done.
 
 ## Setup
 
-Install [mise](https://mise.jdx.dev) and uv. mise reads the uv pin from
-`pyproject.toml`, so it also needs a `python3` on the PATH.
+Install [mise](https://mise.jdx.dev), uv and a `python3`. uv is not a mise
+tool: any uv works, since `uv.lock` decides what runs. The toolchain gate and
+the structural bar run `python3` directly.
 
 ```sh
 git clone https://github.com/joeseverino/severino-hq.git
 cd severino-hq
 mise install
-export DJANGO_DEBUG=1
-uv run --locked python manage.py migrate
-uv run --locked python manage.py createsuperuser
-uv run --locked python manage.py seed_demo
-mise run dev
+mise run dev:scratch --seed showcase
 ```
 
-Open <http://127.0.0.1:8000/> and sign in. `seed_demo` is optional: it fills
-the database with the example estate, the same homelab the public demo shows
-(`hq/platform/core/example_estate/`), and refuses a database that already holds
-records rather than merging into it.
-`mise run dev` collects versioned assets and runs Uvicorn with reload, on the
-same ASGI path as production, so local browser checks exercise compression,
-cache headers and routing. With `DJANGO_DEBUG` off, settings refuse to load
-without a real `DJANGO_SECRET_KEY`, so local commands turn it on;
-`mise run dev` sets it itself. Nothing reads a `.env` file: `.env.example` is
-the production template, rendered by the host and named by
-`SEVERINO_APP_ENV_PATH` ([Deployment](Deployment.md)).
+The log names the address and the throwaway account to sign in as. Nothing
+reads a `.env` file: `.env.example` is the production template, rendered by
+the host and named by `SEVERINO_APP_ENV_PATH` ([Deployment](Deployment.md)).
+
+## Development servers
+
+Each server is a mise task, and its env says where it listens and which
+database it opens; `scripts/dev.sh` refuses what env cannot express. Every one
+collects versioned assets and runs Uvicorn with reload on the production ASGI
+path, watching this checkout and each extension's sources. The extension set
+is the one `mise.local.toml` names ([AGENTS.md](../AGENTS.md#start-here)).
+
+| Task | What it is |
+| --- | --- |
+| `mise run dev:scratch` | A throwaway server: loopback, DEBUG on, a new database under this checkout's `var/dev/scratch/` each start, on a port the system picks. `--keep` reuses the last database, `--seed showcase` or `standard` fills it with the example estate (`seed_demo`), `--port` fixes the port, `--plan` prints the environment and exits. |
+| `mise run dev:session` | Prints a session cookie (`dev_session`) for the scratch server's account, for a browser context or `curl --cookie`. |
+| `mise run dev:manage -- <command>` | `manage.py` against the scratch database, extensions loaded. `routes [filter]` lists each named route and its path. |
+| `mise run dev:demo [seed]` | Builds that demo seed and serves the static site on loopback ([demo](../demo/README.md)). |
+| `mise run dev` | The long-lived server behind a TLS proxy: DEBUG off, single sign-on, its bind, hostnames and database read from the gitignored `dev.local.toml` (copy `scripts/dev.local.example.toml`). It reads its signing key and client secret from the password manager when it starts. `--fresh` deletes its database first; `--plan` prints the environment, without secrets, and exits. |
+
+Only `dev` reads `dev.local.toml`, and a new worktree does not copy it, so the
+others never take its bind or database. Each checkout has its own scratch
+database, so servers in different worktrees run side by side; a second server
+on one database is refused. `dev` refuses a linked worktree and a bind past
+loopback and the tailnet range; scratch refuses anything but loopback.
+
+Every loopback server shares the browser's cookies for `127.0.0.1` whatever the
+port, so signing in to a second one signs the first out: open the second as
+`http://localhost:<port>`.
 
 Python dependencies come from `uv.lock` through `uv run --locked`, which every
 task uses; no virtualenv is made by hand. The default groups are `dev` and
@@ -39,43 +54,10 @@ with every default group omitted.
 
 ## The gates
 
-| Command | Answers |
-| :--- | :--- |
-| `mise run fast [BASE]` | the inner loop: only what the change reaches, by import graph (`--list` prints the selection) |
-| `mise run check` | do my changes work? Every Checks gate, the Tests gates on one Python, and the suite composed with the extensions, one at a time ([AGENTS.md](../AGENTS.md#start-here)) |
-| `mise run ci` | will the pipeline accept them? Every gate CI runs, including CodeQL, Scorecard, the image and the browser gate |
-| `mise run preflight` | is it ready? `ci`, the composed suite as the image runs it with the extensions required, and a read-only check of the deploy host |
-
-Every gate is a task in [`mise.toml`](../mise.toml) named `<job>:<gate>`, and
-each CI job runs the aggregate of its name, so the list exists once. `mise
-tasks` prints it, `mise run checks:ruff` runs one gate, and `mise run -c ci`
-keeps going past a failure and names every gate that failed. `mise run
-preflight --remote` reads the checks GitHub ran on the pushed commit instead of
-running `ci` locally. `--skip-host` runs the local gates only and exits 2.
-
-The deploy host for preflight is `SEVERINO_HQ_DEPLOY_HOST`, an SSH
-destination. The extension set for the composed suite is named in a gitignored
-`mise.local.toml`, copied from
-[`scripts/mise.local.example.toml`](../scripts/mise.local.example.toml):
-`HQ_LOCAL_PYTHONPATH` (where the extensions' sources are) and
-`HQ_LOCAL_PLUGINS` (which to enable). Without it the composed pass says it did
-not run, and covers less. With it, `mise run fast` also runs the extensions'
-suites when a change reaches what they render through.
-
-Tests that read the repository (docs, workflows, the Dockerfile, the source)
-carry `@tag("source")` and run once, in `checks:source`. A whole-suite run
-leaves them out, so the image never runs a test against files it does not
-ship. `mise run suite:as-image` runs the composed suite in a copy of only the
-files the image is built from, configured as the image is; preflight runs it.
-Derived files (the SDK contract, the API document and its clients, the
-controller's contracts and Go types, `docs/Connections.md`) are never edited:
-`mise run regen` rewrites every one from its source, and `mise run regen
---check` fails on drift. `mise run fast` runs the same drift checks.
-
-The suite runs in parallel, one worker per core (per performance core on
-Apple silicon; `DJANGO_TEST_PROCESSES` overrides it). `CHECK_PARALLEL=1 mise run fast` rules
-parallelism out when a failure looks order-dependent; install `tblib` to see
-the real error from a parallel worker.
+The gates, what each answers, how to name the extension set and how to run one
+gate alone are in [AGENTS.md](../AGENTS.md#start-here). The suite runs one
+worker per core (per performance core on Apple silicon);
+`DJANGO_TEST_PROCESSES` overrides it.
 
 ### What the gates need
 
@@ -127,7 +109,7 @@ The Django Debug Toolbar is in the `dev` group and never in the image. It is on
 when `DJANGO_DEBUG` is on and `SEVERINO_DEBUG_TOOLBAR=1`:
 
 ```sh
-SEVERINO_DEBUG_TOOLBAR=1 mise run dev
+SEVERINO_DEBUG_TOOLBAR=1 mise run dev:scratch
 ```
 
 It shows to loopback clients, or the addresses in
@@ -154,7 +136,9 @@ hq_sdk/                   the supported Python surface for extensions
 controller/               Go: the controller, hq-host and hq-secrets
 templates/  static/       shared and domain templates, authored assets
 deploy/                   systemd units, tmpfiles rule, remote targets, host.json shape
-composition/  policy/     the composed image and the extension admission policy
+composition/              the composed image
+policy/                   the extension admission policy
+demo/                     the static demo site built from HQ's own pages
 scripts/                  development, verification and deployment programs
 tests/                    synthetic extension fixtures and property tests
 var/                      ignored local runtime state

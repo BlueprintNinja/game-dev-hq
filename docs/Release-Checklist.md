@@ -20,7 +20,7 @@ only by a merged pull request.
 ## 2. The pull request
 
 - [ ] One pull request per piece of work, with the repository's open
-      Dependabot updates folded in.
+      dependency updates folded in.
 - [ ] **Severino HQ · Review** says *Ready to merge*. *Held* names the gate
       and the fix.
 - [ ] `mise run preflight` (or `mise run preflight --remote` after the push)
@@ -33,6 +33,10 @@ only by a merged pull request.
 - [ ] **Severino HQ · Production** reaches *Waiting for approval*. Approve the
       Deploy run in the `production` environment. A newer release waiting
       supersedes an older one; reject a stale one rather than approving it.
+- [ ] A release that migrates is rehearsed first: `mise run shadow-run IMAGE`
+      with the image it waits to deploy runs its migrations, bridge, jobs and
+      controller plan on a copy of production's database on the deploy host,
+      touching nothing live. Approve only on `result=pass`.
 - [ ] The Deploy job is green and the check says *Live in production*. CI
       green is not live: only the Deploy job deploys.
 

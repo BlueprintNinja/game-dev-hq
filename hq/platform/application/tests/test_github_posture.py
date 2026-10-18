@@ -23,6 +23,7 @@ from ..github_posture import (
 )
 from ..item_help import COMMAND, item_help
 from ..standards import INTENDED, MET, UNAVAILABLE, UNMET
+from .markup import hrefs
 from .test_github_estate import store
 
 # What a well-kept repository reads as: only its owner, one read-only key in
@@ -33,7 +34,7 @@ KEPT = {
     "token": "read",
     "token_approves_reviews": False,
     "pinning_required": True,
-    "security_fixes": True,
+    "vulnerability_alerts": True,
     "security": None,
 }
 
@@ -131,6 +132,17 @@ class PostureTests(TestCase):
         self.assertEqual((item.key, item.value, item.magnitude), ("github-posture:actions-pinned", "3", 3))
         self.assertTrue(item.body.startswith("alpha, beta, gamma."))
 
+    def test_an_item_is_as_old_as_the_oldest_repository_reading_it_names(self):
+        from hq.domains.control_plane.models import ProviderInventory
+
+        store(private=True, access=kept(token="write"), variables=[])
+        read = timezone.now() - timedelta(hours=2)
+        ProviderInventory.objects.filter(kind="github.repository").update(observed_at=read)
+
+        (item,) = attention()
+
+        self.assertEqual(item.observed_at, read)
+
     def test_the_build_queue_carries_both_the_repository_and_the_standard(self):
         store(private=True, checks={"state": "failure", "failing": ["lint"]}, access=kept(token="write"), variables=[])
 
@@ -162,7 +174,7 @@ class PostureViewTests(TestCase):
 
         response = self.client.get(reverse("posture"))
 
-        self.assertContains(response, f'href="{project.get_absolute_url()}"')
+        self.assertIn(project.get_absolute_url(), hrefs(response))
         self.assertEqual(response.context["unmet"], [])
 
     def test_nothing_read_says_so(self):
@@ -190,20 +202,11 @@ class PostureHelpTests(TestCase):
         store(private=True, **{"access": kept(), "variables": [], **record})
         return {item.key: item for item in attention()}[f"github-posture:{key}"]
 
-    def test_security_fixes_name_the_exact_command_for_the_repository(self):
-        item = self.item("security-fixes", access=kept(security_fixes=False))
+    def test_vulnerability_alerts_name_the_exact_command_for_the_repository(self):
+        item = self.item("vulnerability-alerts", access=kept(vulnerability_alerts=False))
 
         self.assertEqual(item_help(item), COMMAND)
-        self.assertEqual(
-            runs(item),
-            [
-                (
-                    "alpha",
-                    "gh api -X PUT repos/example/alpha/vulnerability-alerts && "
-                    "gh api -X PUT repos/example/alpha/automated-security-fixes",
-                )
-            ],
-        )
+        self.assertEqual(runs(item), [("alpha", "gh api -X PUT repos/example/alpha/vulnerability-alerts")])
 
     def test_pinning_offers_no_setting_while_the_workflows_were_not_read(self):
         item = self.item("actions-pinned", access=kept(pinning_required=False))

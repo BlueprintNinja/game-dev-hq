@@ -9,6 +9,7 @@ from django.test import TestCase
 from hq.platform.application.dashboard import work_queue
 from hq.platform.application.derivations import uncached
 from hq.platform.application.plugins import gather_attention
+from hq.platform.application.tests.markup import hrefs, select, with_class
 from hq.platform.application.ui import DomainOverview, Insight
 from hq.platform.application.workflow_contracts import ActionLink
 from hq.platform.application.workflows import claim_resolution_plan
@@ -76,16 +77,16 @@ class DashboardQueueTests(TestCase):
                 response = self.client.get(path)
                 if path == "/action-items/":
                     self.assertContains(response, "Reconcile the bill")
-                    self.assertContains(response, 'href="/example/evidence/"', count=1)
+                    self.assertEqual(hrefs(response).count("/example/evidence/"), 1)
                     # The verification is a write: posted with the token, never a link.
-                    self.assertContains(response, 'formaction="/dashboard/glance/"')
-                    self.assertNotContains(response, 'href="/dashboard/glance/"')
-                    self.assertContains(response, 'name="csrfmiddlewaretoken"')
+                    self.assertTrue(select(response, "formaction", "/dashboard/glance/"))
+                    self.assertNotIn("/dashboard/glance/", hrefs(response))
+                    self.assertTrue(select(response, "name", "csrfmiddlewaretoken"))
                 else:
                     # What is serious is read on the dashboard itself; the rest is a count.
                     serious = [item for item in work_queue() if item["status"] == "serious"]
                     self.assertContains(response, "data-attention-item", count=len(serious))
-                    self.assertContains(response, 'href="/action-items/"')
+                    self.assertIn("/action-items/", hrefs(response))
                 self.assertNotContains(response, "An interesting observation")
         self.assertFalse(DashboardRefreshRequest.objects.exists())
 
@@ -100,7 +101,54 @@ class DashboardQueueTests(TestCase):
         self.assertNotContains(response, "data-triage-routes")
         self.assertNotContains(response, "data-attention-item")
         self.assertEqual(response.context["action_queue_count"], len(calm))
-        self.assertContains(response, 'href="/action-items/"')
+        self.assertIn("/action-items/", hrefs(response))
+
+    def test_a_card_on_the_dashboard_opens_its_whole_card_and_shows_how_old_it_is(self):
+        from django.utils import timezone
+
+        from hq.platform.application.item_help import commands
+
+        urgent = Insight(
+            "serious",
+            "Review",
+            "A run is failing",
+            "1",
+            "Two checks fail.",
+            key="example-failing",
+            workflow=commands("example-failing", (("See the failing runs", "example-tool runs --failing"),)),
+            observed_at=timezone.now(),
+        )
+        entries = gather_attention((("example.utility", "Example", lambda: (urgent,)),))
+        with patch("hq.platform.application.dashboard.domain_attention_items", return_value=entries):
+            dashboard = self.client.get("/")
+            (page,) = [title.attrs["href"] for title in with_class(dashboard, "attention-title")]
+            whole = self.client.get(page)
+
+        self.assertContains(dashboard, "data-reading-age")
+        self.assertNotContains(dashboard, "runs --failing")
+        path, _, anchor = page.partition("#")
+        self.assertEqual(path, "/action-items/")
+        self.assertTrue(select(whole, "id", anchor))
+        self.assertContains(whole, "runs --failing")
+
+    def test_the_dashboard_asks_for_what_its_queue_is_drawn_from_only_when_it_is_due(self):
+        from datetime import timedelta
+
+        from django.urls import reverse
+        from django.utils import timezone
+
+        from hq.domains.control_plane.models import ProviderInventory
+
+        ask = f'action="{reverse("control_plane:visit")}"'
+        for age, asks in ((timedelta(0), False), (timedelta(hours=3), True)):
+            with self.subTest(age=age):
+                ProviderInventory.objects.update_or_create(
+                    kind="github.repository",
+                    defaults={"records": [], "reachable": True, "observed_at": timezone.now() - age},
+                )
+                ProviderInventory.objects.filter(kind="github.repository").update(updated_at=timezone.now() - age)
+
+                self.assertEqual(ask in self.client.get("/").content.decode(), asks)
 
     def test_a_long_queue_stays_a_count_on_the_dashboard(self):
         items = [{**work_queue()[0], "key": f"example:{i}", "label": f"Decision {i}"} for i in range(4)]
@@ -169,7 +217,7 @@ class DashboardQueueTests(TestCase):
             patch("hq.platform.application.calendar.calendar_sources", return_value=()),
         ):
             response = self.client.get("/")
-        self.assertNotContains(response, 'id="dashboard-calendar"')
+        self.assertFalse(select(response, "id", "dashboard-calendar"))
 
     def test_each_domain_leads_with_its_chart_and_the_month_is_composed_once(self):
         from django.utils import timezone
@@ -199,7 +247,7 @@ class DashboardQueueTests(TestCase):
         self.assertContains(response, "Example movement", count=2)
         # A domain's own calendar stays on its pages; the dashboard shows the composed month.
         self.assertNotContains(response, "Example activity")
-        self.assertContains(response, 'id="dashboard-calendar"', count=1)
+        self.assertEqual(len(select(response, "id", "dashboard-calendar")), 1)
 
 
 class EmptyQueueClaimTests(TestCase):

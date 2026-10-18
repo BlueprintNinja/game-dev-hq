@@ -33,8 +33,8 @@ base (`BASE`, `$CHECK_BASE`, then `origin/main`, `main`) are mapped through the
 tree's import graph to the test modules that import them directly or through
 one module between, plus every test of the changed Django apps and every test
 that names one (its URL namespace or app label), the architecture tests, ruff on the changed files, `manage.py
-check`, drift in every derived file (`mise run regen --check` less the Go
-types), and mypy on changed typed modules. Its tests run with `DEBUG` on, the
+check`, migration drift, every `drift:*` gate (each derived file against its
+source, also what `mise run regen --check` runs), and mypy on changed typed modules. Its tests run with `DEBUG` on, the
 one pass that does. A change to what extensions render
 through (`templates/`, `static/`, `hq_sdk/`, the shared table, page, UI and
 moment modules, template tags) also runs the extensions' own suites, composed,
@@ -86,8 +86,7 @@ instead. `mise run suite:as-image` runs the composed suite as the image does:
 in a copy of only the files `Dockerfile.dockerignore` admits, with `DEBUG` off
 and `SEVERINO_HQ_SOURCE` stamped. `mise run preflight` runs it, required.
 
-Local development uses `mise run dev`. It collects assets and runs the same
-ASGI/Uvicorn path as production with reload enabled.
+An agent's server is `mise run dev:scratch` in its own worktree, never `mise run dev` (docs/Development.md, "Development servers").
 
 The gates run the suite in parallel, which roughly halves their time.
 `hq/platform/core/test_runner.py` is what makes that safe on WAL SQLite: read
@@ -213,8 +212,9 @@ same review, and should fail when its path matches nothing rather than pass.
   copy for clients. Regenerate it with `mise run regen` after changing a
   route, capability, resource or domain; `--check` fails the gate on drift.
   The signed-in operator reads it rendered at `/api/docs/` (System > API), a
-  vendored Scalar bundle: to upgrade it, replace
-  `static/vendor/scalar/standalone.js` and update `UPSTREAM`.
+  vendored Scalar bundle: to move it, change `version:` in
+  `static/vendor/scalar/UPSTREAM` and run `node scripts/vendor-scalar.mjs`,
+  which Renovate also does.
 - The controller's contracts are derived too. `manage.py bridge_contract`
   writes `controller/api/hq-controller.openapi.json` (the bridge's own
   messages in `hq/domains/control_plane/bridge_base.json`, joined to what the

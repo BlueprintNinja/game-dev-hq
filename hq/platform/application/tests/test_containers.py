@@ -1,3 +1,4 @@
+from datetime import timedelta
 from unittest import mock
 
 from django.contrib.auth import get_user_model
@@ -9,6 +10,7 @@ from hq.domains.control_plane.models import ManagedResource, ProviderInventory
 
 from ..containers import BEHIND, CURRENT, UNKNOWN, VULNERABLE, attention, containers
 from ..exposure import OPEN, PRIVATE, Exposure, RouteExposure, front_door_names, listening_ports
+from .markup import text
 
 
 def exposed(level):
@@ -154,6 +156,18 @@ class StandingTests(TestCase):
                 ("cannot", "HQ cannot apply an update itself yet."),
             ],
         )
+
+    def test_every_item_is_as_old_as_the_oldest_reading_it_is_drawn_from(self):
+        estate(advisories=[HIGH])
+        swept = timezone.now() - timedelta(hours=3)
+        ProviderInventory.objects.filter(kind="portainer.container").update(observed_at=swept)
+
+        with exposed(OPEN):
+            items = attention()
+
+        self.assertTrue(items)
+        for item in items:
+            self.assertLessEqual(item.observed_at, swept, item.key)
 
     def test_an_update_names_the_command_when_its_compose_project_was_read(self):
         estate()
@@ -371,8 +385,8 @@ class PageTests(TestCase):
         detail = self.client.get(reverse("control_plane:detail", args=["example-box-kuma"]))
 
         self.assertContains(listing, reverse("control_plane:detail", args=["example-box-kuma"]))
-        self.assertContains(detail, "<code>2</code> available", html=False)
-        self.assertContains(detail, "Cannot check")
+        self.assertIn("2 available", text(detail))
+        self.assertIn("Cannot check", text(detail))
 
     def test_a_machine_shows_each_container_standing_as_the_containers_page_does(self):
         estate(advisories=[HIGH])

@@ -190,6 +190,28 @@ class LeastPrivilegeTests(SimpleTestCase):
 
 
 @tag("source")
+class RenovateTests(SimpleTestCase):
+    def test_every_command_the_configuration_runs_is_one_the_workflow_allows(self):
+        """Renovate skips a post-upgrade command its runner does not allow, and the
+        pull request then carries a version bump without what it needed."""
+        config = json.loads((ROOT / ".github" / "renovate.json").read_text())
+        commands = [
+            command
+            for rule in config["packageRules"]
+            for command in rule.get("postUpgradeTasks", {}).get("commands", [])
+        ]
+        allowed = json.loads(
+            re.search(r"(?m)^\s+RENOVATE_ALLOWED_COMMANDS: '(.*)'$", workflow("renovate.yml"))
+            .group(1)
+            .replace("''", "'")
+        )
+        self.assertTrue(commands)
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertTrue(any(re.search(pattern, command) for pattern in allowed))
+
+
+@tag("source")
 class ReleaseTests(SimpleTestCase):
     """Only a dispatch on main publishes and signs the image production runs."""
 
@@ -223,6 +245,40 @@ class ReleaseTests(SimpleTestCase):
                 self.assertIn('"$WITHHELD_DIR/', run)
                 for absent in ("--env GH_TOKEN", "docker.sock", "pip wheel"):
                     self.assertNotIn(absent, run)
+
+
+@tag("source")
+class ExtensionsAgainstHostTests(SimpleTestCase):
+    """A pull request cannot pass its composition while an extension fails its checks against that host."""
+
+    def setUp(self):
+        self.steps = steps(jobs(workflow("compose.yml"))["compose"])
+
+    def test_every_listed_extension_runs_this_hosts_checks_before_the_composition_passes(self):
+        checks = [step for step in self.steps if "check-plugin.sh" in code(step)]
+        self.assertEqual(len(checks), 1)
+        (check,) = checks
+        run = code(check)
+        self.assertEqual(condition(check), "github.event_name == 'pull_request'")
+        self.assertNotIn("continue-on-error", check)
+        self.assertIn("composition-set.json", run)
+        self.assertIn(".extensions[]", run)
+        self.assertIn("git archive HEAD", run)
+        self.assertIn("/host/scripts/check-plugin.sh --plugin-root", run)
+        self.assertIn('"$WITHHELD_DIR/', run)
+        self.assertIn("exit 1", run)
+        self.assertNotIn("GH_TOKEN", check)
+        verify = next(index for index, step in enumerate(self.steps) if "scripts/composed-suite.sh" in step)
+        self.assertLess(self.steps.index(check), verify)
+
+    def test_an_extension_is_checked_from_its_coordinated_branch_or_its_default_branch(self):
+        (clone,) = [step for step in self.steps if "gh repo clone" in step]
+        self.assertEqual(condition(clone), "github.event_name == 'pull_request'")
+        run = code(clone)
+        self.assertIn("coordinated.txt", run)
+        self.assertIn(".extensions[].repository", run)
+        check = next(index for index, step in enumerate(self.steps) if "check-plugin.sh" in code(step))
+        self.assertLess(self.steps.index(clone), check)
 
 
 @tag("source")
@@ -330,6 +386,36 @@ class GateReferenceTests(SimpleTestCase):
         for name, task in named:
             with self.subTest(workflow=name, task=task):
                 self.assertIn(task, tasks)
+
+    # Tasks that hand whatever follows them to manage.py, whose command line no
+    # usage spec can declare: mise appends the words as they were typed.
+    PASSTHROUGH = frozenset({"manage", "suite:as-image"})
+
+    def test_a_task_that_takes_arguments_says_what_they_are(self):
+        """``mise run <task> --help`` prints a task's ``usage``. Once one is
+        declared mise stops appending arguments to ``run``, so each name it
+        declares must reach the task or its script; and a script that reads its
+        own arguments needs a usage, or --help describes nothing."""
+        tasks = tomllib.loads((ROOT / "mise.toml").read_text())["tasks"]
+        reads_arguments = re.compile(r'"\$@"|\$\{?[1-9#]|sys\.argv')
+        checked = 0
+        for name, task in tasks.items():
+            run = task.get("run", "")
+            run = " ".join(run) if isinstance(run, list) else run
+            scripts = [ROOT / path for path in re.findall(r"[\w/.-]+\.(?:sh|py)\b", run) if (ROOT / path).is_file()]
+            declared = re.findall(r'(?:arg|flag)\s+"[<\[]?(?:--)?([\w-]+)', task.get("usage", ""))
+            with self.subTest(task=name):
+                if declared:
+                    checked += 1
+                    reached = run + "".join(path.read_text() for path in scripts)
+                    dropped = [word for word in declared if f"usage_{word.replace('-', '_')}" not in reached]
+                    self.assertEqual(dropped, [], f"{name} declares arguments it never forwards")
+                elif name not in self.PASSTHROUGH and re.fullmatch(r"[\w/.-]+", run.strip()):
+                    for path in scripts:
+                        self.assertFalse(
+                            reads_arguments.search(path.read_text()), f"{name} takes arguments; declare usage"
+                        )
+        self.assertGreater(checked, 3)
 
 
 def compose_plugins():

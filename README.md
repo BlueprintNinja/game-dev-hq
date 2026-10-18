@@ -15,12 +15,10 @@ to each other.
 HQ is a host. Extensions add whole domains to it from their own repositories,
 and this repository names none of them: it holds the contracts they meet at.
 
-![Severino HQ dashboard: priority work, KPI snapshot, machine telemetry, and live external links](docs/images/dashboard.png)
+The [demo](https://demo.jseverino.com/) is HQ's own pages filled with an
+example homelab, saved as a static site ([how it is built](demo/README.md)).
 
-![Derived estate: the controller reads what each credential sees, readings are joined into one relation graph that every surface reads, and every write passes the manages gate](docs/diagrams/derived-estate.png)
-
-<sup>Diagram source: [`docs/diagrams/derived-estate.mmd`](docs/diagrams/derived-estate.mmd),
-pre-rendered with [`diagram`](https://github.com/joeseverino/tools/blob/main/bin/diagram).</sup>
+![The Severino HQ dashboard, showing the example homelab the demo is built from](docs/images/dashboard.png)
 
 Nothing about the infrastructure is typed in. A controller holds the
 credentials and reads what each can see; HQ stores the readings, derives the
@@ -28,10 +26,10 @@ rest, and acts only through a connection that declares it `manages` what it
 touches. How is in [Derived Facts](docs/Derived-Facts.md) and
 [Architecture](docs/Architecture.md).
 
-## Install
+![Derived estate: the controller reads what each credential sees, readings are joined into one relation graph that every surface reads, and every write passes the manages gate](docs/diagrams/derived-estate.png)
 
-[Install](docs/Install.md) takes a Linux host with Docker to HQ running and
-the controller reading its first connection, step by step.
+<sup>Diagram source: [`docs/diagrams/derived-estate.mmd`](docs/diagrams/derived-estate.mmd),
+pre-rendered with [`diagram`](https://github.com/joeseverino/tools/blob/main/bin/diagram).</sup>
 
 ## Stack
 
@@ -45,6 +43,7 @@ the controller reading its first connection, step by step.
 | Secrets | one 1Password vault, read through Connect on loopback, rendered to a `noswap` tmpfs |
 | Sign-in | OIDC against a self-hosted identity provider (Pocket ID), passkey-first |
 | Host | one Linux machine: systemd runs the container, the controller and the scheduled work |
+| Toolchain | [mise](https://mise.jdx.dev) pins every tool by checksum and runs every gate as a task, the same on a laptop, in an agent's worktree and in CI; uv locks Python; Renovate moves the pins |
 | Delivery | GitHub Actions: CI, Compose (host plus extensions, signed with Sigstore), Deploy on a self-hosted runner after approval |
 | Tests | Django's runner in parallel, Playwright on WebKit for layout, Go tests, shell suites, CodeQL, Scorecard, Trivy |
 
@@ -67,6 +66,11 @@ the controller reading its first connection, step by step.
 The design and the production checklist are in
 [Security](docs/Security.md); reporting is in
 [`.github/SECURITY.md`](.github/SECURITY.md).
+
+A service's page shows the path a request takes to it, each step read from
+its source, with what breaks if that step fails.
+
+![A service's page: its path from the device to the app, each step's state, what breaks if it fails, and where each was read](docs/images/service.png)
 
 ## Verify it yourself
 
@@ -101,7 +105,9 @@ controller/    Go: the controller, hq-host and hq-secrets
 templates/     server-rendered pages and shared partials
 static/        CSS, scripts and pinned vendor bundles
 deploy/        systemd units, tmpfiles rule, remote targets, host.json shape
-composition/   the composed image; policy/ holds the admission policy
+composition/   the composed image
+policy/        the extension admission policy
+demo/          the static demo site built from HQ's own pages
 scripts/       gates, pipeline helpers and operator tools
 tests/         synthetic extension fixtures and property tests
 docs/          architecture, operations and guides
@@ -111,16 +117,14 @@ docs/          architecture, operations and guides
 
 ```sh
 mise install
-export DJANGO_DEBUG=1
-uv run --locked python manage.py migrate
-uv run --locked python manage.py createsuperuser
-mise run dev              # the ASGI server on 127.0.0.1:8000, with reload
+mise run dev:scratch      # a local server: fresh database, signed-in account, reload
 mise run fast             # what the change reaches
 mise run check            # every Checks and Tests gate, and the suite composed
 mise run preflight        # ready: every CI gate, the composed suite, the host
 ```
 
-[`AGENTS.md`](AGENTS.md) is the engineering contract: placement rules, the
+Agents work in their own worktrees on `mise run dev:scratch` and pass the same
+gates. [`AGENTS.md`](AGENTS.md) is the engineering contract: placement rules, the
 boundary, frontend standards and the definition of done.
 [Development](docs/Development.md) has setup and the gates in full.
 
@@ -144,6 +148,7 @@ boundary, frontend standards and the definition of done.
 | [Release Checklist](docs/Release-Checklist.md) | from a branch to live, and rolling back |
 | [Secrets](docs/Secrets.md) | the vault, the renderer, connections and credentials |
 | [Security](docs/Security.md) | the security design and the production checklist |
+| [Posture](docs/Posture.md) | the checks every HQ enforces, and the standard Advanced HQ Posture holds it to |
 | [Backup](docs/Backup.md) | the nightly backup and a restore |
 | [Blueprint Setup](docs/Blueprint-Setup.md) | every instance-specific value, for running your own |
 | [Decisions](docs/Decisions.md) | decisions that still shape the code, and why |

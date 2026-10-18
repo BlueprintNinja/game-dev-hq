@@ -186,7 +186,7 @@ root-owned tree, taking each shipped unit that is not a template and each
 instance of a shipped template that a shipped file starts through `Unit=` or
 `OnFailure=`, so a unit added to the directory is read once installed. The
 launcher asks `systemctl show` for a fixed list of properties
-(`units_properties`, where each is explained) and mounts what it printed; the
+(`UnitProperties` in `controller/host/layout.go`) and mounts what it printed; the
 controller keeps exactly those properties and refuses a value that is not a
 unit name, a systemd state word, a number or an instant. `HostUnitRecord` in
 the bridge contract is emitted from the model of that name
@@ -601,7 +601,7 @@ admission about to lapse.
 `hq.platform.application.github_posture` holds every repository to a standard
 derived from the same record: what every repository is held to (only you have
 access, deploy keys read-only and in use, a read-only workflow token that
-approves nothing, actions pinned to a commit, Dependabot security fixes, no
+approves nothing, actions pinned to a commit, vulnerability alerts on, no
 Actions variables) and, for a public one, what GitHub gives it besides (pull
 requests required, the default branch protected from force pushes and
 deletion, secret scanning, push protection, code scanning). What a plan does

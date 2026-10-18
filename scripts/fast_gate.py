@@ -7,9 +7,7 @@ architecture tests always run. A change to what extensions render through
 extensions' own suites, composed, when HQ_LOCAL_PLUGINS names a set.
 ```mise run check``` stays the gate before a push.
 
-Usage: mise run fast [--list] [BASE]
-BASE defaults to $CHECK_BASE, then origin/main, then main. --list prints the
-selected test modules and stops.
+Run as `mise run fast`; `mise run fast --help` says what it takes.
 """
 
 from __future__ import annotations
@@ -19,6 +17,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 from pathlib import Path
@@ -52,20 +51,11 @@ def touches_shared_ui(paths: list[str]) -> bool:
     return any(path.startswith(SHARED_UI) or "/templatetags/" in path for path in paths)
 
 
-def composed_env(env: dict[str, str]) -> dict[str, str] | None:
-    """The environment the extensions' suites run in, or None when no set is named."""
+def drift_tasks() -> list[str]:
+    """The drift:* gates mise.toml declares, each a derived file against its source."""
 
-    plugins = env.get("HQ_LOCAL_PLUGINS")
-    if not plugins:
-        return None
-    composed = {key: value for key, value in env.items() if key != "DJANGO_DEBUG"}
-    composed |= {
-        "SEVERINO_HQ_PLUGINS": plugins,
-        "PYTHONPATH": env.get("HQ_LOCAL_PYTHONPATH", ""),
-        "SEVERINO_HQ_REQUIRE_PLUGIN_ADMISSION": "0",
-        "DJANGO_SECRET_KEY": env.get("DJANGO_SECRET_KEY") or "check-not-a-real-secret",
-    }
-    return composed
+    tasks = tomllib.loads((ROOT / "mise.toml").read_text(encoding="utf-8"))["tasks"]
+    return sorted(name for name in tasks if name.startswith("drift:"))
 
 
 def git(*args: str) -> list[str]:
@@ -114,9 +104,18 @@ def is_test(path: Path) -> bool:
     return (
         path.suffix == ".py"
         and path.name != "__init__.py"
-        and (path.name.startswith("test") or "fuzz" in path.parts)
+        and (path.name.startswith("test") or ("fuzz" in path.parts and not is_fuzz_harness(path)))
         and all((ROOT / parent / "__init__.py").exists() for parent in path.parents if parent != Path())
     )
+
+
+def is_fuzz_harness(path: Path) -> bool:
+    """An atheris harness: run by its fuzzer, and in the suite through the test that drives it."""
+
+    try:
+        return "import atheris" in (ROOT / path).read_text()
+    except OSError:
+        return False
 
 
 def imports(path: Path, modules: set[str]) -> set[str]:
@@ -297,20 +296,43 @@ def step(label: str, cmd: list[str], env: dict[str, str] | None = None) -> bool:
 
 def side_by_side(steps: list[tuple[str, list[str], dict[str, str] | None]]) -> bool:
     """Run independent read-only checks in parallel, then print each one's
-    output in order, so a failure reads as that check's own."""
+    output in order, so a failure reads as that check's own.
+
+    Each check opens a database of its own. Django connects for its system
+    checks, and the first connection to a new file switches it to WAL, which
+    SQLite refuses with "database is locked" when another process is doing
+    the same, without waiting out the timeout.
+    """
 
     started = time.monotonic()
-    running = [
-        (label, subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True))
-        for label, cmd, env in steps
-    ]
-    ok = True
-    for label, process in running:
-        output, _ = process.communicate()
-        print(f"[fast] {label}", flush=True)
-        if output:
-            print(output, end="" if output.endswith("\n") else "\n", flush=True)
-        ok &= process.returncode == 0
+    # Named as a test run's scratch is, so a killed run's is swept by the next.
+    with tempfile.TemporaryDirectory(prefix=f"severino-test-fast-{os.getpid()}-") as scratch:
+        running = [
+            (
+                label,
+                subprocess.Popen(
+                    cmd,
+                    cwd=ROOT,
+                    env={
+                        **(os.environ if env is None else env),
+                        # Read by a check run here, and by the gate template when mise runs it.
+                        "SEVERINO_DATABASE_PATH": f"{scratch}/{n}.sqlite3",
+                        "HQ_GATE_DATABASE": f"{scratch}/{n}.sqlite3",
+                    },
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                ),
+            )
+            for n, (label, cmd, env) in enumerate(steps)
+        ]
+        ok = True
+        for label, process in running:
+            output, _ = process.communicate()
+            print(f"[fast] {label}", flush=True)
+            if output:
+                print(output, end="" if output.endswith("\n") else "\n", flush=True)
+            ok &= process.returncode == 0
     print(f"[fast] {len(running)} checks side by side: {time.monotonic() - started:.1f}s", flush=True)
     return ok
 
@@ -334,20 +356,14 @@ def main(argv: list[str]) -> int:
         print("\n".join(labels))
         return 0
 
-    env = {**os.environ, "DJANGO_DEBUG": "true", "SEVERINO_LOG_LEVEL": "CRITICAL"}
-    # The committed records describe the host alone.
-    host = {key: value for key, value in env.items() if key != "SEVERINO_HQ_PLUGINS"}
+    env = dict(os.environ)
     py = [c for c in changed if c.endswith(".py") or c.endswith(".pyi")]
     typed = mypy_targets(changed)
     checks: list[tuple[str, list[str], dict[str, str] | None]] = [
         *([("ruff (changed files)", [ruff, "check", *py], None)] if py else []),
         ("manage.py check", [python, "manage.py", "check"], env),
         ("migration drift", [python, "manage.py", "makemigrations", "--check", "--dry-run"], env),
-        ("OpenAPI drift", [python, "manage.py", "api_openapi", "--check"], host),
-        ("SDK contract drift", [python, "manage.py", "sdk_contract", "--check"], host),
-        ("API client drift", ["scripts/generate-clients.sh", "--check"], None),
-        ("controller contract drift", [python, "manage.py", "bridge_contract", "--check"], env),
-        ("connections reference drift", [python, "manage.py", "connections_reference", "--check"], env),
+        *((task, ["mise", "run", task], env) for task in drift_tasks()),
         *([("mypy (changed typed modules)", [python, "-m", "mypy", *typed], env)] if typed else []),
     ]
     ok = side_by_side(checks)
@@ -356,13 +372,12 @@ def main(argv: list[str]) -> int:
         [python, "manage.py", "test", "--noinput", "--parallel", os.environ.get("CHECK_PARALLEL", "auto"), *labels],
         env,
     )
-    composed = composed_env(dict(os.environ)) if touches_shared_ui([*changed, *deleted]) else None
-    if composed is not None:
+    if os.environ.get("HQ_LOCAL_PLUGINS") and touches_shared_ui([*changed, *deleted]):
         parallel = os.environ.get("CHECK_PARALLEL", "auto")
+        # suite:composed hands what follows to manage.py test.
         ok &= step(
             "extension suites, composed (shared UI changed)",
-            [python, "manage.py", "test", "--installed-plugins", "--noinput", "--parallel", parallel],
-            composed,
+            ["mise", "run", "suite:composed", "--", "--installed-plugins", "--parallel", parallel],
         )
     ok &= step("patch integrity", ["git", "diff", "--check", base])
     print(
