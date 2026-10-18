@@ -176,6 +176,12 @@ images: each admits itself and publishes its signed bundle, and the host
 composes them, so deploying one never replaces the others. The pipeline around
 it is in [Deployment](Deployment.md#the-pipeline).
 
+Compose takes each plugin's newest successful admission, so a plugin whose
+latest admission failed ships its last good wheel and holds back neither the
+host nor the others. The composed suite runs every installed plugin's tests
+against the host it is composed with, so whatever wheel is chosen is proven
+together before it is published.
+
 A plugin's admission starts the composition, and nothing polls. The last step
 of the host's `admit-plugin` action mints a token as HQ's GitHub App, asking
 only for Actions write on this repository, and dispatches **Compose** with an
@@ -414,6 +420,13 @@ overview says what it is built from with `hq_sdk.pages.built_from(plugin.id)`,
 a link to the project that names the extension's repository. An extension's
 suite checks its templates for a `{# #}` comment left open with
 `hq_sdk.testing.unclosed_template_comments`.
+
+A list extends `list_page.html` and declares its empty state on the view, never
+in its template: `table_empty` says what an empty list means ("No vehicles
+yet."), `table_empty_why` a sentence beside it, and `get_table_empty_remedy()`
+returns an `hq_sdk.tables.Remedy` where the page's lead action is not what
+fills it. HQ draws the one empty state, and the "nothing matches" state of a
+filtered list, from those.
 
 Wrap a `.data-table` in `.table-scroll`; HQ keeps its headings visible
 through long result sets with sticky cells, and the table stays the one
