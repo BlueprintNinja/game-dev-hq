@@ -26,6 +26,7 @@ from ..request_path import (
     request_path,
     serialize_request_path,
 )
+from .markup import elements
 
 HQ = "hq.example.test"
 LAPTOP = "100.64.0.20"
@@ -358,7 +359,7 @@ class ReadParityTests(TestCase):
         self.assertContains(response, "Path to HQ")
         self.assertContains(response, found.proof)
         # The link's facts come from the caller's presence, and still show.
-        self.assertContains(response, "198.51.100.7:41641")
+        self.assertIn("198.51.100.7:41641", [value.text.strip() for value in elements(response, "code")])
         self.assertContains(response, "Last handshake")
 
 

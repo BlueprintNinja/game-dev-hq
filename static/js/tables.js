@@ -171,6 +171,42 @@
       .filter((index) => index > named && rows.every((row) => blankCell(row.children[index])));
     if (blank.length) table.dataset.blank = blank.map((index) => index + 1).join(" ");
   };
+  // Room is what a table has to spare: showing more there leaves the table
+  // inside its box and no taller. A cut identifier and a folded run of links
+  // both take it, so something is cut only where showing it would cost a line.
+  const roomFor = (table, overflows) => {
+    const height = table.getBoundingClientRect().height;
+    return () => !overflows() && table.getBoundingClientRect().height <= height + 0.5;
+  };
+  // A table with an identifier cut gives it the room its rows have: the cap
+  // rises to the longest at which the table keeps its width and its height.
+  const uncut = (table, overflows) => {
+    const cut = [...table.querySelectorAll(":scope > tbody > tr:not(.row-detail) > td code")]
+      .filter((code) => code.clientWidth > 0 && code.scrollWidth > code.clientWidth + 1);
+    if (!cut.length) return;
+    const fitting = roomFor(table, overflows);
+    let fits = parseFloat(getComputedStyle(table).getPropertyValue("--identifier-max"));
+    let over = Math.ceil(Math.max(...cut.map((code) => (fits * code.scrollWidth) / code.clientWidth))) + 2;
+    const cap = (room) => table.style.setProperty("--identifier-max", `${room}ch`);
+    cap(over);
+    if (fitting()) return;
+    while (over - fits > 1) {
+      const room = Math.floor((fits + over) / 2);
+      cap(room);
+      if (fitting()) fits = room;
+      else over = room;
+    }
+    cap(fits);
+  };
+  // A cell that folds what it holds behind "+3" shows all of it wherever that
+  // costs no line.
+  const unfold = (table, overflows) => {
+    table.querySelectorAll(":scope > tbody > tr:not(.row-detail):not(.is-expanded) > td:has(.row-less):has(.row-more)").forEach((cell) => {
+      const fitting = roomFor(table, overflows);
+      cell.dataset.whole = "";
+      if (!fitting()) delete cell.dataset.whole;
+    });
+  };
   const fitTable = (table) => {
     const wrapper = table.parentElement;
     if (!wrapper?.classList.contains("table-scroll")) return;
@@ -182,8 +218,10 @@
     // Held open or pinned across a refresh: its columns are not to move.
     if (table.style.tableLayout === "fixed") return;
     table.dataset.fit = "";
+    table.querySelectorAll(":scope > tbody > tr > td[data-whole]").forEach((cell) => delete cell.dataset.whole);
     delete table.dataset.drop;
     delete table.dataset.snug;
+    table.style.removeProperty("--identifier-max");
     delete table.dataset.wrap;
     table.querySelectorAll(":scope > tbody > tr > [data-span]").forEach((cell) => {
       cell.colSpan = Number(cell.dataset.span);
@@ -213,8 +251,22 @@
         heading.style.setProperty("--column-floor", `${Math.max(0, Math.ceil(floor - inset))}px`);
       });
       // Before any column leaves, identifiers are cut sooner: a long name in a
-      // chip is whole again when its row is opened, and a column is not.
-      if (overflows()) table.dataset.snug = "";
+      // chip is whole again when its row is opened, and a column is not. They
+      // are cut only as far as the room needs: the longest that still fits.
+      if (overflows()) {
+        table.dataset.snug = "";
+        // Between the sheet's two widths, in ch, the longest that fits.
+        const root = getComputedStyle(document.documentElement);
+        const widest = parseFloat(root.getPropertyValue("--identifier-max"));
+        const snug = parseFloat(root.getPropertyValue("--identifier-snug"));
+        for (let room = widest; room > snug; room -= 2) {
+          table.style.setProperty("--identifier-max", `${room}ch`);
+          if (!overflows()) break;
+          table.style.removeProperty("--identifier-max");
+        }
+      } else {
+        uncut(table, overflows);
+      }
       if (overflows() && headings.length >= 3 && !table.querySelector(":scope > colgroup")) {
         const last = headings.length - 1;
         const marked = headings.some((heading) => heading.classList.contains("key-col"));
@@ -235,12 +287,16 @@
           dropped.push(spare.pop().cellIndex + 1);
           table.dataset.drop = dropped.join(" ");
         }
+        // The room a column gave up goes back to the identifiers it cut.
+        if (dropped.length) uncut(table, overflows);
       }
     }
     // Still wider than its box with nothing left to give up: the columns are
     // held to the box. Each takes what its own values need on one line, up to
-    // a readable width, and the column that names the row takes the rest.
-    if (overflows()) {
+    // a readable width, and the column that names the row takes the rest. A
+    // table with no headings has nothing to hold its columns by: fixed, each
+    // would take an even share whatever it holds.
+    if (overflows() && headings.length) {
       table.dataset.wrap = "tight";
       const named = headings[0]?.classList.contains("select-column") ? 1 : 0;
       const beside = headings.filter((heading, index) =>
@@ -254,6 +310,7 @@
         heading.dataset.held = "";
       });
     }
+    unfold(table, overflows);
     spanShown(table, all);
   };
   const fitTables = () => {
@@ -343,19 +400,44 @@
         });
       }
     });
-    if (!parts.length) return;
-    const list = document.createElement("dl");
-    list.className = "row-columns";
-    parts.forEach(([name, nodes]) => {
-      const term = document.createElement("dt");
-      term.textContent = name;
-      const value = document.createElement("dd");
-      value.append(...nodes);
-      list.append(term, value);
+    // What the row keeps for this line at any width. A part that names itself
+    // (`data-label`) joins the named list, so the line reads as one set of
+    // facts on one edge; any other is set in under the cell it came from,
+    // where its words started.
+    const rowLeft = row.getBoundingClientRect().left;
+    row.querySelectorAll(":is(td, th) .row-below[data-label]").forEach((el) => {
+      const place = document.createComment("");
+      el.replaceWith(place);
+      undo.push(() => place.replaceWith(el));
+      parts.push([el.dataset.label, [el]]);
     });
+    const below = [...row.querySelectorAll(":is(td, th) .row-below")].map((el) => {
+      const from = el.closest("td, th");
+      const indent = from.getBoundingClientRect().left + parseFloat(getComputedStyle(from).paddingLeft) - rowLeft;
+      const place = document.createComment("");
+      el.replaceWith(place);
+      undo.push(() => {
+        el.style.removeProperty("margin-inline-start");
+        place.replaceWith(el);
+      });
+      return [el, indent];
+    });
+    if (!parts.length && !below.length) return;
     const cell = document.createElement("td");
     cell.colSpan = cells.length;
-    cell.append(list);
+    cell.append(...below.map(([el]) => el));
+    if (parts.length) {
+      const list = document.createElement("dl");
+      list.className = "row-columns";
+      parts.forEach(([name, nodes]) => {
+        const term = document.createElement("dt");
+        term.textContent = name;
+        const value = document.createElement("dd");
+        value.append(...nodes);
+        list.append(term, value);
+      });
+      cell.append(list);
+    }
     const detail = document.createElement("tr");
     detail.className = "row-detail";
     // Named by attribute as well, for anything that has to tell a record from
@@ -364,10 +446,22 @@
     detail.append(cell);
     restore.set(detail, undo);
     row.after(detail);
+    // A name over nothing that shows (a column whose words moved to a part of
+    // their own, a preview the open row does without) is not drawn.
+    detail.querySelectorAll(".row-columns > dd").forEach((value) => {
+      const shows = [...value.childNodes].some((node) => (node.nodeType === Node.TEXT_NODE
+        ? node.textContent.trim() !== ""
+        : node.nodeType === Node.ELEMENT_NODE && node.getBoundingClientRect().height > 0));
+      if (shows) return;
+      value.previousElementSibling?.remove();
+      value.hidden = true;
+    });
+    const start = cell.getBoundingClientRect().left + parseFloat(getComputedStyle(cell).paddingLeft) - rowLeft;
+    below.forEach(([el, indent]) => el.style.setProperty("margin-inline-start", `${Math.max(0, indent - start)}px`));
   };
 
   const rowSaysMore = (row) =>
-    row.querySelector(":is(td, th) .row-more") !== null
+    row.querySelector(":is(td:not([data-whole]), th) .row-more, :is(td, th) .row-below") !== null
     || droppedCells(row).length > 0
     || [...row.children].some((cell) => heldBack(cell).length > 0)
     || [...row.querySelectorAll(":is(td, th) *")].some(isCut)
@@ -457,6 +551,44 @@
     });
   });
 
+  // A row that heads rows folded under it (`data-folds`, its rows naming it
+  // in `data-folded`) opens and closes them from anywhere on it but its own
+  // controls. Closing it closes any of its rows that were open, so no line is
+  // left beneath a row that is not there.
+  const foldedUnder = (head) =>
+    head.closest("tbody").querySelectorAll(`:scope > tr[data-folded="${CSS.escape(head.id)}"]`);
+  const setFold = (head, opening) => {
+    head.querySelector("[data-fold-toggle]")?.setAttribute("aria-expanded", String(opening));
+    foldedUnder(head).forEach((row) => {
+      if (!opening && row.classList.contains("is-expanded")) row.querySelector(".row-expand")?.click();
+      row.toggleAttribute("data-open", opening);
+    });
+    markTablesSoon();
+  };
+  document.addEventListener("click", (event) => {
+    const head = event.target.closest("tr[data-folds]");
+    if (!head || event.defaultPrevented) return;
+    const toggle = event.target.closest("[data-fold-toggle]");
+    if (!toggle && event.target.closest("a, button, input, select, label, [data-origin]")) return;
+    setFold(head, head.querySelector("[data-fold-toggle]")?.getAttribute("aria-expanded") !== "true");
+  });
+
+  // A link that names a row lands on it open: inside its fold, and showing
+  // what it holds back.
+  const landOnRow = () => {
+    const id = decodeURIComponent(window.location.hash.slice(1));
+    const row = id && document.getElementById(id);
+    if (!(row instanceof HTMLTableRowElement) || !row.closest(".data-table")) return;
+    const head = row.dataset.folded && document.getElementById(row.dataset.folded);
+    if (head && !row.hasAttribute("data-open")) setFold(head, true);
+    // Measured now, since the row may only just have been shown.
+    markTables();
+    const toggle = row.querySelector(".row-expand");
+    if (toggle && toggle.getAttribute("aria-expanded") !== "true") toggle.click();
+    row.scrollIntoView({ block: "start" });
+  };
+  window.addEventListener("hashchange", landOnRow);
+
   // A toggle stands in a gutter of its own at the start of the cell that names
   // the row, and every row of a table that has one keeps the gutter, the
   // heading too: names start on one line down the column whether or not a
@@ -464,7 +596,7 @@
   function markGutters() {
     document.querySelectorAll(".data-table").forEach((table) => {
       const rows = [...table.querySelectorAll(":scope > tbody > tr:not(.row-detail):not(.row-group)")];
-      const any = rows.some((row) => row.querySelector(".row-expand"));
+      const any = rows.some((row) => row.querySelector("[data-row-toggle]"));
       const cells = rows.map(toggleCell).filter(Boolean);
       const first = cells[0];
       const heading = first
@@ -598,6 +730,7 @@
   }
 
   markTables();
+  landOnRow();
   window.addEventListener("resize", markTablesSoon);
   // Everything above is measured in the face the text is drawn in. Measured
   // before that face has loaded, a column's floor is the fallback's width and

@@ -18,12 +18,12 @@ authoritative for human and agentic development in this public repository.
    suite and the deploy host checks. `mise run preflight` runs `mise run ci`
    itself instead.
 
-Setup is [mise](https://mise.jdx.dev), `mise install` and uv on the PATH: the
-pinned tools, at the versions in `mise.toml` and the checksums in `mise.lock`.
+Setup is [mise](https://mise.jdx.dev) and `mise install`: the pinned tools, uv
+among them, at the versions in `mise.toml` and the checksums in `mise.lock`.
 Python dependencies come from `uv.lock` through `uv run --locked`, so no
-virtualenv is made by hand. uv's own pin is in `pyproject.toml` with its hashes
-in `uv.lock`, which is the uv the pipeline installs. The images take uv from its
-own image, pinned by digest in `Dockerfile` and `composition/Dockerfile`. Every
+virtualenv is made by hand. The images take uv from its own image, pinned by
+digest in `Dockerfile` and `composition/Dockerfile` at the version `mise.toml`
+pins, which `checks:toolchain` holds. Every
 gate is a task in `mise.toml` named `<job>:<gate>`;
 `mise tasks` lists them and `mise run checks:ruff` runs one. `mise run manage --
 <command>` runs `manage.py` with the development settings the gates use.
@@ -32,10 +32,13 @@ gate is a task in `mise.toml` named `<job>:<gate>`;
 base (`BASE`, `$CHECK_BASE`, then `origin/main`, `main`) are mapped through the
 tree's import graph to the test modules that import them directly or through
 one module between, plus every test of the changed Django apps and every test
-that names one (its URL namespace or app label), the architecture tests, ruff on the changed files, `manage.py
-check`, migration drift, every `drift:*` gate (each derived file against its
-source, also what `mise run regen --check` runs), and mypy on changed typed modules. Its tests run with `DEBUG` on, the
-one pass that does. A change to what extensions render
+that names one (its URL namespace or app label), and the architecture tests;
+beside them, as the mise tasks that define them, `checks:ruff` (lint and
+format), `checks:mypy`, `manage.py check` and migration drift
+(`tests:django`, `tests:migrations`), and every `drift:*` gate (each derived
+file against its source, also what `mise run regen --check` runs). Each Django
+gate opens a database of its own. Its tests run with `DEBUG` on, the one pass
+that does. A change to what extensions render
 through (`templates/`, `static/`, `hq_sdk/`, the shared table, page, UI and
 moment modules, template tags) also runs the extensions' own suites, composed,
 when `mise.local.toml` names a set. `--list` prints the selection. Tens of

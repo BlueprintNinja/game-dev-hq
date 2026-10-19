@@ -64,7 +64,9 @@ the rest is the table primitive's (`app.css`, `tables.js`). A table never
 stacks into cards and is not swiped through. A key/value table (row headers,
 no `thead`) sizes its label column to its longest label. Rows that belong to
 sections share one table as a `tbody` per group with a `.row-group` heading
-row, never two tables kept aligned by hand.
+row, never two tables kept aligned by hand. Rows that belong under one row
+name it (`data-folded`) and show while it is open (`data-folds`, its toggle
+in the same gutter as the row toggle); with no script they all show.
 *Gates:* `a_table_fits_its_box_at_every_width`,
 `test_a_blank_column_is_not_drawn_and_a_short_word_is_not_split`,
 `only_a_table_scrolls_sideways`, the row height budget, and the page
@@ -89,13 +91,20 @@ dates and lengths of time sort as what they are; a cell may say its own value
 with `data-sort`. Sections keep their own rows. Nothing per table.
 *Gate:* `test_any_table_sorts_by_a_heading`.
 
-**A row that says more than it shows expands whole.** Truncation (a clamp, an
-ellipsis, a list folded behind "+5 more") is fine; a dead end is not.
-`tables.js` measures each row and gives any row with cut-off content one toggle
-that lifts every clamp and opens every fold in it. Nothing per table.
-That toggle is the row's only disclosure: what a row holds back is marked
-`.row-more` (hidden until the row is expanded) and its collapsed hint
-`.row-less`, never a `<details>` inside a cell. The gate fails a row with both.
+**A table cuts only what has no room.** A long identifier is one line, cut
+with an ellipsis, and a run of links can fold behind "+3". `tables.js` then
+shows each whole wherever that leaves the table no taller and inside its box,
+so a cut is never a guess: it is there only when showing more would cost a
+line. A stacked list longer than four shows three and "+N more", since
+showing more always costs lines. A row that holds anything back gets one
+toggle that lifts every cut and opens every fold in it.
+*Gate:* `nothing_is_held_back_while_its_table_has_room`.
+
+A row's opening is its only disclosure: what is shown only once a row is open
+is marked `.row-more` (a word, a list item), or `.row-below` for a block,
+which opens on the line beneath the row at the table's width; the face that
+stands in for it while closed is `.row-less`. Never a `<details>` inside a
+cell. The gate fails a row with both.
 
 **One band.** A row of facts, readings or choices is a band: one surface,
 cells divided by hairlines each cell draws itself, so a wrapped row keeps its
@@ -115,7 +124,12 @@ dashboard's readings are one row when each has room and a list when not.
 line with its icon on the line. It runs across its box when every hop has
 room for its kind and an address with its port, and down it otherwise, as
 the connection panel draws its route; it never wraps onto a second row.
-*Gate:* `a_route_is_one_row_or_one_column`.
+Its line runs from the first stop's mark to the last one's, with any stop
+opened. A check names what it was read from right after its statement, or
+under it where the line is full, and that evidence is shown at every width.
+*Gates:* `a_route_is_one_row_or_one_column`,
+`a_route_line_runs_from_its_first_stop_to_its_last`,
+`a_checks_evidence_follows_its_statement`, `nothing_a_summary_names_is_hidden`.
 
 **One main-and-aside.** Content with a narrower companion (`.split`) shares a
 row while both keep a readable width and wraps to a column when they cannot.
@@ -226,48 +240,51 @@ theme is a set of token values and dark mode is not a second stylesheet.
 `ghost` for link-like actions that sit inline; `danger` in red text on the same
 surface as its neighbours, loud only in its confirmation.
 
-**A card says what is wrong and holds what fixes it.** The queue is named
-"Needs you" wherever it appears. The dashboard, the queue page and a domain's
-own attention list use one projection (`hq/platform/application/decisions.py`)
-and one card partial (`partials/_work_queue.html`). A card reads, in order:
+**A queue row says what is wrong and holds what fixes it.** The queue is
+named "Needs you" wherever it appears. The queue page, the findings page, a
+thing's urgent problems and a domain's own attention list use one projection
+(`hq/platform/application/decisions.py`) and draw it as one table
+(`partials/_work_queue.html`, its rows `partials/_queue_rows.html`), so every
+row's dot, words and buttons share one edge. A row reads, in order:
 
-- how urgent it is, in one set of words (`decisions.URGENCY`), and the title,
-  which states what is wrong and links to the thing it is about;
-- one or two sentences of what it means;
+- how urgent it is, a dot in its tone whose tip says it in one set of words
+  (`decisions.URGENCY`), and the title, which states what is wrong and links
+  to the thing it is about;
 - since when, where its owner knows (`Insight(since=...)`), and never a guess;
-- how old the reading it is drawn from is (`Insight(observed_at=...)`). An
+  how old the reading it is drawn from is (`Insight(observed_at=...)`). An
   out-of-date reading never asserts a live condition: its owner says what was
   read, in the past tense, as a notice;
-- what to do: a command or an instruction is a step, one standing alone and
-  several numbered, folded under "Steps" only when long;
-- the reason it cannot be done from here, as a sentence and never as a step;
-- what was read that shows it (`Insight(facts=...)`), each label once with its
-  values beside it;
+- one line of what it means;
 - buttons: the owner's actions, the first step that can be taken now when the
-  owner offered none, and the check that reads again. At most one is primary;
-- the pages that help look into it (`Insight(links=...)`), quiet links, the
-  topology's as icons with HQ's tooltip.
+  owner offered none, and the check that reads again. At most one is primary.
+  Where the reader sorts their own queue, Dismiss or Restore ends the row.
 
-Buttons and links stand right after what the card says (which is as wide as
-its words, up to a readable line length), so neither takes a row of its own nor stands at
-the far edge of a wide card. The queue, a thing's own page and the findings page
-draw this one card; a command is `partials/_command.html`, with its copy
-button in its corner. Its urgency is `partials/_urgency_pill.html`: a Cmd- or
-Ctrl-click opens what raised it (the finding rule, its severity and the line
-its detector is defined at, or the domain and key of anything else), read
-from the code rather than written down.
+Closed, a row is those one or two lines. Everything taller is the row's
+`row-below`, opened by its toggle into the line beneath, the table's width:
+what was read that shows it (`Insight(facts=...)`), each label once with its
+values beside it; what to do, where a command or an instruction is a step,
+one standing alone and several numbered; the reason it cannot be done from
+here, as a sentence and never as a step; and the pages that help look into
+it (`Insight(links=...)`), the topology's as icons with HQ's tooltip. On a
+phone the buttons wait there too, and Dismiss stays. A command is
+`partials/_command.html`, with its copy button in its corner. The dot is
+`partials/_urgency_pill.html`: a Cmd- or Ctrl-click opens what raised it (the
+finding rule, its severity and the line its detector is defined at, or the
+domain and key of anything else), read from the code rather than written
+down. With no script every row shows all of it.
 
-Nothing that explains a card or acts on it sits behind a toggle. A next step
-an owner names as a short label with a `url` is a link to that page; one it
-writes as a sentence is shown as a sentence. Each action renders once, by
-method and URL, through the page-action renderer and the shared POST form,
-and the transport keeps the owner's full workflow. A dismissed card is its
-title and the way back.
+A next step an owner names as a short label with a `url` is a link to that
+page; one it writes as a sentence is shown as a sentence. Each action renders
+once, by method and URL, through the page-action renderer and the shared POST
+form, and the transport keeps the owner's full workflow. A dismissed row is
+its title and the way back. A link to a row (`/action-items/#…`) lands on it
+open.
 
-A queue of three or fewer is read on the dashboard, under the greeting, on the
-same cards. A longer one is a count and a link to its page. There a card is
-its title, one line of what it means, its age and its buttons; its title opens
-the page that shows the whole card, steps included.
+A queue of three or fewer is read on the dashboard, under the greeting, as
+short cards (`partials/_queue_glance.html`). A longer one is a count and a
+link to its page. There a card is its title, one line of what it means, its
+age and its buttons; its title opens the row on the page that shows the rest,
+steps included.
 
 **A reading says how old it is.** Wherever a page shows what was read, its age
 is `partials/_reading_age.html`, over the reading's `Freshness` where the page
@@ -287,7 +304,7 @@ frame across the page whose content stops short of half of it
 (`a_wide_frame_is_filled`).
 
 **Only what is urgent is framed.** A thing's page draws the problems about it
-from `partials/_problems.html`. An urgent one is the queue's card in a box
+from `partials/_problems.html`. An urgent one is the queue's row in a box
 above the page; anything less is one unframed line (how urgent, what is wrong,
 what it means, its button) and, on a page made of parts, sits under the part it
 is about. The status at the top counts them by urgency ("1 urgent · 1 needs
@@ -304,7 +321,8 @@ links to them, and never claims all is clear.
 **A family folds.** An owner names what kind of matter an item is
 (`Insight(family="Image advisories")`), in the words it would head a list
 with. Several open items of one family from one domain are one line in the
-queue (how bad, what kind, how many) until opened, and can be dismissed whole.
+queue (how bad, what kind, how many), a row that opens to theirs, and can be
+dismissed whole.
 A family of one is the item alone.
 
 **Dismissing a row costs a write, not a queue.** A row's button names the row

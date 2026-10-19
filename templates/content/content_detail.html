@@ -3,51 +3,34 @@
 <dl class="kv">
   {% if item.topic %}<dt>Description</dt><dd>{{ item.topic }}</dd>{% endif %}
   {% if item.tag_list %}<dt>Tags</dt><dd>{% for t in item.tag_list %}<span class="tag">{{ t }}</span>{% endfor %}</dd>{% endif %}
-  {% if item.published_url %}<dt>Published URL</dt><dd>{% if item.published_url|web_url %}<a href="{{ item.published_url|web_url }}" rel="noopener noreferrer">{{ item.published_url }}</a>{% else %}{{ item.published_url }}{% endif %}</dd>{% endif %}
+  {% if item.published_url %}<dt>Published URL</dt><dd>{% if item.published_url|web_url %}<a href="{{ item.published_url|web_url }}" rel="noopener noreferrer">{{ item.published_url|breakable }}</a>{% else %}{{ item.published_url|breakable }}{% endif %}</dd>{% endif %}
   {% if item.published_at %}<dt>{% if item.is_published %}Published{% else %}Planned date{% endif %}</dt><dd>{{ item.published_at|when }}</dd>{% endif %}
   <dt>Added to HQ</dt><dd class="muted">{{ item.created_at|when }}</dd>
   <dt>Updated</dt><dd class="muted">{{ item.updated_at|when }}</dd>
+  {% comment %}No visits is a fact about the page, said beside the others rather than in a card of its own.{% endcomment %}
+  {% if traffic.path and not traffic.measured %}<dt>Traffic</dt><dd class="muted">No visits in the last {{ traffic.days|counted:"day" }}</dd>{% endif %}
 </dl>
 
-{% if traffic.path %}
+{% if traffic.path and traffic.measured %}
   <section class="card" aria-labelledby="traffic">
     <div class="card-head">
       <h2 id="traffic">Traffic</h2>
       <a class="section-foot" href="{% url 'analytics:overview' %}?days={{ traffic.days }}">All analytics &rarr;</a>
     </div>
-    {% if traffic.measured %}
-      <dl class="vitals-strip">
-        <div class="vital">
-          <dt>Page views ({{ traffic.days|counted:"day" }})</dt>
-          <dd><span class="vital-rate">{{ traffic.pageviews }}</span></dd>
-        </div>
-        <div class="vital">
-          <dt>Visits ({{ traffic.days|counted:"day" }})</dt>
-          <dd><span class="vital-rate">{{ traffic.visits }}</span></dd>
-        </div>
-      </dl>
-    {% else %}
-      <p class="muted">No visits recorded for this page in the last {{ traffic.days|counted:"day" }}.</p>
-    {% endif %}
+    <dl class="vitals-strip">
+      <div class="vital">
+        <dt>Page views ({{ traffic.days|counted:"day" }})</dt>
+        <dd><span class="vital-rate">{{ traffic.pageviews }}</span></dd>
+      </div>
+      <div class="vital">
+        <dt>Visits ({{ traffic.days|counted:"day" }})</dt>
+        <dd><span class="vital-rate">{{ traffic.visits }}</span></dd>
+      </div>
+    </dl>
   </section>
 {% endif %}
 
 {% if item.notes %}<h2>Notes</h2><p>{{ item.notes|linebreaksbr }}</p>{% endif %}
 
-{% with projects=item.related_projects.all assets=item.related_assets.all expenses=item.related_expenses.all %}
-<section>
-  <h2>Related</h2>
-  {% if projects or assets or documents or expenses %}
-    <div class="two-col">
-      {% if documents.sources %}<div><h3>Source document</h3><ul>{% for link in documents.sources %}<li>{% entity link %}</li>{% endfor %}</ul></div>{% endif %}
-      {% if projects or documents.projects %}<div><h3>Projects</h3><ul>{% for p in projects %}<li>{% entity "project"|entity_of:p.slug label=p.name %}</li>{% endfor %}{% for link in documents.projects %}<li>{% entity link %}</li>{% endfor %}</ul></div>{% endif %}
-      {% if assets %}<div><h3>Assets</h3><ul>{% for a in assets %}<li>{% entity "asset"|entity_of:a.slug label=a.item_name %}</li>{% endfor %}</ul></div>{% endif %}
-      {% if expenses %}<div><h3>Expenses</h3><ul>{% for e in expenses %}<li>{% entity "expense"|entity_of:e.pk label=e.label %} <span class="muted">{{ e.date|when:"day" }} · {{ e.total_cost|money }}</span></li>{% endfor %}</ul></div>{% endif %}
-      {% include "docs_index/_related_documents.html" %}
-    </div>
-  {% else %}
-    <p class="muted">Nothing is linked to this yet.</p>
-  {% endif %}
-</section>
-{% endwith %}
+<div class="section-flow">{% include "partials/_related.html" with groups=related %}</div>
 {% endblock %}

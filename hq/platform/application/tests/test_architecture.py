@@ -372,19 +372,22 @@ class StyleContractTests(SimpleTestCase):
 
         self.assertEqual(sorted(set(offences)), [])
 
-    def test_connection_content_cannot_choose_the_table_geometry(self):
-        """A provider endpoint may be arbitrarily long but never owns layout."""
+    def test_a_rows_block_detail_opens_beneath_the_row(self):
+        """`row-more` shows a part in its own cell once the row is open, which
+        suits a word or a list item. A block (a list, a paragraph, a panel)
+        shown there stacks the whole detail into one column beside empty ones,
+        so it is `row-below`, the line beneath the row at the table's width."""
 
-        css = self._stylesheet()
-        # The table sizes to its content; the endpoint caps itself instead.
-        self.assertNotIn(".connection-table { table-layout: fixed; }", css)
-        endpoint_rule = css.split(".connection-endpoint {", 1)[1].split("}", 1)[0]
-        # The cap every identifier in a table shares, so a narrow table can
-        # cut it sooner in one place, and never more than the cell.
-        self.assertIn("max-width: min(100%, var(--identifier-max));", endpoint_rule)
-        self.assertIn("--identifier-max: 32ch;", css)
-        self.assertIn("text-overflow: ellipsis;", endpoint_rule)
-        self.assertIn("white-space: nowrap;", endpoint_rule)
+        root = Path(__file__).resolve().parents[4]
+        offences = [
+            f"{template.relative_to(root)}: <{tag}>"
+            for template in (root / "templates").rglob("*.html")
+            for tag in re.findall(
+                r'<(div|ul|ol|p|section|form|table|dl)\b[^>]*class="[^"]*\brow-more\b',
+                template.read_text(encoding="utf-8"),
+            )
+        ]
+        self.assertEqual(offences, [])
 
     # Viewport breakpoints left, each for something the viewport genuinely
     # decides: the header and nav, a modal that takes the whole screen, table
@@ -1423,6 +1426,8 @@ PLAIN_WORDS_NOT_FOR_THE_OWNER = (
     ("hq/domains/control_plane/observations/contract.py", "Declaration errors raised while HQ starts."),
     ("hq/domains/control_plane/models.py", "Model validation messages no page shows."),
     ("hq/platform/application/integrations.py", "Errors an extension's author reads when it loads."),
+    ("hq/platform/application/plugin_admission.py", "Admission errors raised while HQ starts."),
+    ("hq/platform/core/outbound.py", "Why a request may wait on the outside, read by whoever adds one."),
     ("hq/platform/application/controller.py", "Refusals answered to the controller over the bridge."),
     ("hq/config/", "Settings and start-up errors."),
 )
@@ -1466,6 +1471,11 @@ PLAIN_WORDS_EXEMPT = (
         "hq/platform/application/render_status_findings.py",
         "render",
         "Part of a literal log token the owner is told to search the journal for.",
+    ),
+    (
+        "templates/control_plane/zone_detail.html",
+        "SEVERINO_INFRASTRUCTURE_ENABLE_PUBLIC_DNS",
+        "The domain page's notice, owned by the pass reworking that page; it goes with the rewording there.",
     ),
     (
         "hq/domains/control_plane/apps.py",
@@ -1567,6 +1577,23 @@ class PlainWordsTests(SimpleTestCase):
         )
         self.assertEqual(list(self.words.words_in("3 things need you. Read now.")), [])
 
+    def test_a_setting_name_or_a_field_value_is_found_even_in_code(self):
+        template = (
+            "<p>Set <code>SEVERINO_EXAMPLE_SWITCH</code> to allow it.</p>"
+            "<p>Set manages to 1 on its item.</p><code>example.rewrite</code>"
+        )
+        found = [
+            word
+            for _line, text in (*self.words.template_text(template), *self.words.template_identifiers(template))
+            for word, _instead in self.words.asked_in(text)
+        ]
+
+        self.assertEqual(sorted(found), ["SEVERINO_EXAMPLE_SWITCH", "manages to 1"])
+        self.assertEqual(
+            [word for word, _instead in self.words.words_in("Public DNS changes are off. Set SEVERINO_EXAMPLE_DNS.")],
+            ["SEVERINO_EXAMPLE_DNS"],
+        )
+
     def test_a_path_that_is_gone_fails_rather_than_passing(self):
         from pathlib import Path
 
@@ -1655,6 +1682,24 @@ class OnePrimitiveTests(SimpleTestCase):
         ]
         self.assertEqual(templates, [])
 
+    # Identifiers still written in bare code. Lower it as they move to
+    # `|breakable`; never raise it.
+    BARE_CODE_CEILING = 35
+
+    def test_an_identifier_is_written_as_a_breakable_token(self):
+        """A value in code wraps at its seams (`|breakable`), never inside
+        "compose.y|aml" because its box lets prose break anywhere."""
+
+        # A code block keeps its own lines, so code inside <pre> is not a token.
+        bare = re.compile(r"(<pre[^>]*>\s*)?(<code[^>]*>\{\{(?:(?!\}\}).)*\}\})")
+        found = [
+            f"{path.relative_to(self.ROOT).as_posix()}: {code}"
+            for path in sorted((self.ROOT / "templates").rglob("*.html"))
+            for block, code in bare.findall(path.read_text(encoding="utf-8"))
+            if not block and "|breakable" not in code
+        ]
+        self.assertLessEqual(len(found), self.BARE_CODE_CEILING, "\n".join(found))
+
     def test_zone_membership_is_asked_of_in_zone(self):
 
         inline = re.compile(r'endswith\(f"\.\{')
@@ -1693,6 +1738,18 @@ class OnePrimitiveTests(SimpleTestCase):
             path.relative_to(self.ROOT).as_posix()
             for path in sorted((self.ROOT / "templates").rglob("*.html"))
             if built.search(path.read_text(encoding="utf-8"))
+        ]
+        self.assertEqual(found, [])
+
+    def test_a_related_list_is_drawn_by_its_partial(self):
+        """A record page lists what it is related to through
+        `partials/_related.html` (groups from `application.related`), never
+        under a "Related" heading over a list of its own shape."""
+
+        found = [
+            path.relative_to(self.ROOT).as_posix()
+            for path in sorted((self.ROOT / "templates").rglob("*.html"))
+            if re.search(r"<h[1-6][^>]*>\s*Related\b", path.read_text(encoding="utf-8"))
         ]
         self.assertEqual(found, [])
 

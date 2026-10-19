@@ -318,13 +318,17 @@ document.addEventListener("click", (event) => {
   hqFetch(was.action, { method: "POST", body, credentials: "same-origin" })
     .then((response) => {
       if (!response.ok) throw new Error(String(response.status));
-      // Counts over the row: its family's, its domain's, its section's.
+      // Counts over the row: its family's row, its domain's row group, its section's.
       const step = dismissing ? -1 : 1;
       const counts = new Set();
       for (let box = row.parentElement; box; box = box.parentElement) {
-        const count = box.querySelector(":scope > summary [data-queue-count], :scope > h3 [data-queue-count], :scope > .section-head [data-queue-count]");
+        const count = box.querySelector(":scope > tr.row-group [data-queue-count], :scope > .section-head [data-queue-count]");
         if (count) counts.add(count);
       }
+      const family = row.dataset.folded && document.getElementById(row.dataset.folded);
+      const familyCount = family?.querySelector("[data-queue-count]");
+      if (familyCount) counts.add(familyCount);
+      if (dismissing) row.querySelector(".row-expand[aria-expanded=true]")?.click();
       counts.forEach((count) => { count.textContent = String(Math.max(0, Number(count.textContent) + step)); });
       if (!row.closest(".action-items-aside")) {
         document.querySelectorAll("[data-action-count]").forEach((badge) => {
@@ -937,6 +941,21 @@ const hqBindWhen = (root) => {
 hqBindWhen(document);
 document.addEventListener("hq:fragment", (event) => hqBindWhen(event.target));
 
+// An empty date, time or moment is marked, so the stylesheet can stop WebKit
+// drawing today's date in it as though it were a value.
+(() => {
+  const moment = "input:is([type=date], [type=time], [type=datetime-local])";
+  const mark = (input) => input.toggleAttribute("data-empty", !input.value);
+  const markWithin = (root) => root.querySelectorAll(moment).forEach(mark);
+  markWithin(document);
+  document.addEventListener("hq:fragment", (event) => markWithin(event.target));
+  for (const type of ["input", "change"]) {
+    document.addEventListener(type, (event) => {
+      if (event.target.matches?.(moment)) mark(event.target);
+    });
+  }
+})();
+
 // A key that works a control: any link or button carrying data-hotkey, while
 // nothing is being typed. The control stays the source of truth, so a key
 // does exactly what clicking it would.
@@ -1181,7 +1200,7 @@ const hqShowResponseHeaders = (root) => {
   slot.dataset.loaded = "true";
   const hqEvidenceRow = (label, present, purpose, chipText) => {
     const row = document.createElement("div");
-    row.className = "conn-row conn-row-wide";
+    row.className = "conn-row";
     const shown = document.createElement("code");
     shown.textContent = label;
     const chip = document.createElement("span");

@@ -239,9 +239,10 @@ def readable(value):
 
 
 # Where an address, hostname or path may wrap: after a dot or slash, before a
-# port's colon. Without them a narrow box cuts "10.0.0.10:8000" mid-number.
-_BREAK_AFTER = re.compile(r"([./])(?=.)")
-_BREAK_BEFORE = re.compile(r"(?<=.)(:)(?=.)")
+# port's colon (before an IPv6 "::" as one), never inside a scheme's "://".
+# Without them a narrow box cuts "10.0.0.10:8000" mid-number.
+_BREAK_AFTER = re.compile(r"([./])(?=[^/])")
+_BREAK_BEFORE = re.compile(r"(?<=[^:\s])(:+)(?=[^/])")
 
 
 # A part with a hyphen inside it ("nginx-proxy-manager") is kept on one line:
@@ -257,13 +258,21 @@ def _whole(part: str) -> str:
 
 @register.filter(is_safe=True)
 def breakable(value):
-    """``value`` escaped, with a line-break opportunity where an address may wrap,
-    and none inside a hyphenated part."""
+    """``value`` as a token: escaped, with a line-break opportunity where an
+    address or a path may wrap, and none inside a hyphenated part.
+
+    The one way a template writes an identifier (``<code>{{ x|breakable }}</code>``,
+    or bare as a link's text). The ``token`` class keeps it from breaking
+    anywhere else unless one part alone is longer than its line.
+    """
 
     # Escaped first, so the only markup in the result is what is added here.
     text = str(conditional_escape(value))
+    if not text:
+        return ""
     marked = _BREAK_BEFORE.sub(r"<wbr>\1", _BREAK_AFTER.sub(r"\1<wbr>", text))
-    return mark_safe("".join(_whole(part) for part in _PARTS.split(marked)))
+    inner = "".join(_whole(part) for part in _PARTS.split(marked))
+    return mark_safe(f'<span class="token">{inner}</span>')
 
 
 def _is_this_page(context, url: str) -> bool:
@@ -291,7 +300,7 @@ def entity(context, link, code=False, label=""):
         from dataclasses import replace
 
         link = replace(link, label=str(label))
-    label = format_html("<code>{}</code>", link.label) if code else link.label
+    label = format_html("<code>{}</code>", breakable(link.label)) if code else link.label
     if link.url and not link.external and _is_this_page(context, link.url):
         return format_html('<span data-entity="{}">{}</span>', link.kind_label, label)
     if link.url and link.external:
@@ -333,14 +342,15 @@ def reference(context, row, field):
     return reference_of(row, field, principal=_viewer(context))
 
 
-@register.inclusion_tag("partials/_referenced_by.html", takes_context=True)
-def referenced_by(context, thing, identity="", cards=False):
-    """Everything that names a thing, for that thing's page.
+@register.inclusion_tag("partials/_related.html", takes_context=True)
+def referenced_by(context, thing, identity="", cards=True):
+    """Everything that names a thing, for that thing's page: a card per kind
+    of reference, as every related list is drawn (``partials/_related.html``).
 
     ``{% referenced_by vehicle %}`` for a row of a model that can be referred
     to; ``{% referenced_by "machine" machine.name %}`` for a kind and what its
-    page is addressed by. ``cards=True`` draws each list as a card. One
-    statement, whatever names it.
+    page is addressed by. ``cards`` has one value left, the one extensions
+    still pass. One statement, whatever names it.
     """
 
     from hq.platform.application import references
@@ -350,7 +360,7 @@ def referenced_by(context, thing, identity="", cards=False):
         found = references.referenced_by(thing, str(identity), principal=principal)
     else:
         found = references.referenced_by_row(thing, principal=principal)
-    return {"mentions": found, "cards": cards, "request": context.get("request")}
+    return {"groups": found, "request": context.get("request")}
 
 
 @register.filter
@@ -401,7 +411,7 @@ def readout(value):
 
     text = str(value)
     if " " not in text.strip() and _IDENTIFIER.search(text):
-        return format_html("<code>{}</code>", text)
+        return format_html("<code>{}</code>", breakable(text))
     return text
 
 

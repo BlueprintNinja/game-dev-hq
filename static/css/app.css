@@ -225,6 +225,8 @@
   /* Every square control in the header bar (the collapsed search button and
      the sections toggle), sized once so the two cannot drift apart. */
   --control-size: 34px;
+  /* How far a select's chevron sits in from its edge; a borderless select sets 0. */
+  --chevron-inset: var(--space-5);
   /* Every control in the header bar reads these, so none can be drawn as a
      different kind of thing from the ones beside it. */
   --bar-control-bg: var(--surface-2);
@@ -253,6 +255,7 @@
   /* How much of an identifier a table cell shows before cutting it; the row
      expander shows the rest. */
   --identifier-max: 32ch;
+  --identifier-snug: 22ch;
   /* Track floors for a band of a fixed number of cells, so it lays out as a
      whole number of even rows at any width: 4, 2 or 1 columns (never 3+1),
      or 3 or 1. Read where they are used, so 100% is that grid's width.
@@ -343,6 +346,10 @@ a { color: var(--accent-2); text-decoration: none; }
 a:hover { color: var(--accent); text-decoration: underline; }
 code { font-family: var(--font-mono); font-size: .88em; background: var(--bg-tint); padding: 1px var(--space-2); border-radius: 4px; color: var(--ink-2); }
 pre code { background: transparent; padding: 0; color: inherit; }
+/* A token (`|breakable`): an address, a path, a key, an image. It wraps at
+   the seams the filter marks, and inside a part only when that part alone is
+   longer than its line, however freely the box around it breaks prose. */
+code, .token { overflow-wrap: break-word; }
 /* A chip that is a link reads as one: the link colour, underlined on hover. */
 a code { color: var(--accent-2); }
 a:hover code { color: var(--accent); text-decoration: underline; }
@@ -351,12 +358,13 @@ pre { background: var(--code-bg); color: var(--code-ink); padding: var(--space-7
 pre ::selection { color: var(--code-ink); }
 
 /* A node key is one long unbroken token. Stacked so the machine's name sits
-   above it rather than competing for width, and allowed to break anywhere so
-   it wraps inside its panel instead of widening the page. */
+   above it rather than competing for width, and broken only where a line
+   cannot hold it. */
 .conn-keys { display: grid; gap: var(--space-1); margin: var(--space-3) 0 var(--space-4); }
 .conn-keys dt { color: var(--muted); font-size: var(--text-xs); }
 .conn-keys dd { margin: 0 0 var(--space-3); }
-.conn-keys dd code, .node-key { font-size: var(--text-xs); overflow-wrap: anywhere; word-break: break-all; }
+.conn-keys dd code { font-size: var(--text-xs); overflow-wrap: break-word; }
+.node-key { font-size: var(--text-xs); overflow-wrap: anywhere; word-break: break-all; }
 
 /* A mark, not an alarm. It has to be visible while the mode is on (an
    operator who forgets can screenshot fiction and file it as fact) and it
@@ -523,7 +531,34 @@ textarea {
   font-size: var(--text-sm);
   transition: border-color .12s ease, box-shadow .12s ease;
 }
-input:where([type=text], [type=url], [type=number], [type=password], [type=email], [type=date], [type=search], :not([type])):focus,
+/* A one-line control is the height of a button, whatever the browser would
+   draw it at: a select, a date and a field side by side read as one row. */
+input:where([type=text], [type=url], [type=number], [type=password], [type=email], [type=date], [type=time], [type=datetime-local], [type=search], :not([type])),
+select:not([multiple], [size]) {
+  box-sizing: border-box;
+  block-size: var(--control-size);
+  padding-block: 0;
+}
+/* HQ draws the select, so WebKit's small rounded one does not sit beside
+   square fields; the chevron is two gradient strokes in the muted ink. */
+select:not([multiple], [size]) {
+  appearance: none;
+  padding-inline-end: calc(var(--chevron-inset) + 14px);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - var(--chevron-inset) - 5px) 50%,
+    calc(100% - var(--chevron-inset)) 50%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+input::-webkit-datetime-edit { padding-block: 0; }
+input::-webkit-date-and-time-value { text-align: start; }
+/* WebKit fills an empty date with today's date in grey, which reads as a
+   value. app.js marks an empty one, and it shows nothing until focused. */
+input[data-empty]:not(:focus)::-webkit-datetime-edit { -webkit-text-fill-color: transparent; }
+input:where([type=text], [type=url], [type=number], [type=password], [type=email], [type=date], [type=time], [type=datetime-local], [type=search], :not([type])):focus,
 select:focus,
 textarea:focus { outline: none; border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--accent-tint); }
 
@@ -792,7 +827,7 @@ h3 { font-size: var(--text-md); margin: var(--space-8) 0 var(--space-3); font-we
      tall as one holding a word, and the two match wherever they sit side by
      side. */
   line-height: 1.45;
-  min-height: 34px;
+  min-height: var(--control-size);
   text-decoration: none;
   transition: border-color .12s ease, background .12s ease, box-shadow .12s ease;
   box-shadow: var(--shadow-sm);
@@ -1447,22 +1482,20 @@ td.row-actions > * + * { margin-left: var(--space-6); }
   display: flex; flex-wrap: wrap; gap: var(--space-4);
   padding: var(--surface-inset, var(--space-5));
   margin-bottom: var(--space-8);
-
 }
-.content input[type=search], .filter-bar select, .filter-bar input[type=text] {
-  padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); font: inherit; font-size: var(--text-sm);
-}
-.filter-bar input[type=search] { flex: 1 1 240px; }
-/* One height for every control in the bar, so a wrapped row still reads as one
-   row of controls rather than a field, two shorter selects and a taller button. */
-.filter-bar > input, .filter-bar > select, .filter-bar > .btn { height: var(--control-size); box-sizing: border-box; }
+/* A bar that wraps is whole rows: every control grows to share its row's
+   room, so no row stops short of the edge. The bar's first control (its
+   search, or the one choice it filters by) takes nearly all of the room on the
+   row it shares, so on one wide row the controls beside it stay their own
+   size. Words in a bar (a label, a count) never grow. */
+:where(.filter-bar, .table-filters) > :where(:not(.control-label, .filter-bar-summary)) { flex: 1 1 auto; }
+.filter-bar > :first-child:not(.control-label), .table-toolbar > .table-search { flex: 1000 1 240px; min-width: 0; }
 /* A select is as wide as its longest option unless told otherwise. */
 .filter-bar > select { max-width: 100%; min-width: 0; }
-.filter-bar > .btn { padding-block: 0; }
+.filter-bar > .btn, .table-filters > .btn { justify-content: center; }
 /* One field and its button on a line: the field takes the room. */
 .field-row { display: flex; gap: var(--space-4); align-items: center; margin-top: var(--space-6); }
 .field-row > input { flex: 1; min-width: 0; }
-.content input[type=search]:focus, .filter-bar input:focus, .filter-bar select:focus { outline: 2px solid var(--accent-tint); outline-offset: -1px; border-color: var(--accent-2); }
 
 /* ── Data table ─────────────────────────────────────────────────── */
 
@@ -1591,20 +1624,19 @@ td.row-actions > * + * { margin-left: var(--space-6); }
 /* One row: the search field takes the room the filters leave, and one button
    applies both. Enter in the field submits the same form. */
 .table-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); margin: 0 0 var(--space-6); padding: var(--surface-inset, var(--space-5)); }
-.table-search { flex: 1 1 260px; min-width: 0; }
-.table-filters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
+.table-filters { flex: 1 1 auto; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
 .table-filter-menu { position: relative; }
-.table-filter-menu summary, .table-toggle, .table-sort { min-height: var(--control-size); display: inline-flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--ink-2); font-size: var(--text-sm); cursor: pointer; }
+.table-filter-menu summary, .table-toggle, .table-sort { min-height: var(--control-size); display: flex; justify-content: center; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--ink-2); font-size: var(--text-sm); cursor: pointer; }
 .table-filter-menu summary { list-style: none; }
 .table-filter-menu summary::-webkit-details-marker { display: none; }
 /* A disclosure's panel that would run off the right of the screen hangs from
    the disclosure's right edge instead; app.js decides when it opens. */
 details > [data-edge="end"] { left: auto; right: 0; }
-.table-filter-options { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 220px; max-width: calc(100vw - 32px); max-height: 280px; overflow: auto; display: grid; gap: var(--space-1); padding: var(--space-4); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow); }
+.table-filter-options { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: min(220px, 100%); max-width: calc(100vw - 32px); max-height: 280px; overflow: auto; display: grid; gap: var(--space-1); padding: var(--space-4); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow); }
 .table-filter-options label { display: flex; gap: var(--space-4); align-items: center; padding: var(--space-3); border-radius: 4px; font-size: var(--text-sm); }
 .table-filter-options label:hover { background: var(--surface-2); }
 .filter-count { min-width: 18px; padding: 1px var(--space-2); border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: var(--text-2xs); text-align: center; }
-.table-sort select { border: 0; padding: 0; background: transparent; color: inherit; }
+.table-sort select { --chevron-inset: 0px; block-size: auto; border: 0; padding-inline-start: 0; background-color: transparent; color: inherit; }
 .table-selection { position: sticky; top: 8px; z-index: 15; display: flex; align-items: center; gap: var(--space-4); margin: 0 0 var(--space-4); padding: var(--space-4) var(--space-5); background: var(--ink); color: var(--surface); border-radius: var(--radius-sm); box-shadow: var(--shadow); }
 .table-selection[hidden] { display: none; }
 .table-selection strong { margin-right: auto; font-size: var(--text-sm); }
@@ -1644,6 +1676,8 @@ a.scope-chip:hover { color: var(--ink); border-color: var(--muted-2); text-decor
    percentage, because a percentage counts for nothing while the columns are
    sized, and one long URL would then take the width every other column needs. */
 .data-table td code { white-space: nowrap; overflow-wrap: normal; display: inline-block; max-width: var(--identifier-max); overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+/* Cut to one line, a token is plain text: the ellipsis lands in it, and no part of it draws a box past the cut. */
+.data-table td code :is(.token, .whole) { display: contents; }
 /* A square for a glyph, and as wide as its word when it holds one. */
 .icon-link {
   display: inline-flex;
@@ -1740,7 +1774,7 @@ a.scope-chip:hover { color: var(--ink); border-color: var(--muted-2); text-decor
    stays, what is marked `narrow-more` waits in the line beneath the row. */
 .data-table[data-narrow] > tbody { --row-pad: var(--space-6); }
 .data-table[data-narrow] > tbody > tr:not(.row-detail) .narrow-more { display: none; }
-.table-scroll > .data-table:is([data-narrow], [data-snug]) { --identifier-max: 22ch; }
+.table-scroll > .data-table:is([data-narrow], [data-snug]) { --identifier-max: var(--identifier-snug); }
 /* A column held to a width that suits a wide table gives it back here, so
    the room goes to the column that names the row. */
 .data-table[data-narrow] .tight-col > * { min-width: 0; }
@@ -1821,8 +1855,27 @@ a.scope-chip:hover { color: var(--ink); border-color: var(--muted-2); text-decor
 .row-columns { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-3) var(--space-6); margin: 0; }
 .row-columns dt { color: var(--muted); font-size: var(--text-2xs); }
 .row-columns dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+/* What a row keeps for that line at any width (`row-below`): the tall parts
+   of a row, set in under the cell they came from. */
+.data-table > tbody > tr:not(.row-detail) .row-below { display: none; }
+.row-detail .row-below + :is(.row-below, .row-columns) { margin-top: var(--space-5); }
+/* Rows folded under the row that heads them (`data-folds`), shown while it is
+   open. With no script every row shows and the head has nothing to press. */
+@media (scripting: enabled) {
+  .data-table tr[data-folded]:not([data-open]) { display: none; }
+  /* The last row showing ends its section, as the last row does. */
+  .data-table tbody tr:has(~ tr[data-folded]):not(:has(~ tr:not([data-folded]:not([data-open])))) > * { border-bottom: 0; }
+}
+@media (scripting: none) { .row-fold { display: none; } }
 .data-table tr.is-expanded:has(+ .row-detail) > * { border-bottom: 0; }
-.data-table .row-detail > td { padding-top: 0; }
+/* What an opened row adds is one panel under the row's name: its left edge on
+   the name's, each part's name in one column and its value beside it. */
+.data-table .row-detail > td { padding-top: 0; padding-left: calc(var(--space-6) + 1.5rem); }
+.row-detail > td > .row-columns {
+  grid-template-columns: 7rem minmax(0, 1fr); align-items: baseline; gap: var(--space-5) var(--space-6);
+  padding: var(--space-5) var(--space-6); border-radius: var(--radius); background: var(--bg-tint);
+}
+.row-detail > td > .row-columns > dt { font-size: var(--text-3xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
 .data-table .row-detail:hover { background: none; }
 /* With its columns held, a value the open row no longer cuts short has to
    break inside its column rather than run under the next. */
@@ -1969,15 +2022,15 @@ a.kpi:hover { background: var(--surface-2); }
 .insight-action { margin: 0; font-size: var(--text-sm); line-height: 1.5; color: var(--muted); }
 
 
-/* ── Attention queue ────────────────────────────────────────────────
-   Cross-surface list of things awaiting a decision. A row, not a card: these
-   are scanned top-down in severity order, and cards would imply the grid
-   position carries meaning when only the order does. */
+/* ── The queue ──────────────────────────────────────────────────────
+   What awaits a decision, scanned top-down in severity order. Wherever it is
+   drawn whole it is the table primitive (partials/_queue_rows.html): a dot,
+   what is wrong, what can be pressed, so every row's parts share one edge. The
+   dashboard's short list is the one place it is a list of cards. */
 
+/* The dashboard's list: what a card says, then what can be pressed and the
+   reader's own dismiss at its end, wrapping under it when the row is narrow. */
 .attention-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-/* The decision, then (where the reader sorts their own queue) the one thing
-   they can do to the row itself. The second wraps under the first when the
-   row is too narrow for both, at the row's own width. */
 .attention-row {
   display: flex;
   flex-wrap: wrap;
@@ -1986,40 +2039,41 @@ a.kpi:hover { background: var(--surface-2); }
   padding: var(--space-5) 0;
   border-top: 1px solid var(--line-2);
 }
-/* What the card says takes the row, its lines held to a readable measure. */
 .attention-body { flex: 1 1 18rem; min-width: 0; }
 .attention-body > * { max-width: var(--measure); }
-/* What can be pressed, then the pages that help look into it, then the
-   reader's own dismiss: at the card's right edge, so every card's buttons line
-   up; under what it says, still at the right, once the row is too narrow. */
 .attention-end { flex: 0 1 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-3) var(--space-4); margin-left: auto; }
 .attention-end > .attention-actions { margin: 0; justify-content: flex-end; }
-.attention-end > .attention-links { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2) var(--space-4); margin: 0; padding: 0; list-style: none; font-size: var(--text-xs); }
-.attention-links .icon-link { min-width: 0; width: 1.6rem; height: 1.6rem; padding: 0; border: 0; background: none; box-shadow: none; color: var(--muted); }
-.attention-links .icon-link:is(:hover, :focus-visible) { color: var(--ink); background: var(--surface-2); }
 .attention-row[data-dismissed] > .attention-end > :not([data-triage]) { display: none; }
 .attention-end form { margin: 0; }
 .attention-row:first-child { border-top: 0; padding-top: var(--space-2); }
 .attention-row:last-child { padding-bottom: 0; }
+.attention-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-5); }
+/* A row the reader has just dismissed, until the page is next drawn: one quiet
+   line in its place, with the way back. */
+.attention-row[data-dismissed] > .attention-body { display: none; }
+.attention-row[data-dismissed] { align-items: center; color: var(--muted); font-size: var(--text-sm); }
+.attention-row[data-dismissed]::before { content: attr(data-dismissed); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* What is wrong, on one line with how bad it is and what it is about: the
-   line a reader scans the queue by. */
-.attention-head { position: relative; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-5); }
+/* Since when, and how old the reading behind it is: quiet while current, in
+   the attention tone once out of date. */
 .attention-meta { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-5); color: var(--muted); font-size: var(--text-xs); }
 .attention-meta > a { overflow-wrap: anywhere; }
-/* How old the reading behind it is: quiet while current, in the attention tone once out of date. */
 .reading-age { white-space: nowrap; }
 .reading-age.is-stale { color: var(--tone-caution-ink); }
 .attention-title { min-width: 0; max-width: 100%; font-size: var(--text-md); font-weight: 650; color: var(--ink); letter-spacing: -.005em; overflow-wrap: anywhere; }
-/* The card's face under its title: what it means, then what to do, then the
-   reason it cannot be done from here, then what can be pressed. */
+/* What it means, then what to do, then the reason it cannot be done from
+   here, then what can be pressed. */
 .attention-detail { max-width: var(--measure); margin: var(--space-3) 0 0; font-size: var(--text-sm); line-height: 1.65; color: var(--ink-2); overflow-wrap: anywhere; }
 .attention-advice { max-width: var(--measure); margin: var(--space-3) 0 0; font-size: var(--text-sm); color: var(--muted); overflow-wrap: anywhere; }
 .attention-reason { max-width: var(--measure); margin: var(--space-3) 0 0; font-size: var(--text-xs); line-height: 1.55; color: var(--muted); overflow-wrap: anywhere; }
 .attention-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
 .attention-actions form { margin: 0; }
-/* What raised a card, opened from its urgency: a small modal over the page,
-   titled with the card it explains. */
+/* The pages that help look into it: quiet links, the topology's as icons. */
+.attention-links { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); margin: var(--space-3) 0 0; padding: 0; list-style: none; font-size: var(--text-xs); }
+.attention-links .icon-link { min-width: 0; width: 1.6rem; height: 1.6rem; padding: 0; border: 0; background: none; box-shadow: none; color: var(--muted); }
+.attention-links .icon-link:is(:hover, :focus-visible) { color: var(--ink); background: var(--surface-2); }
+/* What raised an item, opened from its urgency: a small modal over the page,
+   titled with the item it explains. */
 .modifier-held [data-origin] { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; outline: 1px solid var(--tone-line, var(--line)); outline-offset: 1px; }
 /* Hide the tooltip while the origin panel is open: it would cover the panel. */
 :root:has(.origin-panel:popover-open) .chart-tip { display: none; }
@@ -2030,41 +2084,47 @@ a.kpi:hover { background: var(--surface-2); }
 .attention-facts > div { display: contents; }
 .attention-facts dt { color: var(--muted); }
 .attention-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-/* The queue under its domains: a heading per domain and its count. */
-.queue-group + .queue-group { margin-top: var(--space-8); }
-.queue-group > h3 { display: flex; align-items: baseline; gap: var(--space-4); margin: 0; color: var(--muted); font-size: var(--text-xs); font-weight: 650; letter-spacing: .05em; text-transform: uppercase; }
-.action-items-aside[open] > summary { margin-bottom: var(--space-6); }
-/* A domain's entries: an item, or a family of them folded. Each after the
-   first is ruled off from the one before, whichever it is. */
-.queue-entries > * + * { border-top: 1px solid var(--line-2); }
-/* A card that needs the reader, or only tells them something, is marked by a
-   dot in its tone; only an urgent one says so in words. The dot keeps the
-   pill's tip and its origin panel. */
-.pill.is-mark { flex: none; width: .5rem; height: .5rem; padding: 0; border: 0; border-radius: 50%; background: var(--tone-ink); font-size: 0; }
-/* In a card's head the dot hangs in the margin at the title's first line, so
-   the title and what the card says share one edge, and a long title wraps under
-   itself. */
-.attention-head > .pill.is-mark { position: absolute; left: -.95rem; top: .55rem; }
-.queue-family > summary > .pill.is-mark { position: absolute; left: -.95rem; top: calc(var(--space-5) + .55rem); }
-.queue-entries .attention-row:first-child { padding-top: var(--space-5); }
-/* A family, closed: how bad, what kind, how many, and the one thing that can
-   be done to all of them. Open, its rows are set in from the fold's mark. */
-.queue-family > summary { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-5); padding: var(--space-5) 0; cursor: pointer; font-size: var(--text-md); }
-/* The fold's mark follows the count, so a family's pill starts where a
-   single row's does; the family's own control ends the line. */
-.queue-family > summary::before { order: 1; }
-.queue-family > summary .queue-family-end { order: 2; margin-left: auto; }
-.queue-family > .attention-list { padding-left: var(--space-8); border-top: 1px solid var(--line-2); }
-/* A row the reader has just dismissed, until the page is next drawn: one quiet
-   line in its place, with the way back. */
-.attention-row[data-dismissed] > .attention-body { display: none; }
-.attention-row[data-dismissed] { align-items: center; color: var(--muted); font-size: var(--text-sm); }
-.attention-row[data-dismissed]::before { content: attr(data-dismissed); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* How urgent a row is, as a dot in its tone. It keeps the pill's tip, which
+   says the word, and its origin panel. */
+.pill.is-mark { flex: none; display: inline-block; width: .5rem; height: .5rem; padding: 0; border: 0; border-radius: 50%; background: var(--tone-ink); font-size: 0; vertical-align: middle; }
+
+/* The queue's table. The dot and the title share one line height, so the dot
+   sits on the title's first line; the buttons end every row at the table's
+   edge. The meaning under a title is one line until the row is opened. */
+.queue-table > tbody > tr > :is(.queue-mark, .queue-what) { font-size: var(--text-md); line-height: 1.5; }
+.queue-table .queue-mark { width: 1%; padding-inline-end: 0; }
+.queue-table .queue-mark > .pill.is-mark { vertical-align: middle; }
+.queue-table .attention-detail {
+  margin: var(--space-1) 0 0; font-size: var(--text-sm); line-height: 1.5; color: var(--muted);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; overflow: hidden;
+}
+/* A table with no headings has no floors from tables.js, so the column that
+   names the row keeps a readable width itself. */
+.queue-table .queue-what { min-width: 10rem; }
+.queue-table .queue-act { width: 1%; text-align: right; white-space: nowrap; padding-block-start: calc(var(--row-pad) - var(--space-1)); padding-inline-end: 0; }
+.queue-table .queue-act > * { display: inline-flex; flex-wrap: nowrap; gap: var(--space-3); margin: 0; vertical-align: top; }
+.queue-table .queue-act > * + * { margin-inline-start: var(--space-3); }
+.queue-table .queue-act form { margin: 0; }
+/* A long label is cut to one line, whole again when the row is opened. */
+.queue-table .queue-act .btn { max-width: 14rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* What the row holds back, in the line beneath once opened. */
+.queue-more > :first-child { margin-top: 0; }
+/* A family: how bad, what kind and how many, opening to its rows, which are
+   set in under its name. */
+.queue-family { cursor: pointer; }
+.queue-family-name { font-weight: 650; color: var(--ink); }
+.queue-family .count { margin-inline-start: var(--space-3); }
+.queue-table:not([data-narrow]) tr[data-folded] > .queue-what { padding-inline-start: calc(var(--space-6) + var(--space-10)); }
+/* A row dismissed in place: its title, quiet, and the way back. */
+.queue-row[data-dismissed] > td > :not(.attention-head, [data-triage]),
+.queue-row[data-dismissed] .attention-meta { display: none; }
+.queue-row[data-dismissed] .attention-title { color: var(--muted); font-weight: 400; }
+.queue-row[data-dismissed] .attention-title::before { content: "Dismissed: "; }
 .attention-clear { margin: var(--space-2) 0 0; color: var(--muted); font-size: var(--text-sm); }
 .action-items-card { padding-top: var(--space-5); }
-/* The open problems about the thing a page shows: the queue's cards under one count. */
+.action-items-aside[open] > summary { margin-bottom: var(--space-6); }
+/* The urgent problems about the thing a page shows: the queue's rows in one box. */
 .problems-here { padding-block: var(--space-5); margin-bottom: var(--space-6); border-left: 3px solid var(--tone-ink); }
-.problems-here .attention-detail { margin-top: var(--space-2); }
 /* A problem that is not urgent: one unframed line, its button beside it. */
 .problem-lines { list-style: none; margin: 0 0 var(--space-4); padding: 0; display: grid; gap: var(--space-3); }
 .problem-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-4); }
@@ -2132,13 +2192,12 @@ ol.resolution-workflow > li > strong::before { content: counter(step) ". "; }
 
 /* ── Section cards / two-col ────────────────────────────────────── */
 
-/* Side-by-side panels share a top and a bottom edge: a ragged lower edge reads
-   as a rendering fault rather than as a layout. Anything short simply has room
-   underneath. */
 /* Two columns at most: a track is never narrower than half the row, so four
    cards pair up 2+2 instead of leaving one orphaned, and below two 320px
-   tracks it is one column with no breakpoint. */
-.two-col { container: pair / inline-size; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, max(320px, (100% - var(--layout-gap)) / 2)), 1fr)); gap: var(--layout-gap); align-items: stretch; margin: 0 0 var(--stack-gap); }
+   tracks it is one column with no breakpoint. A card is as tall as what it
+   holds: stretched to a taller neighbour, a short card is mostly empty frame,
+   which reads worse than a card that is honestly short. */
+.two-col { container: pair / inline-size; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, max(320px, (100% - var(--layout-gap)) / 2)), 1fr)); gap: var(--layout-gap); align-items: start; margin: 0 0 var(--stack-gap); }
 
 /* A main panel with a companion. Unlike two equal siblings, the companion is
    sized to its own contents: stretching a three-row list to match a long one
@@ -2165,16 +2224,12 @@ ol.resolution-workflow > li > strong::before { content: counter(step) ". "; }
 /* The wide column second. A drawing sized to itself beside a table of six
    columns wants the narrow half, and reading order puts the drawing first. */
 .two-col > * { min-width: 0; }
-/* Cards sized to their own content rather than to the tallest in the row.
-   Stretching is right when both sides are lists that read as one block, and
-   wrong when one is a short table beside a tall drawing: the short one grows a
-   band of empty card under its last row. */
 /* The sections at the end of a thing's page (what else HQ holds, how it
    relates, what names it) are mostly short: each is a card holding its own
-   heading, two to a row at one height where both fit, and one that is wide
-   (a table of four columns or more, a folded section, a fold of raw
-   readings) takes the whole row. */
-.section-flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 34rem), 1fr)); gap: var(--layout-gap); align-items: stretch; margin: 0 0 var(--stack-gap); }
+   heading, two to a row where both fit, each as tall as what it holds, and one
+   that is wide (a table of four columns or more, a folded section, a fold of
+   raw readings) takes the whole row. */
+.section-flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 34rem), 1fr)); gap: var(--layout-gap); align-items: start; margin: 0 0 var(--stack-gap); }
 /* Short sections collect at the end, so they pair with each other rather than
    each sitting beside the gap a wide one leaves. */
 .section-flow > * { min-width: 0; margin: 0; order: 1; }
@@ -2183,18 +2238,15 @@ ol.resolution-workflow > li > strong::before { content: counter(step) ". "; }
 .section-flow > :is(section, .page-section):has(> details.section-fold) { grid-column: 1 / -1; order: 0; }
 /* Sections stacked in one column of a pair, at the pair's own gap. */
 .stack { display: grid; gap: var(--layout-gap); align-content: start; min-width: 0; }
-/* A paired row whose two cards end at different points reads as broken, so
-   the cards stretch and the shorter one gets somewhere to put the difference. A card in a stretched pair is a column, and its drawing
-   sits in the middle of whatever height the row ends up being rather than
-   leaving the slack in one lump at the bottom. */
-.two-col > .card,
+/* Two charts are like with like and end together: each card is a column, its
+   drawing in the middle of whatever height the pair ends up being. */
+.two-col:has(> .chart-card) { align-items: stretch; }
 .two-col > .chart-card {
   display: flex;
   flex-direction: column;
 }
 .two-col > .chart-card > .chart-scroll,
 .two-col > .chart-card > .pie-row { margin-block: auto; }
-.two-col > .card > .table-scroll:only-of-type { margin-bottom: auto; }
 /* Panels that flow rather than pair. Assigning cards to a fixed left and right
    column means their heights are whatever the data made them, so one column
    ends early and the page carries the difference as a hole. Columns balance
@@ -2203,9 +2255,13 @@ ol.resolution-workflow > li > strong::before { content: counter(step) ". "; }
    the space is not there, so no breakpoint has to say when. */
 .card-columns { columns: 22rem 2; column-gap: var(--layout-gap); margin: 0 0 var(--stack-gap); }
 .card-columns > * { break-inside: avoid; margin: 0 0 var(--layout-gap); display: block; width: 100%; }
-.dashboard-patterns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: var(--layout-gap); margin-bottom: var(--stack-gap); }
+/* Flex rather than a grid of fixed tracks, so a row's last card takes what
+   the row leaves: three cards on a window that fits two put the third across
+   the row, not in half of it beside nothing. */
+.dashboard-patterns { display: flex; flex-wrap: wrap; gap: var(--layout-gap); margin-bottom: var(--stack-gap); }
+.dashboard-patterns > * { flex: 1 1 min(100%, 360px); }
 /* Four cards are two rows of two, never three and one left alone. */
-.dashboard-patterns:has(> :nth-child(4):last-child) { grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); }
+.dashboard-patterns:has(> :nth-child(4):last-child) > * { flex-basis: min(100%, 30rem); }
 /* Overview cards share the available width, so three contributing domains
    stay in one scan on a desktop. Narrow containers naturally stack them. */
 /* As many overviews to a row as fit, sharing it evenly, and a row's cards the
@@ -2277,6 +2333,8 @@ ol.resolution-workflow > li > strong::before { content: counter(step) ". "; }
 .section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-3) var(--space-6); margin-bottom: var(--space-6); }
 .section-head h2 { margin: 0; flex: 1; }
 .section-head .count { font-size: var(--text-2xs); color: var(--muted-2); font-weight: 500; }
+/* A count said in its heading, after the words it counts, in a quieter voice. */
+:is(h2, h3) > .count { color: var(--muted); font-size: .8em; font-weight: 500; font-variant-numeric: tabular-nums; }
 
 /* Rich plugins emit data; HQ owns how a domain workspace is composed. Keeping
    this layout in the host means every present and future private domain gets
@@ -3043,7 +3101,7 @@ a.discovery-link:hover strong { color: var(--accent); }
   flex-wrap: wrap;
   flex: 1 1 16rem;
 }
-.discovery-meta code { font-size: var(--text-3xs); overflow-wrap: anywhere; }
+.discovery-meta code { font-size: var(--text-3xs); }
 .command-hint { margin: var(--space-2) 0 0; }
 /* A key to press is said only where there are keys: not on a touch screen. */
 @media (hover: none) { .keyboard-only { display: none; } }
@@ -3132,11 +3190,36 @@ a.discovery-link:hover strong { color: var(--accent); }
 .connection-sight,
 .connection-more-scope { margin-top: var(--space-2); }
 .connection-sight-tally { display: block; font-size: var(--text-xs); color: var(--muted); }
-.connection-sight ul,
-.connection-more-scope ul,
+/* Styled by their own class: opened, they move to the line beneath the row,
+   out of the cell they were written in. */
+.connection-sight-list,
 .cell-notes { display: grid; gap: var(--space-1); margin: var(--space-2) 0 0; padding: 0; list-style: none; }
-.connection-sight li,
-.connection-more-scope li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); font-size: var(--text-xs); }
+.connection-sight-list ul { margin: var(--space-1) 0 0; padding-left: var(--space-6); }
+.connection-sight-list > li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); font-size: var(--text-xs); }
+.connection-sight-list > li > ul { flex-basis: 100%; }
+.connection-credential-steps { font-size: var(--text-xs); }
+/* Opened beneath the row, the things it reads fill the line, row by row. */
+.row-detail .connection-sight-list { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-8); margin: 0; }
+/* Each reading carries its state's colour, so what needs reading again shows. */
+.row-detail .connection-sight-list > li::before { content: ""; flex: none; align-self: center; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.row-detail .connection-sight-list > li:is(.connection-sight-partial)::before { background: var(--warn); }
+.row-detail .connection-sight-list > li:is(.connection-sight-refused, .connection-sight-unreadable)::before { background: var(--danger); }
+.row-detail .connection-sight-list > li:is(.connection-sight-never_swept, .connection-sight-not_connected)::before { background: var(--muted-2); }
+.row-detail .connection-sight-list > li.muted::before { content: none; }
+/* The fix is the one thing to do, so it reads as a callout, its notes
+   numbered steps at a reading width. */
+.row-detail .connection-credential-steps {
+  max-width: 72ch; padding: var(--space-3) var(--space-5); border-left: 3px solid var(--warn); border-radius: var(--radius-sm);
+  background: var(--tone-caution-tint); counter-reset: fix-step;
+}
+.row-detail .connection-credential-steps .operator-step:first-child { margin-top: 0; }
+.row-detail .connection-credential-steps .operator-step p {
+  display: grid; grid-template-columns: 1.5em minmax(0, 1fr); margin-top: var(--space-2); color: var(--ink-2);
+}
+.row-detail .connection-credential-steps .operator-step p::before { counter-increment: fix-step; content: counter(fix-step) "."; color: var(--warn); font-weight: 650; }
+/* The rest of what it reads, as chips. */
+.row-detail .connection-ability-all > li { grid-template-columns: minmax(0, 1fr); padding: 1px var(--space-4); border-radius: 999px; background: var(--accent-tint); color: var(--accent); }
+.row-detail .connection-ability-all > li::before { content: none; }
 .connection-sight-state { font-weight: 600; }
 .connection-sight-refused .connection-sight-state,
 .connection-sight-unreadable .connection-sight-state,
@@ -3286,8 +3369,8 @@ a.discovery-link:hover strong { color: var(--accent); }
   .request-path li::before { left: 50%; right: calc(-50% - var(--space-6)); top: 12px; bottom: auto; width: auto; height: 2px; }
   .request-path li:first-child::before { top: 12px; }
   .request-path li:last-child::before { display: none; }
-  .request-path .hop-label { grid-row: 2; }
-  .request-path .hop-body { grid-row: 3; justify-items: center; }
+  .request-path .hop-label { grid-column: 1; grid-row: 2; }
+  .request-path .hop-body { grid-column: 1; grid-row: 3; justify-items: center; }
   .request-path .hop-body > strong { justify-content: center; }
   .request-path .hop-icon { grid-row: 1; }
 }
@@ -3383,6 +3466,20 @@ a.discovery-link:hover strong { color: var(--accent); }
 .connection-authority-missing { color: var(--danger); }
 .connection-ability-more { display: block; margin-top: var(--space-2); font-size: var(--text-3xs); color: var(--muted); }
 .connection-ability-list + .connection-ability-list { margin-top: var(--space-2); }
+/* In the row, what a connection reads is a run of names like the links beside
+   it, each kept whole, at the row's own size. */
+.connection-table td > .connection-ability-list { display: inline; }
+.connection-table td > .connection-ability-list > li { display: inline; white-space: nowrap; font-size: inherit; line-height: inherit; }
+.connection-table td > .connection-ability-list > li::before { content: none; }
+.connection-table td > .connection-ability-list > li:not(:last-child)::after { content: " ·"; color: var(--muted-2); }
+.connection-table td > .connection-ability-list > li > small { margin-left: var(--space-2); }
+.connection-table td > .connection-ability-more { display: inline; margin: 0 0 0 var(--space-3); font-size: var(--text-2xs); white-space: nowrap; }
+.connection-depends .row-less { margin-left: var(--space-2); white-space: nowrap; }
+/* Opened, the rest of them, flowing across the line beneath the row. */
+.connection-ability-all { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-6); }
+.connection-ability-all > li { flex: none; }
+/* Opened, the rest are listed, so their count is not. */
+.row-detail .connection-ability-more { display: none; }
 .connection-state {
   display: inline-flex;
   align-items: center;
@@ -4159,11 +4256,6 @@ span.example-connection { color: var(--muted); font-size: var(--text-2xs); font-
 .input-suffix input { flex: 1 1 auto; min-width: 0; }
 .input-suffix span { color: var(--muted); font-weight: 600; }
 
-/* A record shown inside help text is one long unbreakable token, and the
-   content column clips rather than scrolls, so it breaks anywhere rather than
-   losing its end on a phone. */
-.help code, .mail-record-value { overflow-wrap: anywhere; }
-
 /* ── Reachability answer ───────────────────────────────────────── */
 
 .verdict { display: flex; align-items: baseline; gap: var(--space-4); margin: var(--space-7) 0 var(--space-2); }
@@ -4243,10 +4335,15 @@ textarea.code {
 .conn-sub { margin: 0; color: var(--muted); font-size: var(--text-xs); text-align: center; }
 .conn-path { display: grid; gap: var(--space-4); align-content: start; container: path / inline-size; }
 .conn-path .conn-layer-label { overflow-wrap: normal; }
-/* A wide route keeps each hop's evidence beside its value. */
 /* A hop: its kind, what it is with what HQ read about it, and what opening it
-   shows. */
-.conn-path > .conn-layers > .conn-layer > details > summary { grid-template-columns: auto 7rem minmax(0, 1fr) max-content; padding: var(--space-3) 0; }
+   shows. Every part starts on one line of a set height, so the tick's centre
+   sits a known distance down its hop whatever wraps or opens below it, and the
+   route's line is drawn from there. */
+.conn-path > .conn-layers > .conn-layer > details > summary {
+  grid-template-columns: auto 7rem minmax(0, 1fr) max-content; align-items: start;
+  padding: var(--hop-pad) 0; line-height: var(--hop-line);
+}
+.conn-path > .conn-layers > .conn-layer > details > summary > .conn-tick { margin-block: calc((var(--hop-line) - 17px) / 2); }
 .conn-hop-detail { margin-left: var(--space-4); color: var(--muted); font-size: var(--text-xs); font-weight: 400; }
 .conn-hop-detail::before { content: "· "; }
 .conn-hop-more { color: var(--muted); font-size: var(--text-2xs); white-space: nowrap; }
@@ -4256,8 +4353,7 @@ details[open] > summary .conn-hop-more::after { content: " ⌄"; }
 @container path (max-width: 24rem) {
   .conn-path > .conn-layers > .conn-layer > details > summary { grid-template-columns: auto minmax(0, 1fr); row-gap: 0; }
   .conn-path > .conn-layers > .conn-layer > details > summary > :not(.conn-tick) { grid-column: 2; }
-  .conn-path > .conn-layers > .conn-layer > details > summary > .conn-tick { grid-row: span 3; align-self: start; }
-  .conn-path > .conn-layers > .conn-layer > details > summary .conn-layer-evidence { justify-self: start; text-align: left; }
+  .conn-path > .conn-layers > .conn-layer > details > summary > .conn-tick { grid-row: span 3; }
 }
 /* The heading as every card here has it, its count on the same line. */
 .conn-path-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-4); }
@@ -4286,53 +4382,37 @@ details[open] > summary .conn-hop-more::after { content: " ⌄"; }
 .conn-protocol > summary strong { font-size: var(--text-sm); }
 .conn-protocol > summary small { color: var(--muted); font-size: var(--text-2xs); }
 .conn-protocol > summary .count { margin-left: auto; white-space: nowrap; }
-.conn-protocol-body {
-  display: grid; gap: var(--space-8); padding: var(--space-7); border-top: 1px solid var(--line);
-  container: fold / inline-size;
-}
-.conn-addresses .conn-row { grid-template-columns: minmax(0, 11rem) 5rem minmax(0, 1fr); }
-.conn-addresses .conn-row > .conn-kind { justify-self: start; }
-/* With room, a header is one row: its value, what it is for, then whether it
-   was read or sent, each in its own column. */
-@container fold (min-width: 46rem) {
-  .conn-protocol-body .conn-row-wide { grid-template-columns: minmax(0, 26rem) minmax(0, 1fr) 5.5rem; }
-  .conn-protocol-body .conn-row-wide > code { grid-column: 1; grid-row: 1; justify-self: start; }
-  .conn-protocol-body .conn-row-wide > .conn-row-note { grid-column: 2; grid-row: 1; }
-  .conn-protocol-body .conn-row-wide > .conn-kind { grid-column: 3; grid-row: 1; justify-self: end; }
-}
-
-/* Two columns of label/value pairs. A grid rather than a table so the labels
-   share one width across both columns and the values line up with each other. */
-/* You, the link and the route, side by side. */
-.conn-cols { display: grid; gap: var(--stack-gap); grid-template-columns: minmax(0, 1fr); }
-/* Sized by the panel, not the window, so the dialog and the page agree: you
-   and the link side by side, the route across both beneath them. */
+.conn-protocol-body { display: grid; gap: var(--space-8); padding: var(--space-7); border-top: 1px solid var(--line); }
+/* Sized by the panel, not the window, so the dialog and the page agree. */
 @container conn (min-width: 54rem) {
-  .conn-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .conn-cols > .conn-path { grid-column: 1 / -1; }
   /* Your addresses beside HQ's. */
   .conn-addresses .conn-protocol-body { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 }
-.conn-pairs { display: grid; grid-template-columns: auto 1fr; gap: var(--space-3) var(--space-7); align-items: baseline; }
-.conn-pairs dt { color: var(--muted); font-size: var(--text-xs); white-space: nowrap; }
-.conn-pairs dd { margin: 0; font-size: var(--text-sm); min-width: 0; overflow-wrap: anywhere; }
-.conn-pairs dd code { font-size: var(--text-xs); }
-.conn-pairs strong { font-weight: 600; }
 .conn-agree { font-size: var(--text-xs); margin: var(--space-6) 0 0; }
 .conn-agree-yes { color: var(--ok); }
 .conn-agree-no { color: var(--warn); }
 
-/* Address rows: value and kind hold their width, the note takes the rest and
-   is the only thing allowed to wrap. */
-.conn-rows { display: grid; gap: var(--space-1); }
+/* Rows of like things (addresses, headers, the chain HQ walked to judge your
+   address): a value, what kind it is, and a note. One grid for the whole list,
+   each row a row of it, so values, kinds and notes each start at one edge down
+   the list and a kind sits just after the longest value rather than at a fixed
+   distance. A value breaks only where `|breakable` lets it. */
+.conn-rows {
+  display: grid; grid-template-columns: fit-content(60%) max-content minmax(0, 1fr);
+  margin: 0; padding: 0; list-style: none;
+}
 .conn-row {
-  display: grid; grid-template-columns: minmax(0, auto) max-content 1fr;
-  gap: var(--space-6); align-items: center; padding: var(--space-3) 0;
+  display: grid; grid-column: 1 / -1; grid-template-columns: subgrid;
+  column-gap: var(--space-6); row-gap: var(--space-1); align-items: baseline; padding: var(--space-3) 0;
   border-bottom: 1px solid var(--line-2);
 }
 .conn-row:last-child { border-bottom: 0; }
-.conn-row code { font-size: var(--text-xs); overflow-wrap: anywhere; }
+.conn-row code { font-size: var(--text-xs); overflow-wrap: break-word; }
+.conn-row > code, .conn-row > .conn-kind { justify-self: start; }
 .conn-row-note { color: var(--muted); font-size: var(--text-xs); }
+.conn-row > .conn-row-note { grid-column: 3; }
+.conn-row > :only-child { grid-column: 1 / -1; }
+.conn-row-ignored { opacity: .6; }
 .conn-current code { font-weight: 650; }
 .conn-kind {
   font-size: var(--text-3xs); letter-spacing: .04em; padding: var(--space-1) var(--space-4); border-radius: 20px;
@@ -4340,30 +4420,20 @@ details[open] > summary .conn-hop-more::after { content: " ⌄"; }
 }
 .conn-kind-tailnet { background: var(--tone-tint); color: var(--ok); }
 .conn-kind-elsewhere, .conn-kind-public { background: var(--tone-tint); color: var(--danger); }
-
-/* The chain HQ walked to decide which address it is judging you by. */
-.conn-hops { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
-.conn-hop {
-  display: grid; grid-template-columns: minmax(0, auto) max-content 1fr;
-  gap: var(--space-6); align-items: center;
-  padding: var(--space-4) var(--space-6); border: 1px solid var(--line); border-radius: var(--radius);
-}
-.conn-hop-judged { border-color: var(--accent); background: var(--accent-tint); }
-.conn-hop-ignored { opacity: .6; }
 .conn-kind-hop-judged { background: var(--accent); color: var(--accent-ink); }
 .conn-kind-hop-ignored { background: var(--tone-tint); color: var(--danger); }
 
 .conn-layers { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
 .conn-layer { border: 1px solid var(--line); border-radius: var(--radius); }
 .conn-layer summary {
-  display: grid; grid-template-columns: auto 6.5rem minmax(5rem, 1fr) fit-content(45%);
+  display: grid; grid-template-columns: auto minmax(0, 1fr);
   align-items: center; gap: var(--space-5);
   padding: var(--space-4) var(--space-6); cursor: pointer; list-style: none;
 }
 .conn-layer summary::-webkit-details-marker { display: none; }
 .conn-tick {
   width: 17px; height: 17px; border-radius: 50%; flex: none;
-  display: grid; place-items: center; font-size: var(--text-2xs);
+  display: grid; place-items: center; font-size: var(--text-2xs); line-height: 1;
   background: var(--tone-positive-tint); color: var(--ok);
 }
 .conn-layer-does-not .conn-tick { background: var(--tone-critical-tint); color: var(--danger); }
@@ -4373,33 +4443,43 @@ details[open] > summary .conn-hop-more::after { content: " ⌄"; }
   color: var(--muted); font-size: var(--text-3xs); font-weight: 700;
   letter-spacing: .06em; text-transform: uppercase;
 }
-.conn-layer-label { font-weight: 550; font-size: var(--text-sm); min-width: 0; overflow-wrap: anywhere; }
+.conn-layer-label { font-weight: 550; font-size: var(--text-sm); min-width: 0; overflow-wrap: break-word; }
+/* A check's statement, then what it was read from: on the same line while
+   both fit, under the statement when they do not. */
+.conn-check { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-6); min-width: 0; }
+/* A check's reading is a value HQ read, in the chip every value has; one that
+   wraps keeps the chip on each line. */
 .conn-layer-evidence {
-  justify-self: end; font-size: var(--text-2xs); color: var(--muted);
-  max-width: 100%; overflow-wrap: anywhere; text-align: right;
-  background: none; padding: 0;
+  min-width: 0; font-size: var(--text-2xs); color: var(--ink-2);
+  overflow-wrap: break-word; -webkit-box-decoration-break: clone; box-decoration-break: clone;
 }
 /* The path is a route: each hop a stop on one line from your device down to
    HQ, the tick on the line. A hop that does not hold colours its stretch. */
 .conn-path > .conn-layers { gap: 0; }
-.conn-path > .conn-layers > .conn-layer { position: relative; border: 0; border-radius: 0; }
-.conn-path > .conn-layers > .conn-layer::before {
-  content: ""; position: absolute; left: 7.5px; top: 0; bottom: 0; width: 2px;
-  background: var(--tone-positive-tint);
+.conn-path > .conn-layers > .conn-layer {
+  --hop-line: 1.25rem;
+  --hop-pad: var(--space-3);
+  --tick-y: calc(var(--hop-pad) + var(--hop-line) / 2);
+  position: relative; border: 0; border-radius: 0;
 }
-.conn-path > .conn-layers > .conn-layer:first-child::before { top: 50%; }
-.conn-path > .conn-layers > .conn-layer:last-child::before { bottom: auto; height: 50%; }
-.conn-path > .conn-layers > .conn-layer:only-child::before { display: none; }
-.conn-path > .conn-layers > .conn-layer-does-not::before { background: var(--tone-critical-tint); }
-.conn-path > .conn-layers > .conn-layer-unknown::before { background: var(--tone-caution-tint); }
-/* An opened hop's evidence sits on a panel of its own under the hop's name, so
-   it reads as that hop's and the route plainly continues after it. */
+/* Each hop draws the stretch from its tick to the next hop's, which sits the
+   same distance down that hop, so an opened hop lengthens its stretch and the
+   line still ends on the last tick. */
+.conn-path > .conn-layers > .conn-layer::before {
+  content: ""; position: absolute; left: 7.5px; top: var(--tick-y); bottom: calc(-1 * var(--tick-y)); width: 2px;
+  background: color-mix(in srgb, var(--ok) 40%, transparent);
+}
+.conn-path > .conn-layers > .conn-layer:last-child::before { display: none; }
+.conn-path > .conn-layers > .conn-layer-does-not::before { background: color-mix(in srgb, var(--danger) 45%, transparent); }
+.conn-path > .conn-layers > .conn-layer-unknown::before { background: color-mix(in srgb, var(--warn) 45%, transparent); }
+/* An opened hop's evidence sits in a frame of its own under the hop's name, so
+   it reads as that hop's and the route plainly continues after it. It is on
+   the card's own surface, where the rows inside keep their dividers. */
 .conn-path > .conn-layers > .conn-layer > details > .conn-layer-body {
   margin: 0 0 var(--space-4) calc(17px + var(--space-5)); padding: var(--space-5) var(--space-6);
-  border-radius: var(--radius); background: var(--bg-tint);
+  border: 1px solid var(--line); border-radius: var(--radius);
 }
 .conn-path .conn-tick { position: relative; }
-.conn-path .conn-hop { border: 0; padding-inline: 0; background: none; }
 .conn-layer-body {
   display: grid; gap: var(--space-3);
   margin: 0 var(--space-6) var(--space-4) calc(var(--space-6) + 17px + var(--space-5));
@@ -4409,13 +4489,11 @@ details[open] > summary .conn-hop-more::after { content: " ⌄"; }
    statement and its evidence on one line, the sentence when opened. */
 .conn-layer-body .conn-layers { gap: 0; border-top: 1px solid var(--line-2); }
 .conn-layer-body .conn-layer { border: 0; border-bottom: 1px solid var(--line-2); border-radius: 0; }
-.conn-layer-body .conn-layer summary {
-  grid-template-columns: auto minmax(7rem, 1fr) fit-content(45%); gap: var(--space-4); padding: var(--space-3) 0;
-}
+.conn-layer-body .conn-layer summary { align-items: baseline; gap: var(--space-4); padding: var(--space-3) 0; }
 .conn-layer-body .conn-layer .conn-layer-label { font-size: var(--text-xs); }
 .conn-layer-body .conn-layer .conn-layer-body { margin: 0 0 var(--space-3) calc(17px + var(--space-4)); }
 .conn-scope-note {
-  margin: 0; padding-top: var(--space-6); border-top: 1px solid var(--line-2);
+  margin: 0; padding-top: var(--space-6); border-top: 1px solid var(--line);
   color: var(--muted); font-size: var(--text-2xs);
 }
 
@@ -4440,15 +4518,20 @@ details[open] > summary .conn-hop-more::after { content: " ⌄"; }
 @container conn (max-width: 36rem) {
   .conn-verdict { flex-wrap: wrap; }
   .conn-address { width: 100%; }
-  .conn-layer-evidence { display: none; }
-  .conn-layer summary { grid-template-columns: auto minmax(0, .7fr) minmax(0, 1fr); }
   .conn-layer-body { margin-left: var(--space-6); }
   .conn-decision-head { align-items: start; }
   .conn-decision-head > strong { max-width: 130px; white-space: normal; text-align: right; }
-  /* Value and kind on one line, the note beneath, rather than three columns
-     that cannot each hold an IPv6 address. */
-  .conn-row, .conn-hop { grid-template-columns: minmax(0, 1fr) max-content; }
-  .conn-row-note, .conn-hop .conn-row-note { grid-column: 1 / -1; }
+  .conn > * { --conn-rows: stacked; }
+}
+/* In a narrow panel or a fact's value, a row's value takes a line of its own
+   and its kind and note go beneath, rather than three columns that cannot
+   each hold an IPv6 address. */
+.conn .kv > dd { --conn-rows: stacked; }
+@container style(--conn-rows: stacked) {
+  .conn-rows { grid-template-columns: max-content minmax(0, 1fr); }
+  .conn-row > code { grid-column: 1 / -1; }
+  .conn-row > .conn-row-note { grid-column: 2; }
+  .conn-row > code + .conn-row-note { grid-column: 1 / -1; }
 }
 
 /* The two ends and the link between them. */
@@ -4514,32 +4597,18 @@ details[open] > summary .conn-hop-more::after { content: " ⌄"; }
 .conn-rules { display: grid; gap: var(--space-2); margin: 0; justify-items: start; }
 .conn-rules code { font-size: var(--text-2xs); }
 
-/* An address is as wide as the address. Stretching each one to the column
-   turns a list of six values into six grey slabs. */
-.conn-row > code, .conn-hop > code { justify-self: start; }
 .conn-peer-name { font-size: var(--text-md); font-weight: 600; }
 .conn-kind-declined { background: var(--tone-tint); color: var(--warn); }
 
-/* A header value is long by nature, and beside it a three-column row squeezes
-   the note into one word per line the moment the panel is a dialog rather than
-   a page. The value keeps the width it needs and the note takes its own line. */
-.conn-row-wide { grid-template-columns: minmax(0, 1fr) max-content; }
-.conn-row-wide > code { overflow-wrap: anywhere; }
-.conn-row-wide .conn-row-note { grid-column: 1 / -1; }
-
-/* A row whose value is long and variable (a header, a policy) puts its
-   note on its own line. Squeezed into a third column beside a value that can
-   be three hundred characters, the note collapses to one word per line. */
-.conn-row-stacked { grid-template-columns: minmax(0, 1fr) max-content; row-gap: var(--space-1); }
-.conn-row-stacked > code { justify-self: stretch; }
-.conn-row-stacked .conn-row-note { grid-column: 1 / -1; }
-
-/* Which network the link rides over, with Why and About on the same line; an
-   opened one takes the line below. Words wrap whole: the cell would otherwise
-   inherit `overflow-wrap: anywhere` and fit-content would shrink to a letter. */
+/* Which network the link rides over, with Why and About on the same line.
+   Each disclosure lends its parts to the line, so opening one leaves its
+   summary where it was pressed and what it holds takes the line below. Words
+   wrap whole: the cell would otherwise inherit `overflow-wrap: anywhere` and
+   fit-content would shrink to a letter. */
 .conn-carriage { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-4); overflow-wrap: normal; }
-.conn-pairs .conn-more > summary { padding: 0; }
-.conn-carriage > details[open] { flex-basis: 100%; }
+.conn .kv .conn-more > summary { padding: 0; }
+.conn-carriage > details { display: contents; }
+.conn-carriage > details > :not(summary) { flex-basis: 100%; }
 .conn-carriage > strong { font-weight: 600; }
 /* Riding over the internet is not a fault, so it is not red. It is the one
    state where the path is public and the operator may want to look further,
@@ -4960,8 +5029,7 @@ details[open] > summary .conn-hop-more::after { content: " ⌄"; }
 .policy-effect.effect-infrastructure_change { color: var(--warn); }
 .policy-default { color: var(--muted); white-space: nowrap; }
 .policy-unavailable { font-size: var(--text-xs); white-space: nowrap; }
-.policy-select { min-width: 7.5rem; padding: var(--space-2) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--muted); font: inherit; font-size: var(--text-xs); }
-.policy-select:focus { outline: none; border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--accent-tint); }
+.policy-select { --chevron-inset: var(--space-4); min-width: 7.5rem; padding-inline-start: var(--space-4); color: var(--muted); font-size: var(--text-xs); }
 .policy-select.rule-allow { color: var(--ok); border-color: currentColor; }
 .policy-select.rule-approve { color: var(--warn); border-color: currentColor; }
 .policy-select.rule-deny { color: var(--danger); border-color: currentColor; }
@@ -5100,7 +5168,9 @@ form[aria-busy="true"] button[aria-disabled="true"] { cursor: progress; opacity:
   /* Four to a row, then two, then one: never three over one. */
   .fact-band { --band-cell: var(--tracks-4-2-1); }
   /* The band's lower half: the same repository's settings, under a hairline. */
-  .github-facts { flex-basis: 100%; display: grid; gap: var(--space-4); margin: 0; padding: var(--space-7) var(--space-9); border-top: 1px solid var(--line-2); font-size: var(--text-sm); }
+  .github-facts { flex-basis: 100%; display: grid; gap: var(--space-4); margin: 0; padding: var(--space-7) var(--space-9); font-size: var(--text-sm); }
+  /* A divider under the row it continues; framed on its own, its frame is its edge. */
+  .github-facts:not(.boxed-facts) { border-top: 1px solid var(--line-2); }
   .github-facts > div { display: grid; grid-template-columns: minmax(0, clamp(7rem, 30%, 160px)) minmax(0, 1fr); gap: var(--space-6); }
   .github-facts dt { color: var(--muted); }
   .github-facts dd { margin: 0; }
@@ -5128,20 +5198,8 @@ form[aria-busy="true"] button[aria-disabled="true"] { cursor: progress; opacity:
   /* The same rows on their own surface, where no band carries them. */
   .account-facts { }
   /* Containers: what needs you, one row per image and version, then the table. */
-  .container-needs { list-style: none; margin: 0 0 var(--space-7); padding: var(--surface-inset, 0); overflow: hidden; }
-  .container-needs > li { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-3) var(--space-6); padding: var(--space-5) var(--space-7); border-left: 3px solid var(--line); }
-  .container-needs > li + li { border-top: 1px solid var(--line-2); }
-  .container-needs > li.is-serious { border-left-color: var(--danger); }
-  .container-needs > li.is-attention, .container-needs > li.is-behind { border-left-color: var(--tone-caution-line); }
-  .container-needs-icon { color: var(--tone-caution-ink); font-size: var(--text-lg); line-height: 1; }
-  .container-needs > li.is-serious .container-needs-icon { color: var(--danger); }
-  /* Never wider than the row beside its icon, so the icon keeps its line. */
-  .container-needs-body { flex: 1 1 min(22rem, 100% - 3rem); min-width: 0; }
-  .container-needs-body p { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-sm); }
   .container-arrow { color: var(--muted-2); font-weight: 400; }
-  .container-advisories { list-style: none; margin: var(--space-3) 0 0; padding: 0; display: grid; gap: var(--space-2); font-size: var(--text-sm); }
-  .container-needs-where { display: flex; flex-wrap: wrap; gap: var(--space-2); max-width: 100%; }
-  .container-needs-where .workflow-chip { padding: var(--space-1) var(--space-5); font-size: var(--text-xs); box-shadow: none; }
+  .container-advisories { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); font-size: var(--text-sm); }
   .container-standing { white-space: nowrap; }
   /* Words rather than a pill: a narrow column wraps them instead of widening. */
   .container-reach { color: var(--danger); font-size: var(--text-xs); font-weight: 500; }
@@ -5179,7 +5237,6 @@ form[aria-busy="true"] button[aria-disabled="true"] { cursor: progress; opacity:
      what each line can break and what HQ could not write. */
   .hardening-patch { display: grid; gap: var(--space-4); min-width: 0; }
   .hardening-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); min-width: 0; }
-  .hardening-head code { overflow-wrap: anywhere; }
   /* Wrapped rather than scrolled: a long path stays on screen, and the copy
      takes the text, not the wrapping. */
   .hardening-patch pre { margin: 0; max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -5238,7 +5295,7 @@ form[aria-busy="true"] button[aria-disabled="true"] { cursor: progress; opacity:
   .nowrap { white-space: nowrap; }
   /* A hyphenated part of an address or a path (`|breakable`): moved to the
      next line whole, and broken inside only when it is longer than a line. */
-  .whole { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
+  .whole { display: inline-block; max-width: 100%; }
   /* A line that is a label, not prose: cut with an ellipsis, whole on hover. */
   .one-line { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 100%; }
   /* The same mark as a verified certificate: a check in a circle, one colour. */
@@ -5282,7 +5339,7 @@ form[aria-busy="true"] button[aria-disabled="true"] { cursor: progress; opacity:
   .filter-bar, .table-toolbar, .kpi-grid, .insight-grid,
   .kv, .form,
   .auth-card, .mail-stage, .mail-editor,
-  .topology-workspace, .github-list, .account-facts, .container-needs,
+  .topology-workspace, .github-list, .account-facts,
   .boxed-facts, .policy-agents li, .relation-list,
   .posture-gaps, .posture-repos, .machine-telemetry, .machine-telemetry-metrics, .route,
   .dashboard-counts, .dash-links) {
@@ -5429,23 +5486,24 @@ form[aria-busy="true"] button[aria-disabled="true"] { cursor: progress; opacity:
     .page-head .page-actions { flex-wrap: nowrap; }
   }
 
-  /* The row toggle tables.js adds where a row says more than it shows: the
-     one disclosure a row has, so it is sized to be found and hit, and turns
-     when open. */
-  .row-expand {
+  /* A row's toggle: the one tables.js adds where a row says more than it
+     shows, or the one a row heading rows folded under it carries. Either is
+     the one disclosure a row has, so it is sized to be found and hit, and
+     turns when open. */
+  :is(.row-expand, .row-fold) {
     display: inline-grid; place-items: center;
     width: 1.5rem; height: 1.5rem; min-height: 0; padding: 0; margin: 0;
     border: 0; border-radius: var(--radius-sm); background: none; box-shadow: none;
     color: var(--muted); font-size: var(--text-sm); line-height: 1; cursor: pointer;
     vertical-align: middle;
   }
-  .row-expand:hover { border: 0; background: var(--line-2); color: var(--ink); }
+  :is(.row-expand, .row-fold):hover { border: 0; background: var(--line-2); color: var(--ink); }
   /* What a row holds back until it is expanded, and the hint it replaces. */
-  .data-table tr:not(.is-expanded) .row-more,
-  .data-table tr.is-expanded .row-less { display: none; }
-  .row-expand > svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform .12s ease; }
-  .row-expand[aria-expanded="true"] > svg { transform: rotate(90deg); }
-  @media (prefers-reduced-motion: reduce) { .row-expand > svg { transition: none; } }
+  .data-table tr:not(.is-expanded) > :not([data-whole]) .row-more,
+  .data-table :is(tr.is-expanded, tr > [data-whole]) .row-less { display: none; }
+  :is(.row-expand, .row-fold) > svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform .12s ease; }
+  :is(.row-expand, .row-fold)[aria-expanded="true"] > svg { transform: rotate(90deg); }
+  @media (prefers-reduced-motion: reduce) { :is(.row-expand, .row-fold) > svg { transition: none; } }
   /* Every clamp in the row lifted at once. The rules it lifts are scattered and
      each is specific to its column, so this one outranks them on purpose: an
      expanded row shows everything, whatever clamped it. */

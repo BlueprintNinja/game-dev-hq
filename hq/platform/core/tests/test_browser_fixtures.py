@@ -193,7 +193,8 @@ def _tailnet():
                 },
                 {
                     "name": "example-laptop",
-                    "addresses": [CALLER],
+                    # An IPv6 address too: the longest value an address row holds.
+                    "addresses": [CALLER, "fd7a:115c:a1e0:ab12:4843:cd96:6258:b240"],
                     "dns_name": "example-laptop.example.ts.net.",
                     "os": "macOS",
                     "online": True,
@@ -328,6 +329,10 @@ _THROUGH_THE_PROXY = {
     "HTTP_X_REAL_IP": CALLER,
     "HTTP_X_FORWARDED_PROTO": "https",
     "HTTP_X_FORWARDED_SCHEME": "https",
+    # A header value as long as a browser's own.
+    "HTTP_USER_AGENT": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
+    ),
 }
 
 
@@ -468,6 +473,9 @@ PAGES = {
         lambda: reverse("command", kwargs={"name": "infrastructure.controller.refresh"}),
         ExitStack,
     ),
+    # A command that writes a record: selects, dates and fields side by side,
+    # and a textarea taking its row.
+    "command-form": (lambda: reverse("command", kwargs={"name": "asset.create"}), ExitStack),
     "connection": (lambda: reverse("connection"), _asked_through_the_proxy, _THROUGH_THE_PROXY),
     # A band whose cells are cards: the frame rule must not zero their padding.
     "resource-kinds": (lambda: reverse("control_plane:create"), ExitStack),
