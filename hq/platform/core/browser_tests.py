@@ -30,9 +30,13 @@ from django.contrib.staticfiles import finders
 from django.db import transaction
 from django.test import Client, SimpleTestCase
 from django.urls import reverse
+lazy from django.template import Context, Template
+lazy from django.template.loader import render_to_string
 
 from hq.platform.core.tests.test_browser_dense_fixtures import DENSE_PAGES, build_dense_estate, render_dense_pages
 from hq.platform.core.tests.test_browser_fixtures import PAGES, build_estate, render_pages
+lazy from hq.platform.application.asks import Ask
+lazy from hq.platform.application.pages import Page, PageAction
 
 # The phone HQ is read on: its viewport in CSS pixels.
 PHONE_SCREEN = (402, 874)
@@ -57,8 +61,11 @@ ROW_LINES = 6
 # The stylesheet's phone breakpoint: `@media (max-width: 640px)`.
 PHONE = 640
 ORIGIN = "http://hq.example.test"
-AUDIT = Path(settings.BASE_DIR) / "scripts" / "layout-audit.js"
+AUDIT = Path(__file__).with_name("browser_audit.js")
 
+# Every class, id and attribute the gate queries, held by
+# test_browser_selectors to markup a template or tag library writes: CSS
+# selectors only (no `xpath=`), and never an attribute only a script sets.
 SELECTORS = {
     # The fragment primitive: a placeholder's failure line, the disclosure
     # holding one, and the calendar it pages in place.
@@ -75,6 +82,22 @@ SELECTORS = {
     "decision_steps": ".resolution-workflow",
     "decision_detail": ".attention-detail",
     "decision_actions": ".queue-act .attention-actions",
+    # A list page's controls: its search, a filter's menu and a box in one, a
+    # toggle beside them, a heading that sorts on the server, and the results
+    # they change: the rows, or the empty state that says nothing matches.
+    "table_search": "[data-table-toolbar] input[type=search]",
+    "table_filter": "[data-table-toolbar] details[data-menu]",
+    "table_filter_box": "input[type=checkbox][name]",
+    "table_toggle": "[data-table-toolbar] .table-toggle input",
+    "table_rows": "main .data-table > tbody > tr",
+    "table_empty": "main [data-empty-state]",
+    "sort_link": "main a.table-sort-link",
+    # The queue's own filter: a choice of urgency, applied by its button.
+    "queue_urgency": "form.filter-bar select[name=status]",
+    "queue_apply": "form.filter-bar button[type=submit]",
+    # The header's menus, and on a phone the drawer that holds them.
+    "nav_menu": ".primary-nav details[data-menu]",
+    "nav_open": ".nav-toggle-open",
     "highlights": ".dashboard-highlights > .highlight-card",
     # Each reading in the dashboard's row: a mark, then its lines.
     "readings": ".dash-readings .glance-panel-head",
@@ -99,14 +122,26 @@ SELECTORS = {
     "cell_content": "main td *, main th *",
     # What a control says about the work it asked for, drawn under it.
     "spoken": ".ask-said",
-    # An identifier, written through `|breakable` or in code; a code block is
-    # text laid out by its own rules.
-    "token": ":is(code, .token):not(pre code)",
-    # The one box allowed to scroll sideways.
+    # An identifier: written through `|breakable` (an entity's name is), or in
+    # code. A code block is text laid out by its own rules, and a table lays
+    # out its own identifiers.
+    "token": ":is(code, kbd, samp, .token, [data-entity]):not(pre *, .data-table *)",
+    # What a heading says beside its title: a count, an age, where it is read.
+    "heading_aside": ".heading-aside",
+    # A page's title, and the controls that share its head.
+    "page_head": ".page-head",
+    "page_title": ".page-head h1",
+    "page_actions": ".page-actions",
+    # What holds the content and so stays inside its gutter: a card, a block
+    # of code.
+    "gutter_bound": "pre, .card, .boxed-facts",
+    # The box built to scroll a table sideways.
     "table_scroll": ".table-scroll",
-    # What a row folds behind "+3" until it is opened, or until there is room.
-    "row_less": ".row-less",
-    "row_more": ".row-more",
+    # The boxes allowed to scroll sideways: a table's, and a block of code,
+    # whose lines are as written.
+    "sideways": ".table-scroll, pre",
+    # A table whose rows can be chosen, which the table script wires up last.
+    "selectable_table": "[data-selectable-table]",
     # What a parser leaves where a <p> was closed early by a block inside it.
     "broken_paragraph": "main p:empty:not([hidden])",
     # A box that holds content: a card, a table's frame.
@@ -170,10 +205,10 @@ TEXT_CONTRAST = 4.5
 LARGE_TEXT_CONTRAST = 3.0
 # The least a dividing line may differ from its surface. The faint line token
 # on a card is 1.15:1, the plain one on a tinted panel 1.08:1; below this a
-# line is the surface's own colour.
+# line is the surface's own color.
 LINE_CONTRAST = 1.07
 
-# Structural rules from scripts/layout-audit.js that hold on every page at
+# Structural rules from browser_audit.js that hold on every page at
 # every width. A card with a band of empty frame under its last line
 # (empty-card-bottom) is one: a card is as tall as what it holds. The audit's
 # other density heuristics (card-too-wide, row-height-hole, horizontal-slack)
@@ -283,14 +318,24 @@ _NESTED_FRAMES = (
 }"""
 )
 
-_HEAD_ON_ONE_LINE = """([leadSelector, titleSelector]) => {
+_HEAD_ON_ONE_LINE = """([leadSelector, titleSelector, headSelector]) => {
   // A narrow head is one line: the title and its lead control, nothing
-  // between them and the lede.
+  // between them and the lede. The control takes a row of its own only when
+  // the title's widest word or name could not sit whole beside the controls.
   const lead = document.querySelector(leadSelector);
   const title = document.querySelector(titleSelector);
   if (!lead || !title) return null;
   const a = lead.getBoundingClientRect(), t = title.getBoundingClientRect();
-  return a.top < t.bottom && a.bottom > t.top;
+  if (a.top < t.bottom && a.bottom > t.top) return true;
+  const head = title.closest(headSelector);
+  const style = getComputedStyle(head);
+  const room = head.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  const kept = title.getAttribute('style');
+  title.style.flex = 'none';
+  title.style.width = 'min-content';
+  const narrowest = title.getBoundingClientRect().width;
+  if (kept === null) title.removeAttribute('style'); else title.setAttribute('style', kept);
+  return narrowest + parseFloat(style.columnGap) + lead.parentElement.getBoundingClientRect().width > room + 1;
 }"""
 
 _SIDEWAYS = (
@@ -386,22 +431,33 @@ _NESTED_DISCLOSURES = (
 )
 
 # A plain word split across lines inside a table cell: its column was given
-# less than the word, because another column's content took the width.
+# less than the word, because another column's content took the width. A word
+# inside a run with no space in it (a link, a digest) that is itself wider than
+# its cell breaks somewhere wherever the column is, so it is not counted.
 _BROKEN_WORDS = (
     "() => {"
     + _DESCRIBE
     + """
   const found = [];
   const range = document.createRange();
+  const across = (node, start, end) => {
+    range.setStart(node, start);
+    range.setEnd(node, end);
+    return [...range.getClientRects()].filter((r) => r.width);
+  };
   for (const cell of document.querySelectorAll('main td')) {
+    const style = getComputedStyle(cell);
+    const line = cell.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
     const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       if (!node.parentElement.checkVisibility()) continue;
-      for (const match of node.textContent.matchAll(/[A-Za-z]{4,}/g)) {
-        range.setStart(node, match.index);
-        range.setEnd(node, match.index + match[0].length);
-        const lines = new Set([...range.getClientRects()].filter((r) => r.width).map((r) => Math.round(r.top)));
-        if (lines.size > 1) found.push(`${describe(cell)} breaks "${match[0]}"`);
+      for (const run of node.textContent.matchAll(/\\S+/g)) {
+        const wide = across(node, run.index, run.index + run[0].length).reduce((sum, r) => sum + r.width, 0) > line;
+        for (const match of run[0].matchAll(/[A-Za-z]{4,}/g)) {
+          const at = run.index + match.index;
+          const lines = new Set(across(node, at, at + match[0].length).map((r) => Math.round(r.top)));
+          if (lines.size > 1 && !(wide && match[0].length < run[0].length)) found.push(`${describe(cell)} breaks "${match[0]}"`);
+        }
       }
     }
   }
@@ -556,13 +612,13 @@ _ROW_HEIGHTS = (
 }"""
 )
 
-# What the browser paints, as an opaque colour: any colour syntax read back
+# What the browser paints, as an opaque color: any color syntax read back
 # through a canvas pixel, a translucent one composited over what is behind it,
 # and the WCAG contrast ratio between two.
-_COLOUR = """
+_COLOR = """
   const canvas = document.createElement('canvas').getContext('2d', {willReadFrequently: true});
   canvas.canvas.width = canvas.canvas.height = 1;
-  // Whatever syntax the browser serialises a colour in (rgb(), color(srgb),
+  // Whatever syntax the browser serializes a color in (rgb(), color(srgb),
   // oklch from a color-mix), paint it and read the pixel back.
   const cache = new Map();
   const rgba = (value) => {
@@ -582,9 +638,9 @@ _COLOUR = """
   const background = (el) => {
     const layers = [];
     for (let up = el; up; up = up.parentElement) {
-      const colour = rgba(getComputedStyle(up).backgroundColor);
-      if (colour[3] > 0) layers.push(colour);
-      if (colour[3] >= 1) break;
+      const color = rgba(getComputedStyle(up).backgroundColor);
+      if (color[3] > 0) layers.push(color);
+      if (color[3] >= 1) break;
     }
     let result = rgba(getComputedStyle(document.documentElement).backgroundColor);
     if (result[3] < 1) result = [255, 255, 255, 1];
@@ -607,13 +663,13 @@ _COLOUR = """
 _CONTRAST = (
     "([scope, body, large]) => {"
     + _DESCRIBE
-    + _COLOUR
+    + _COLOR
     + """
   // Every visible element that holds text of its own, measured against the
-  // colour actually behind it: the nearest ancestor that paints a background,
-  // with translucent layers composited down to an opaque one. A colour
+  // color actually behind it: the nearest ancestor that paints a background,
+  // with translucent layers composited down to an opaque one. A color
   // written for one palette only is what this catches: a light-mode ink left
-  // on a dark card reads as nothing, and no other check looks at colour.
+  // on a dark card reads as nothing, and no other check looks at color.
   // Inactive controls and deliberately faded content are exempt, as WCAG
   // exempts them: they say they are not in play.
   const inactive = (el) => el.closest(':disabled, [aria-disabled="true"], [hidden]')
@@ -649,11 +705,11 @@ _CONTRAST = (
 
 # A line drawn to separate things (a divider, a frame's edge) is seen against
 # the surface it is drawn on. A faint token on a tinted panel is a line in the
-# panel's own colour: the rows it was meant to part run together.
+# panel's own color: the rows it was meant to part run together.
 _FAINT_LINES = (
     "([scope, least]) => {"
     + _DESCRIBE
-    + _COLOUR
+    + _COLOR
     + """
   const found = [];
   for (const root of document.querySelectorAll(scope)) {
@@ -662,14 +718,14 @@ _FAINT_LINES = (
       const style = getComputedStyle(el);
       for (const side of ['Top', 'Right', 'Bottom', 'Left']) {
         if (parseFloat(style[`border${side}Width`]) < 1 || ['none', 'hidden'].includes(style[`border${side}Style`])) continue;
-        const colour = rgba(style[`border${side}Color`]);
-        if (colour[3] === 0) continue;
+        const color = rgba(style[`border${side}Color`]);
+        if (color[3] === 0) continue;
         // A box that paints its own fill is edged against what is outside it,
         // by its border or by the fill itself.
         const fill = rgba(style.backgroundColor);
         const filled = fill[3] > 0 && el.parentElement;
         const behind = filled ? background(el.parentElement) : background(el);
-        const measured = Math.max(ratio(over(colour, behind), behind), filled ? ratio(over(fill, behind), behind) : 0);
+        const measured = Math.max(ratio(over(color, behind), behind), filled ? ratio(over(fill, behind), behind) : 0);
         if (measured < least) found.push(`${describe(el)} ${side.toLowerCase()} ${measured.toFixed(2)}:1 on ${behind.slice(0, 3).map(Math.round)}`);
       }
     }
@@ -681,8 +737,8 @@ _FAINT_LINES = (
 
 # A route's mark (a hop's icon, a check's tick) holds its glyph in its middle.
 # A glyph keeps the line height of the row around it unless its mark sets its
-# own, and a line taller than the mark pushes the glyph off its centre.
-_OFF_CENTRE_MARKS = (
+# own, and a line taller than the mark pushes the glyph off its center.
+_OFF_CENTER_MARKS = (
     "(mark) => {"
     + _DESCRIBE
     + """
@@ -695,7 +751,7 @@ _OFF_CENTRE_MARKS = (
     const at = box(el);
     const dy = glyph.top + glyph.height / 2 - (at.top + at.height / 2);
     const dx = glyph.left + glyph.width / 2 - (at.left + at.width / 2);
-    if (Math.abs(dy) > 1 || Math.abs(dx) > 1) found.push(`${describe(el)}: glyph ${dx.toFixed(1)}, ${dy.toFixed(1)} off its centre`);
+    if (Math.abs(dy) > 1 || Math.abs(dx) > 1) found.push(`${describe(el)}: glyph ${dx.toFixed(1)}, ${dy.toFixed(1)} off its center`);
   }
   return [...new Set(found)].slice(0, 10);
 }"""
@@ -817,12 +873,12 @@ def authored_selectors(css: str) -> list[str]:
     return found
 
 
-def _opaque(colour: str) -> tuple[int, ...]:
-    """A computed colour's red, green and blue, without its opacity, as 0-255:
-    ``rgb(255, 255, 255)`` and ``color(srgb 1 1 1 / 0.8)`` are one colour."""
+def _opaque(color: str) -> tuple[int, ...]:
+    """A computed color's red, green and blue, without its opacity, as 0-255:
+    ``rgb(255, 255, 255)`` and ``color(srgb 1 1 1 / 0.8)`` are one color."""
 
-    numbers = [float(n) for n in re.findall(r"[\d.]+", colour.split("/")[0])]
-    if colour.startswith("color("):
+    numbers = [float(n) for n in re.findall(r"[\d.]+", color.split("/")[0])]
+    if color.startswith("color("):
         return tuple(round(n * 255) for n in numbers[:3])
     return tuple(round(n) for n in numbers[:3])
 
@@ -910,9 +966,9 @@ _UNPADDED_TILES = (
 
 
 # The first table on a page as a phone lays it out: whether it runs past its
-# box, how wide each showing column is, and how tall each record's row is.
-# The row toggle and the line an open row adds are made by tables.js, so no
-# template renders them and they are found by tag and attribute.
+# box, how wide each showing column is, how tall each record's row is, and how
+# many rows show their toggle. The line an open row adds is made by tables.js,
+# so no template renders it and it is found by attribute.
 _PHONE_TABLE = """(scroll) => {
   const box = document.querySelector('main ' + scroll);
   const table = box && box.querySelector('table');
@@ -925,7 +981,7 @@ _PHONE_TABLE = """(scroll) => {
       .map((heading) => Math.round(heading.getBoundingClientRect().width)),
     rows: [...table.querySelectorAll('tbody > tr:not([data-row-detail]):not(:has(> th[scope="rowgroup"]))')]
       .map((row) => Math.round(row.getBoundingClientRect().height)),
-    toggles: table.querySelectorAll('tbody button[aria-expanded]').length,
+    toggles: [...table.querySelectorAll('tbody button[aria-expanded]')].filter((el) => el.checkVisibility()).length,
     details: [...table.querySelectorAll('tr[data-row-detail] dt')].map((term) => term.textContent),
     held: table.hasAttribute('data-rows-held'),
   };
@@ -937,28 +993,21 @@ _TABLES_THAT_DO_NOT_FIT = """(scroll) => [...document.querySelectorAll('main ' +
   .map((box) => [box, box.querySelector(':scope > table')])
   .filter(([box, table]) => table && table.querySelector('tbody td')
     && table.getBoundingClientRect().width > box.clientWidth + 1)
-  .map(([box, table]) => (table.querySelector('th') || table).textContent.trim().slice(0, 24)
+  .map(([box, table]) => (box.getAttribute('aria-label') || table.querySelector('th')?.textContent || '').trim().slice(0, 24)
     + ' +' + Math.round(table.getBoundingClientRect().width - box.clientWidth))"""
-# Every disclosure open, and the tables fitted again for it: each fitted table
-# loses its mark and the window says it resized, so the mark's return is the
-# refit having run.
-_OPEN_AND_REFIT = """(scroll) => {
-  document.querySelectorAll('details').forEach((d) => { d.open = true; });
-  window.refitting = [...document.querySelectorAll(scroll + ' > table')].filter((table) => 'fit' in table.dataset);
-  window.refitting.forEach((table) => { delete table.dataset.fit; });
-  window.dispatchEvent(new Event('resize'));
-}"""
 # A frame has been drawn and nothing is moving.
 _PAINTED = "() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))"
 _STILL = """() => document.getAnimations()
   .every((motion) => motion.playState !== 'running' || motion.effect?.getComputedTiming().iterations === Infinity)"""
 _NAME_EDGES = """(scroll) => [...document.querySelectorAll('main ' + scroll + ' > table')]
-  .filter((table) => table.checkVisibility() && table.querySelector('tbody button[aria-expanded]'))
-  .map((table) => {
-    const toggle = table.querySelector('tbody button[aria-expanded]');
+  .map((table) => [table, [...table.querySelectorAll('tbody button[aria-expanded]')].find((el) => el.checkVisibility())])
+  .filter(([table, toggle]) => table.checkVisibility() && toggle)
+  .map(([table, toggle]) => {
     const column = toggle.closest('td, th').cellIndex;
     const edges = [...table.querySelectorAll('tbody > tr:not([data-row-detail])')]
       .map((row) => row.children[column])
+      // A cell that holds only the toggle has no name: the name starts the next cell.
+      .map((cell) => (cell && !cell.textContent.trim() ? cell.nextElementSibling : cell))
       .filter((cell) => cell && !cell.hasAttribute('colspan') && cell.textContent.trim())
       .map((cell) => {
         const range = document.createRange();
@@ -991,7 +1040,55 @@ _SPILLED_LABELS = (
 )
 
 _SETTLED = "() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))"
-# Colours transition between palettes, so contrast is measured after the
+# The page as the server drew it, with its scripts held back: parsed, styled
+# and in its own face, which is what a reader is shown first.
+_DRAWN = """() => document.readyState !== 'loading'
+  && [...document.querySelectorAll('link[rel=stylesheet]')].every((link) => link.sheet)
+  && document.fonts.status === 'loaded'"""
+# The scripts the parser stops for, which are drawn before the page is.
+_PARSER_SCRIPTS = "() => [...document.scripts].filter((s) => s.src && !s.defer && !s.async).map((s) => s.src)"
+# Where every element that shows stands on the page as first drawn, kept on
+# the window for _MOVED_SINCE_DRAWN to read once the scripts have run.
+_DRAWN_BOXES = """() => {
+  const boxes = new Map();
+  for (const el of document.body.querySelectorAll('*')) {
+    const r = el.getBoundingClientRect();
+    if (!el.checkVisibility() || (!r.width && !r.height)) continue;
+    boxes.set(el, [r.left + scrollX, r.top + scrollY, r.width, r.height]);
+  }
+  window.drawnBoxes = boxes;
+  return boxes.size;
+}"""
+# Every element that still shows and no longer stands where it was drawn. A
+# child carried by its parent, the same distance and at the same size, is the
+# parent's move and is not named again.
+_MOVED_SINCE_DRAWN = (
+    "() => {"
+    + _DESCRIBE
+    + """
+  const drawn = window.drawnBoxes;
+  const now = (el) => { const r = el.getBoundingClientRect();
+    return [r.left + scrollX, r.top + scrollY, r.width, r.height]; };
+  const change = (el) => now(el).map((value, index) => value - drawn.get(el)[index]);
+  const still = (moved) => moved.every((by) => Math.abs(by) < 0.5);
+  const found = [];
+  for (const [el, was] of drawn) {
+    if (!el.isConnected || !el.checkVisibility()) continue;
+    const moved = change(el);
+    if (still(moved)) continue;
+    const parent = el.parentElement;
+    if (drawn.has(parent) && parent.checkVisibility() && still(moved.slice(2))) {
+      const by = change(parent);
+      if (still([moved[0] - by[0], moved[1] - by[1]])) continue;
+    }
+    const words = (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 30);
+    const at = (box) => box.map(Math.round).join(',');
+    found.push(`${describe(el)} "${words}" ${at(was)} -> ${at(now(el))}`);
+  }
+  return found;
+}"""
+)
+# Colors transition between palettes, so contrast is measured after the
 # transition ends.
 _FINISH_TRANSITIONS = """() => document.getAnimations().forEach((a) => { try { a.finish(); } catch { a.cancel(); } })"""
 
@@ -1087,9 +1184,17 @@ _SORT_BY = """([scroll, column]) => {
         .map((row) => row.children[column].textContent.trim().replace(/\\s+/g, ' '))),
   };
 }"""
-_PRESS_FIRST_ROW_TOGGLE = (
-    "(scroll) => document.querySelector('main ' + scroll + ' tbody button[aria-expanded]').click()"
-)
+# Press every one of these a reader can see: one drawn but not offered is not.
+_PRESS_EVERY_SHOWN = "(controls) => controls.forEach((control) => control.checkVisibility() && control.click())"
+# Press the first toggle that shows in the page's first table, and say which
+# of its records (counted as _PHONE_TABLE counts them) it opened.
+_PRESS_FIRST_ROW_TOGGLE = """(scroll) => {
+  const table = document.querySelector('main ' + scroll).querySelector('table');
+  const records = [...table.querySelectorAll('tbody > tr:not([data-row-detail]):not(:has(> th[scope="rowgroup"]))')];
+  const toggle = [...table.querySelectorAll('tbody button[aria-expanded]')].find((el) => el.checkVisibility());
+  toggle.click();
+  return records.indexOf(toggle.closest('tr'));
+}"""
 
 
 # Each reading's mark and lines, as laid out: where the mark sits, and for each
@@ -1238,8 +1343,8 @@ _UNEVEN_ROUTES = (
   for (const el of document.querySelectorAll('main ' + route)) {
     const icons = [...el.querySelectorAll(icon)].filter((mark) => mark.checkVisibility()).map(box);
     if (icons.length < 3 || new Set(icons.map((mark) => Math.round(mark.top))).size > 1) continue;
-    const centres = icons.map((mark) => mark.left + mark.width / 2);
-    const gaps = centres.slice(1).map((centre, i) => centre - centres[i]);
+    const centers = icons.map((mark) => mark.left + mark.width / 2);
+    const gaps = centers.slice(1).map((center, i) => center - centers[i]);
     if (Math.max(...gaps) - Math.min(...gaps) > 1) found.push(`${describe(el)}: gaps ${gaps.map(Math.round).join(', ')}`);
   }
   return found;
@@ -1249,7 +1354,7 @@ _UNEVEN_ROUTES = (
 # The dashboard's queue cards end their buttons at one edge: no card's end
 # stops more than a pixel short of another's. The full queue is a table, whose
 # columns hold its rows to one edge.
-# A route's line runs from the centre of its first stop's mark to the centre
+# A route's line runs from the center of its first stop's mark to the center
 # of its last, opened or closed: each stop draws its stretch as `::before`,
 # read back from its computed box.
 _ROUTE_LINE_ENDS = (
@@ -1269,12 +1374,12 @@ _ROUTE_LINE_ENDS = (
     });
     if (!stretches.length) { found.push(`${describe(el)}: no line`); continue; }
     const down = stretches[0].height > stretches[0].width;
-    const centre = (stop) => { const at = box(stop.querySelector(mark));
+    const center = (stop) => { const at = box(stop.querySelector(mark));
       return down ? at.top + at.height / 2 : at.left + at.width / 2; };
     const start = Math.min(...stretches.map((s) => down ? s.top : s.left));
     const end = Math.max(...stretches.map((s) => down ? s.top + s.height : s.left + s.width));
-    const first = centre(stops[0]);
-    const last = centre(stops.at(-1));
+    const first = center(stops[0]);
+    const last = center(stops.at(-1));
     if (Math.abs(start - first) > 2 || Math.abs(end - last) > 2) {
       found.push(`${describe(el)}: line ${Math.round(start)} to ${Math.round(end)}, marks ${Math.round(first)} to ${Math.round(last)}`);
     }
@@ -1331,91 +1436,241 @@ _RAGGED_QUEUES = (
 }"""
 )
 
-# An identifier in a table is cut only while its row has no room for more:
-# given two more characters, its rows overflow their box on one line.
-_CUT_WITH_ROOM = (
-    "([scroll, folded, held]) => {"
-    + _DESCRIBE
-    + """
-  // Room is what a table has to spare: shown whole, a cut identifier or a
-  // folded run of links leaves the table inside its box and no taller.
-  const found = [];
-  for (const table of document.querySelectorAll('main ' + scroll + ' > table')) {
-    if (!table.checkVisibility() || !('fit' in table.dataset)) continue;
-    const wrapper = table.parentElement;
-    const height = table.getBoundingClientRect().height;
-    const fits = () => table.getBoundingClientRect().width <= wrapper.clientWidth + 1
-      && table.getBoundingClientRect().height <= height + 0.5;
-    const cut = [...table.querySelectorAll(':scope > tbody > tr:not([data-row-detail]) > td code')]
-      .filter((code) => code.clientWidth > 0 && code.scrollWidth > code.clientWidth + 1);
-    if (cut.length) {
-      const room = parseFloat(getComputedStyle(table).getPropertyValue('--identifier-max'));
-      const before = table.style.getPropertyValue('--identifier-max');
-      const widths = cut.map((code) => code.clientWidth);
-      table.style.setProperty('--identifier-max', (room + 2) + 'ch');
-      // A cut held by something other than the cap (its cell) is not this rule's.
-      const grows = cut.some((code, i) => code.clientWidth > widths[i] + 1);
-      const roomy = grows && fits();
-      if (before) table.style.setProperty('--identifier-max', before); else table.style.removeProperty('--identifier-max');
-      if (roomy) found.push(`${describe(table)}: "${cut[0].textContent.trim()}" cut to ${room}ch with room for more`);
+# Each character of an element's text with the line it is drawn on, for the
+# rules that judge where text breaks.
+_LINES = r"""
+const range = document.createRange();
+const chars = (root) => {
+  const out = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!node.parentElement.checkVisibility()) continue;
+    for (let i = 0; i < node.length; i++) {
+      range.setStart(node, i);
+      range.setEnd(node, i + 1);
+      const rect = [...range.getClientRects()].find((r) => r.width);
+      out.push({ch: node.data[i], top: rect ? Math.round(rect.top) : null, bottom: rect ? rect.bottom : 0, node, at: i});
     }
-    for (const cell of table.querySelectorAll(':scope > tbody > tr:not([data-row-detail]) > td:not([data-whole])')) {
-      const hint = cell.querySelector(folded);
-      if (!hint || !hint.checkVisibility() || !cell.querySelector(held)) continue;
-      cell.dataset.whole = '';
-      const roomy = fits();
-      delete cell.dataset.whole;
-      if (roomy) found.push(`${describe(table)}: "${cell.textContent.trim().replace(/\\s+/g, ' ').slice(0, 40)}" folded behind "${hint.textContent.trim()}" with room for all of it`);
+  }
+  return out;
+};
+const broke = (list, i) => list[i].top !== null && list[i - 1].top !== null && list[i].top > list[i - 1].top + 1;
+"""
+
+# An identifier (an address, a host or record name, a path, an image) that
+# fits on its line moves to the next line whole. One longer than its line
+# breaks only at a seam `|breakable` marks (value_tags._BREAK_AFTER: after a
+# slash, after a colon run, after a dot without a digit on both sides), and
+# inside the part between two seams only when that part alone is longer than
+# its line. A hyphen is no seam: a name split there reads as two names.
+_TOKEN_BREAKS = (
+    "(token) => {"
+    + _DESCRIBE
+    + _LINES
+    + r"""
+  const found = [];
+  const digit = /\d/;
+  const seamAfter = (list, i) => {
+    const prev = list[i - 1].ch, next = list[i].ch, before = i > 1 ? list[i - 2].ch : '';
+    return prev === '/' || (prev === ':' && next !== ':') || (prev === '.' && !(digit.test(before) && digit.test(next)));
+  };
+  const px = (value) => parseFloat(value) || 0;
+  const across = (style, edge) => px(style[edge + 'Left' + (edge === 'border' ? 'Width' : '')])
+    + px(style[edge + 'Right' + (edge === 'border' ? 'Width' : '')]);
+  // The run laid out unbroken where it stands: every box of the token held
+  // to one line for the measure and let go, so the width is the browser's own
+  // for these characters in these boxes (their font, kerning, and the seams
+  // between inline blocks), not a copy's.
+  const widthOf = (el, list) => {
+    const held = [el, ...el.querySelectorAll('*')].map((box) => {
+      const was = [box.style.getPropertyValue('white-space'), box.style.getPropertyPriority('white-space')];
+      box.style.setProperty('white-space', 'nowrap', 'important');
+      return () => (was[0] ? box.style.setProperty('white-space', ...was) : box.style.removeProperty('white-space'));
+    });
+    const first = list[0], last = list[list.length - 1];
+    range.setStart(first.node, first.at);
+    range.setEnd(last.node, last.at + 1);
+    const width = range.getBoundingClientRect().width;
+    held.forEach((release) => release());
+    return width;
+  };
+  // The line the run is set on when it starts one: the content box of the
+  // nearest block container around it, less what each inline box between
+  // takes from that line (an inline block's padding, border and margin: a
+  // code chip's own padding, say). An inline flex or grid box lays its
+  // contents out in items of its own, so its content box is the line.
+  const lineOf = (list) => {
+    let box = list[0].node.parentElement;
+    while (!box.contains(list[list.length - 1].node)) box = box.parentElement;
+    const through = [];
+    let inset = 0;
+    for (;; box = box.parentElement) {
+      const style = getComputedStyle(box);
+      if (style.display === 'contents') continue;
+      if (!/^inline(-block)?$/.test(style.display)) break;
+      const taken = across(style, 'padding') + across(style, 'border') + across(style, 'margin');
+      inset += taken;
+      through.push(`${describe(box)} (${style.display}) takes ${taken.toFixed(2)}`);
+    }
+    const style = getComputedStyle(box);
+    // The fractional border box, less its borders, padding and any scrollbar
+    // (the gap between the rounded offset and client widths).
+    const scrollbar = Math.max(0, box.offsetWidth - box.clientWidth - Math.round(across(style, 'border')));
+    const content = box.getBoundingClientRect().width - across(style, 'border') - across(style, 'padding') - scrollbar;
+    return {width: content - inset, said: `line ${content.toFixed(2)} in ${describe(box)} (${style.display})`
+      + (through.length ? `, ${through.join(', ')}` : '')};
+  };
+  const font = (list) => {
+    const s = getComputedStyle(list[0].node.parentElement);
+    return `font ${s.fontWeight} ${s.fontSize} ${s.fontFamily.split(',')[0]}, letter-spacing ${s.letterSpacing}, `
+      + `word-spacing ${s.wordSpacing}, features ${s.fontFeatureSettings}, kerning ${s.fontKerning}`;
+  };
+  // Both widths come from the same layout, on its grid of 1/64 px; a run
+  // that fits its line by less than that grid's step is one the browser may
+  // have rounded past it.
+  const fits = (width, line) => width <= line - 1 / 64;
+  const numbers = (el, list, width, line) => `run ${width.toFixed(2)}px, ${line.said}, `
+    + `so ${line.width.toFixed(2)}px for the run; token box ${el.getBoundingClientRect().width.toFixed(2)}px; ${font(list)}`;
+  for (const el of document.querySelectorAll('main ' + token)) {
+    if (!el.checkVisibility() || el.parentElement.closest(token)) continue;
+    const all = chars(el);
+    const text = all.map((c) => c.ch).join('');
+    for (const word of text.matchAll(/\S+/g)) {
+      const list = all.slice(word.index, word.index + word[0].length);
+      const at = list.findIndex((c, i) => i > 0 && broke(list, i));
+      if (at < 0) continue;
+      const shown = (i) => `"${word[0].slice(0, i)}|${word[0].slice(i)}"`.slice(0, 90);
+      const line = lineOf(list);
+      const whole = widthOf(el, list);
+      if (fits(whole, line.width)) {
+        found.push(`${describe(el)} breaks ${shown(at)} though it fits its line: ${numbers(el, list, whole, line)}`);
+        continue;
+      }
+      for (let i = 1; i < list.length; i++) {
+        if (!broke(list, i) || seamAfter(list, i)) continue;
+        let start = i - 1;
+        while (start > 0 && !seamAfter(list, start)) start -= 1;
+        let end = i;
+        while (end < list.length - 1 && !seamAfter(list, end + 1)) end += 1;
+        const part = list.slice(start, end + 1);
+        const width = widthOf(el, part);
+        const its = lineOf(part);
+        if (fits(width, its.width)) {
+          found.push(`${describe(el)} breaks ${shown(i)} inside a part that fits its line: ${numbers(el, part, width, its)}`);
+          break;
+        }
+      }
+    }
+  }
+  return [...new Set(found)].slice(0, 10);
+}"""
+)
+
+# A heading's aside sits beside it on one line, or starts on a line of its
+# own under it: wrapped beside the heading, its lines keep the heading's line
+# box and read as a loose paragraph set in the heading.
+_ASIDE_BESIDE_ITS_HEADING = (
+    "(aside) => {"
+    + _DESCRIBE
+    + _LINES
+    + r"""
+  const found = [];
+  for (const el of document.querySelectorAll('main ' + aside)) {
+    const heading = el.closest('h1, h2, h3, h4');
+    if (!heading || !el.checkVisibility()) continue;
+    const own = chars(el).filter((c) => c.top !== null);
+    if (new Set(own.map((c) => c.top)).size < 2) continue;
+    const first = own[0];
+    const words = [];
+    const walker = document.createTreeWalker(heading, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (el.contains(node) || !node.data.trim()) continue;
+      range.selectNodeContents(node);
+      words.push(...[...range.getClientRects()].filter((r) => r.width));
+    }
+    if (words.some((r) => r.top < first.bottom - 1 && r.bottom > first.top + 1)) {
+      found.push(`${describe(el)} wraps beside its heading "${heading.textContent.trim().slice(0, 30)}"`);
     }
   }
   return found;
 }"""
 )
 
-# A token wraps at a seam (after a space, a dot, a slash or a hyphen, before a
-# colon) and inside a part only when that part alone is longer than its line.
-_TOKEN_BREAKS = (
-    "(token) => {"
+# A page's title breaks at its spaces, or inside a word only when its
+# controls have already taken a row of their own and the word alone is
+# longer than the line: squeezed beside them, a name splits at a hyphen.
+_SQUEEZED_TITLES = (
+    "([title, actions, pageHead]) => {"
+    + _DESCRIBE
+    + _LINES
+    + r"""
+  const found = [];
+  for (const el of document.querySelectorAll('main ' + title)) {
+    if (!el.checkVisibility()) continue;
+    const list = chars(el);
+    const breaks = list.map((c, i) => i > 0 && broke(list, i) && /\S/.test(list[i - 1].ch) && /\S/.test(c.ch));
+    const at = breaks.indexOf(true);
+    if (at < 0) continue;
+    const head = el.closest(pageHead) || el.parentElement;
+    const controls = head.querySelector(actions);
+    const t = el.getBoundingClientRect();
+    const beside = controls && controls.checkVisibility() && (() => {
+      const c = controls.getBoundingClientRect();
+      return c.top < t.bottom && c.bottom > t.top;
+    })();
+    if (beside) {
+      const text = list.map((c) => c.ch).join('');
+      found.push(`${describe(el)} breaks "${text.slice(0, at)}|${text.slice(at)}" beside its controls`.slice(0, 140));
+    }
+  }
+  return found;
+}"""
+)
+
+# Nothing reaches past the content's side gutter: drawn there, it touches the
+# edge of the screen. `text` also holds every line of text to the box that
+# holds it.
+_PAST_THE_GUTTER = (
+    "([selector, text]) => {"
     + _DESCRIBE
     + """
+  const main = document.querySelector('main');
+  const pad = getComputedStyle(main);
+  const edge = main.getBoundingClientRect();
+  const left = edge.left + parseFloat(pad.paddingLeft);
+  const right = edge.right - parseFloat(pad.paddingRight);
   const found = [];
-  const range = document.createRange();
-  const lines = (rects) => new Set([...rects].filter((r) => r.width).map((r) => Math.round(r.top)));
-  const after = /[\\s./-]/;
-  const isSeam = (prev, next) => after.test(prev) || /\\s/.test(next) || (next === ':' && prev !== ':');
-  for (const el of document.querySelectorAll('main ' + token)) {
-    if (!el.checkVisibility() || el.parentElement.closest(token)) continue;
-    range.selectNodeContents(el);
-    if (lines(range.getClientRects()).size < 2) continue;
-    let line = el;
-    while (getComputedStyle(line).display.startsWith('inline')) line = line.parentElement;
-    const room = line.clientWidth;
-    const chars = [];
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      for (let i = 0; i < node.length; i++) {
-        range.setStart(node, i);
-        range.setEnd(node, i + 1);
-        const rect = [...range.getClientRects()].find((r) => r.width);
-        chars.push({ch: node.data[i], top: rect ? Math.round(rect.top) : null, width: rect ? rect.width : 0});
-      }
+  const inScroller = (el) => {
+    for (let up = el.parentElement; up && up !== main; up = up.parentElement) {
+      if (scrolls(up)) return true;
     }
-    const text = chars.map((c) => c.ch).join('');
-    let top = null;
-    chars.forEach((c, i) => {
-      if (c.top === null) return;
-      const broke = top !== null && c.top > top + 1;
-      top = c.top;
-      if (!broke || isSeam(chars[i - 1].ch, c.ch)) return;
-      let start = i;
-      while (start > 0 && !isSeam(chars[start - 1].ch, chars[start].ch)) start -= 1;
-      let end = i;
-      while (end < chars.length - 1 && !isSeam(chars[end].ch, chars[end + 1].ch)) end += 1;
-      const part = chars.slice(start, end + 1).reduce((sum, ch) => sum + ch.width, 0);
-      if (part + 16 < room) found.push(`${describe(el)} breaks "${text.slice(start, i)}|${text.slice(i, end + 1)}"`);
-    });
+    return false;
+  };
+  for (const el of main.querySelectorAll(selector)) {
+    if (!el.checkVisibility() || inScroller(el)) continue;
+    const r = box(el);
+    if (r.width < 2 || r.height < 2) continue;
+    if (r.right > right + 1 || r.left < left - 1) {
+      found.push(`${describe(el)} spans ${Math.round(r.left)}..${Math.round(r.right)}px, gutter ${Math.round(left)}..${Math.round(right)}px`);
+    }
   }
-  return [...new Set(found)].slice(0, 10);
+  if (!text) return [...new Set(found)].slice(0, 15);
+  const range = document.createRange();
+  const walker = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const el = node.parentElement;
+    if (!node.data.trim() || !el.checkVisibility() || inScroller(el)) continue;
+    let block = el;
+    while (block !== main && getComputedStyle(block).display.startsWith('inline')) block = block.parentElement;
+    const style = getComputedStyle(block);
+    if (style.overflowX !== 'visible') continue;
+    const b = box(block);
+    const inner = b.right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth);
+    range.selectNodeContents(node);
+    const far = Math.max(...[...range.getClientRects()].map((r) => r.right));
+    if (far > inner + 1) found.push(`${describe(block)}: "${node.data.trim().slice(0, 40)}" runs ${Math.round(far - inner)}px past its padding`);
+  }
+  return [...new Set(found)].slice(0, 15);
 }"""
 )
 
@@ -1431,40 +1686,65 @@ _MAP = """([map, lane, node]) => {
   };
 }"""
 
+# A probe page: a table drawn through the table tags, as a template draws one,
+# with the stylesheet and the table script.
+_PROBE_PAGE = """{% load table_tags %}<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ static }}css/app.css">
+<script defer src="{{ static }}js/tables.js"></script>
+</head><body><main>"""
+
+
+def probe(markup):
+    """``markup``, in the table tags, as a page."""
+
+    return Template(_PROBE_PAGE + markup + "</main></body></html>").render(Context({"static": settings.STATIC_URL}))
+
+
 # A table with a column of dashes, a column of marks with no words, and a
-# column of short words: the dashes are not drawn, the marks are, and no word
-# is split however the column's width rounds.
-_BLANK_PROBE = f"""<!doctype html><html><head><meta charset="utf-8">
-<link rel="stylesheet" href="{settings.STATIC_URL}css/app.css">
-<script defer src="{settings.STATIC_URL}js/tables.js"></script>
-</head><body><main><div class="table-scroll"><table class="data-table">
-<thead><tr><th>Title</th><th>Type</th><th>Nothing</th><th>Runs</th><th>Note</th></tr></thead><tbody>
-<tr><td>Upgrade a container to a new release</td><td>Runbook</td><td><span class="empty-value">\u2013</span></td>
+# column of short words: the server marks the dashes blank and they are not
+# drawn, the marks are, and no word is split however the column's width rounds.
+_BLANK_TABLE = """{% table_region "Runbooks" %}<table class="data-table">
+<thead><tr>{% table_heading "Title" %}{% table_heading "Type" %}{% table_heading "Nothing" %}
+{% table_heading "Runs" %}{% table_heading "Note" %}</tr></thead><tbody>
+<tr><td>Upgrade a container to a new release</td><td>Runbook</td><td><span class="empty-value">–</span></td>
 <td><span class="kpi-dots"><span class="kpi-dot is-filled" title="Succeeded"></span></span></td><td>A sentence long enough to take the room it is given and wrap.</td></tr>
-<tr><td>Rotate the signing keys</td><td>Runbook</td><td>\u2013</td>
+<tr><td>Rotate the signing keys</td><td>Runbook</td><td>–</td>
 <td><span class="kpi-dots"><span class="kpi-dot is-filled" title="Succeeded"></span></span></td><td>Another sentence that wraps in its column.</td></tr>
-</tbody></table></div></main></body></html>"""
+</tbody></table>{% endtable_region %}"""
 _COLUMNS_SHOWN = """() => [...document.querySelectorAll('thead th')]
   .filter((th) => getComputedStyle(th).display !== 'none').map((th) => th.textContent.replace(/[^A-Za-z ]/g, '').trim())"""
 
 
-# A table with one row whose only clipped text is for screen readers, beside
-# a decoration hidden from them, and one row whose value really is cut off.
-_ROW_TOGGLE_PROBE = f"""<!doctype html><html><head>
-<link rel="stylesheet" href="{settings.STATIC_URL}css/app.css">
-<script defer src="{settings.STATIC_URL}js/tables.js"></script>
-</head><body><main><div class="table-scroll"><table class="data-table"><tbody>
-<tr data-probe="screen-reader"><th scope="row">Chest</th>
+# Two tables whose every row the server made openable. In the first a narrow
+# box drops a column: one row has something in it, one has a dash there. One
+# row's only clipped text is for screen readers, beside a decoration hidden
+# from them, and one row's value really is cut off. In the second a row folds
+# part of a list, so the gutter is kept at every width, and a row's value is
+# cut off there too.
+_ROW_TOGGLE_TABLES = """
+{% table_region "Dropping" narrow=1 %}<table class="data-table"><thead><tr>
+{% table_heading "Name" gutter=True %}{% table_heading "Value" %}{% table_heading "Note" drop=1 %}</tr></thead><tbody>
+<tr data-probe="dropped"><td class="row-gutter">Dropped{% row_toggle %}</td><td>Short</td><td>Something to say</td></tr>
+<tr data-probe="dropped-blank"><td class="row-gutter">Blank{% row_toggle %}</td><td>Short</td><td>–</td></tr>
+<tr data-probe="screen-reader"><td class="row-gutter">Chest{% row_toggle %}</td>
 <td><span class="cadence-mark is-hit" aria-hidden="true"></span>
-<span class="visually-hidden">One session in the week of Aug 10, said in full</span></td></tr>
-<tr data-probe="clamped"><th scope="row">Name</th>
+<span class="visually-hidden">One session in the week of Aug 10, said in full</span></td><td>–</td></tr>
+<tr data-probe="cut"><td class="row-gutter">Name{% row_toggle %}</td>
+<td><div style="max-width: 40px; overflow: hidden; white-space: nowrap">a value far too long to fit</div></td><td>–</td></tr>
+</tbody></table>{% endtable_region %}
+{% table_region "Folding" %}<table class="data-table"><thead><tr>
+{% table_heading "Name" gutter=True %}{% table_heading "Value" %}</tr></thead><tbody>
+<tr data-probe="folded"><td class="row-gutter">Folded{% row_toggle %}</td>
+<td><span class="tag">One</span><span class="muted row-less">+1</span><span class="row-more"><span class="tag">Two</span></span></td></tr>
+<tr data-probe="cut-in-a-kept-gutter"><td class="row-gutter">Name{% row_toggle %}</td>
 <td><div style="max-width: 40px; overflow: hidden; white-space: nowrap">a value far too long to fit</div></td></tr>
-</tbody></table></div></main></body></html>"""
+</tbody></table>{% endtable_region %}"""
 _ROW_TOGGLES = """() => [...document.querySelectorAll('tbody tr')].map((row) => ({
   probe: row.dataset.probe,
   toggles: row.querySelectorAll('button[aria-expanded]').length,
-  beside_name: row.querySelector('th button[aria-expanded]') !== null,
-  in_decoration: row.querySelector('[aria-hidden=true] button[aria-expanded]') !== null,
+  shown: [...row.querySelectorAll('button[aria-expanded]')].some((toggle) => toggle.checkVisibility()),
+  beside_name: row.querySelector('button[aria-expanded]')?.parentElement === row.cells[0],
 }))"""
 
 
@@ -1520,6 +1800,8 @@ class BrowserGate(SimpleTestCase):
         if self.context is not None:
             self.context.close()
         options.setdefault("java_script_enabled", False)
+        # Scripts asked for while this is a list wait in it (moved_once_drawn).
+        self.held = None
         self.context = self.browser.new_context(**options)
         self.context.set_default_timeout(5000)
         self.context.route("**/*", self.respond)
@@ -1531,7 +1813,19 @@ class BrowserGate(SimpleTestCase):
         self.page.evaluate(_PAINTED)
         self.page.wait_for_function(_STILL)
 
+    def holds(self, route):
+        """Whether a script is being held back, and so not answered yet."""
+
+        if self.held is None or route.request.resource_type != "script":
+            return False
+        self.held.append(route)
+        return True
+
     def respond(self, route):
+        if not self.holds(route):
+            self.answer(route)
+
+    def answer(self, route):
         path = urlsplit(route.request.url).path
         name = path.strip("/")
         if name in self.pages:
@@ -1555,9 +1849,49 @@ class BrowserGate(SimpleTestCase):
             print(f"Browser failure screenshot: {folder / 'page.png'}")
 
     def open(self, name, width):
-        height = PHONE_SCREEN[1] if width <= PHONE else 900
-        self.page.set_viewport_size({"width": width, "height": height})
+        self.page.set_viewport_size(viewport(width))
         self.page.goto(f"{ORIGIN}/{name}/", wait_until="load")
+
+    def moved_once_drawn(self, url, width, settled):
+        """What moves on ``url`` after it is first drawn.
+
+        The page is drawn with its deferred scripts held back, which is what a
+        reader sees before they run, and every box that shows is noted. A
+        script the parser waits for is part of that drawing, so it is let
+        through. Then the rest run, ``settled`` waits for what they start, and
+        every element that stands somewhere else is named.
+        """
+
+        self.held = []
+        self.page.set_viewport_size(viewport(width))
+        self.page.goto(url, wait_until="commit")
+        for _frame in range(600):
+            if self.page.evaluate(_DRAWN):
+                break
+            parsing = set(self.page.evaluate(_PARSER_SCRIPTS))
+            waiting = [route for route in self.held if route.request.url in parsing]
+            for route in waiting:
+                self.held.remove(route)
+                self.answer(route)
+            self.page.evaluate(_SETTLED)
+        else:
+            raise AssertionError(f"{url} at {width}px was never drawn")
+        self.page.evaluate(_DRAWN_BOXES)
+        held, self.held = self.held, None
+        for route in held:
+            self.answer(route)
+        settled()
+        return self.page.evaluate(_MOVED_SINCE_DRAWN)
+
+
+def viewport(width):
+    return {"width": width, "height": PHONE_SCREEN[1] if width <= PHONE else 900}
+
+
+def others(rows, opened):
+    """Every row's height but the one that opened."""
+
+    return rows[:opened] + rows[opened + 1 :]
 
 
 # Heads whose lead control is one that says what it is doing beside itself,
@@ -1598,11 +1932,6 @@ def shared_parts():
 
 
 def speaking_heads():
-    from django.template.loader import render_to_string
-
-    from hq.platform.application.asks import Ask
-    from hq.platform.application.pages import Page, PageAction
-
     actions = (
         Ask("Read everything", "/probe/", primary=True),
         PageAction("First other", "/probe/first/"),
@@ -1658,7 +1987,7 @@ class LayoutBrowserTests(BrowserGate):
 
     def in_scheme(self, scheme):
         """The same load in the other palette. Without script no animation
-        frame runs, so the colours are not waited for: they are finished."""
+        frame runs, so the colors are not waited for: they are finished."""
 
         self.page.emulate_media(color_scheme=scheme)
         self.page.evaluate(_FINISH_TRANSITIONS)
@@ -1709,6 +2038,9 @@ class LayoutBrowserTests(BrowserGate):
             self.a_checks_evidence_follows_its_statement,
             self.nothing_a_summary_names_is_hidden,
             self.a_token_breaks_only_where_it_may,
+            self.an_aside_wraps_only_under_its_heading,
+            self.a_title_is_not_split_beside_its_controls,
+            self.code_and_cards_keep_inside_the_gutter,
             self.controls_in_a_row_share_one_height,
             self.a_wrapped_bar_fills_its_rows,
         ]
@@ -1795,7 +2127,9 @@ class LayoutBrowserTests(BrowserGate):
 
     def a_narrow_head_keeps_its_lead_control_beside_the_title(self, _name):
         self.assertIn(
-            self.page.evaluate(_HEAD_ON_ONE_LINE, [SELECTORS["head_lead"], SELECTORS["head_title"]]),
+            self.page.evaluate(
+                _HEAD_ON_ONE_LINE, [SELECTORS["head_lead"], SELECTORS["head_title"], SELECTORS["page_head"]]
+            ),
             (None, True),
         )
 
@@ -1806,10 +2140,10 @@ class LayoutBrowserTests(BrowserGate):
     def only_a_table_scrolls_sideways(self, _name):
         """At a phone, tablet and laptop width; again with every disclosure open."""
 
-        self.assertEqual(self.page.evaluate(_SIDEWAYS, SELECTORS["table_scroll"]), [])
+        self.assertEqual(self.page.evaluate(_SIDEWAYS, SELECTORS["sideways"]), [])
 
     def only_a_table_scrolls_sideways_with_every_disclosure_open(self, _name):
-        self.assertEqual(self.page.evaluate(_SIDEWAYS, SELECTORS["table_scroll"]), [])
+        self.assertEqual(self.page.evaluate(_SIDEWAYS, SELECTORS["sideways"]), [])
 
     def nothing_runs_out_of_its_table_cell(self, _name):
         self.assertEqual(self.page.evaluate(_CELLS), [])
@@ -1849,7 +2183,7 @@ class LayoutBrowserTests(BrowserGate):
         self.assertEqual(self.page.evaluate(_NARROW_FRAMES, SELECTORS["table_scroll"]), [])
 
     def a_mark_holds_its_glyph_in_its_middle(self, _name):
-        self.assertEqual(self.page.evaluate(_OFF_CENTRE_MARKS, SELECTORS["route_mark"]), [])
+        self.assertEqual(self.page.evaluate(_OFF_CENTER_MARKS, SELECTORS["route_mark"]), [])
 
     def opening_a_disclosure_moves_nothing_before_it(self, _name):
         self.assertEqual(self.page.evaluate(_MOVING_SUMMARIES), [])
@@ -1860,8 +2194,8 @@ class LayoutBrowserTests(BrowserGate):
     def text_reads_in_the_dark_theme(self, _name):
         """Text clears WCAG AA on whatever it sits on, in the dark palette.
 
-        Colour lives in tokens and each token carries both palettes, so a
-        light-only colour can only come from a component that went round them.
+        Color lives in tokens and each token carries both palettes, so a
+        light-only color can only come from a component that went round them.
         The stylesheet test catches a literal; this catches the rest (a token
         whose dark half was never checked, ink meant for one surface drawn on
         another) by measuring what the browser actually paints.
@@ -1909,16 +2243,20 @@ class LayoutBrowserTests(BrowserGate):
     def a_route_is_one_row_or_one_column(self, _name):
         self.assertEqual(self.page.evaluate(_WRAPPED_ROUTES, SELECTORS["route"]), [])
 
-    def nothing_is_held_back_while_its_table_has_room(self, _name):
-        self.assertEqual(
-            self.page.evaluate(
-                _CUT_WITH_ROOM, [SELECTORS["table_scroll"], SELECTORS["row_less"], SELECTORS["row_more"]]
-            ),
-            [],
-        )
-
     def a_token_breaks_only_where_it_may(self, _name):
         self.assertEqual(self.page.evaluate(_TOKEN_BREAKS, SELECTORS["token"]), [])
+
+    def an_aside_wraps_only_under_its_heading(self, _name):
+        self.assertEqual(self.page.evaluate(_ASIDE_BESIDE_ITS_HEADING, SELECTORS["heading_aside"]), [])
+
+    def a_title_is_not_split_beside_its_controls(self, _name):
+        found = self.page.evaluate(
+            _SQUEEZED_TITLES, [SELECTORS["page_title"], SELECTORS["page_actions"], SELECTORS["page_head"]]
+        )
+        self.assertEqual(found, [])
+
+    def code_and_cards_keep_inside_the_gutter(self, _name):
+        self.assertEqual(self.page.evaluate(_PAST_THE_GUTTER, [SELECTORS["gutter_bound"], False]), [])
 
     def controls_in_a_row_share_one_height(self, _name):
         self.assertEqual(self.page.evaluate(_UNEVEN_CONTROL_ROWS, [SELECTORS["line_control"], SELECTORS["field"]]), [])
@@ -1942,7 +2280,8 @@ class LayoutBrowserTests(BrowserGate):
     def nothing_a_summary_names_is_hidden(self, _name):
         self.assertEqual(self.page.evaluate(_HIDDEN_IN_SUMMARIES, SELECTORS["summary_value"]), [])
 
-    # With script: the page a person reads is the one its script has fitted.
+    # With script: the page a person reads, sorted, selectable and with its
+    # cut values marked.
 
     def test_every_page_keeps_the_layout_rules_once_its_script_has_run(self):
         """The rules that hold without script hold there too; pressing a
@@ -1974,7 +2313,6 @@ class LayoutBrowserTests(BrowserGate):
             self.a_table_shares_its_width_only_with_columns_that_show,
             self.words_stay_inside_the_box_that_holds_them,
             self.a_tables_names_share_one_edge_whether_or_not_a_row_opens,
-            self.nothing_is_held_back_while_its_table_has_room,
             self.a_token_breaks_only_where_it_may,
         ]
 
@@ -2001,16 +2339,39 @@ class LayoutBrowserTests(BrowserGate):
                 self.spoke += 1
                 self.assertEqual(found, [])
 
-    def a_table_fits_its_box_at_every_width(self, _name):
-        """Not only on a phone. A table wider than its box wraps, and where
-        wrapping would cramp it gives up columns from the far end, so nothing
-        a reader came for is off the edge at a tablet or a laptop width
-        either. Every page, with every disclosure open.
+    def a_table_fits_its_box_at_every_width(self, name):
+        """Not only on a phone. A table's columns leave by its region's tier
+        in the order its headings rank them, so nothing a reader came for is
+        off the edge at a tablet or a laptop width either. Every page, with
+        every disclosure open.
         """
 
-        self.page.evaluate(_OPEN_AND_REFIT, SELECTORS["table_scroll"])
-        self.page.wait_for_function("() => window.refitting.every((table) => 'fit' in table.dataset)")
+        self.open_every_disclosure(name)
+        self.page.evaluate(_SETTLED)
         self.assertEqual(self.page.evaluate(_TABLES_THAT_DO_NOT_FIT, SELECTORS["table_scroll"]), [])
+
+    def test_nothing_moves_once_a_page_is_drawn(self):
+        """What the server draws is where things stay. The stress estate
+        answers no part a page fetches, so those requests are left waiting:
+        a placeholder stays a placeholder, and what moves is the scripts'."""
+
+        self.start(java_script_enabled=True)
+        self.page.route("**/*", self.wait_for_parts)
+        for name in ALL_PAGES:
+            for width in OVERFLOW_WIDTHS:
+                with self.subTest(page=name, width=width):
+                    moved = self.moved_once_drawn(f"{ORIGIN}/{name}/", width, self.loaded_and_still)
+                    if moved:
+                        self.fail("\n".join(moved))
+
+    def wait_for_parts(self, route):
+        if route.request.headers.get("x-requested-with") != "XMLHttpRequest":
+            route.fallback()
+
+    def loaded_and_still(self):
+        self.page.wait_for_load_state("load")
+        self.settle()
+        self.page.evaluate(_SETTLED)
 
     # Rules with a setup of their own.
 
@@ -2057,6 +2418,43 @@ class LayoutBrowserTests(BrowserGate):
                     self.assertFalse(steps[0].is_visible())
                     opened += 1
                 self.assertGreater(opened, 0)
+
+    def test_a_family_opens_to_its_rows_and_closes_them(self):
+        """A family's toggle shows the rows folded under it and says so, and a
+        second press folds them away again."""
+
+        self.start(java_script_enabled=True)
+        for width in (PHONE_SCREEN[0], OVERFLOW_WIDTHS[-1]):
+            with self.subTest(width=width):
+                self.open("action-items", width)
+                toggle = self.page.locator(SELECTORS["decision_family"]).first
+                family = toggle.evaluate("(toggle) => toggle.closest('tr').id")
+                rows = self.page.locator(f'tr[data-folded="{family}"]')
+                self.assertGreater(rows.count(), 0)
+
+                def shown(rows=rows):
+                    return [row.is_visible() for row in rows.all()]
+
+                self.assertNotIn(True, shown())
+                toggle.click()
+                self.assertEqual(toggle.get_attribute("aria-expanded"), "true")
+                self.assertNotIn(False, shown())
+                toggle.click()
+                self.assertEqual(toggle.get_attribute("aria-expanded"), "false")
+                self.assertNotIn(True, shown())
+
+    def test_an_opened_row_keeps_its_words_in_their_cells(self):
+        """Opening a row lifts every cut in it, and what was cut breaks inside
+        its column rather than running under the next one."""
+
+        self.start(java_script_enabled=True)
+        for name in ALL_PAGES:
+            for width in (PHONE_SCREEN[0], 820):
+                with self.subTest(page=name, width=width):
+                    self.open(name, width)
+                    self.page.locator(SELECTORS["row_toggle"]).evaluate_all(_PRESS_EVERY_SHOWN)
+                    self.page.evaluate(_SETTLED)
+                    self.assertEqual(self.page.evaluate(_CELLS), [])
 
     def test_every_selector_parses(self):
         authored = authored_selectors(Path(finders.find("css/app.css")).read_text())
@@ -2108,21 +2506,31 @@ class LayoutBrowserTests(BrowserGate):
                 self.assert_rows_filled(key)
 
     def test_a_row_toggle_is_owed_only_to_what_a_reader_cannot_see(self):
-        """The row expander measures what is cut off, so it runs with script on.
-
-        Screen-reader text is clipped to a pixel by design and a decoration is
-        hidden from assistive technology; neither is content a row withholds.
-        A row that really is cut gets one toggle, beside the cell that names it.
+        """Every row the server made openable has its toggle in the HTML, in
+        the cell that names it, and shows it only while the row holds
+        something back: a column a narrow box dropped with something in it, a
+        part of a list it folds, or a value cut short, which opens its row only
+        where the gutter is kept already. A narrow box keeps it for every table
+        whose rows open, since touch has no hover title; a wide one only for a
+        table with something else to open. A dash in a dropped column says
+        nothing, screen-reader text is clipped to a pixel by design and a
+        decoration is hidden from assistive technology: none is content a row
+        withholds. Whether a value is cut is measured, so script is on.
         """
 
         self.start(java_script_enabled=True)
-        self.pages = {**self.pages, "row-toggle-probe": _ROW_TOGGLE_PROBE}
-        self.open("row-toggle-probe", 1280)
-        rows = {row["probe"]: row for row in self.page.evaluate(_ROW_TOGGLES)}
-        self.assertEqual(rows["screen-reader"]["toggles"], 0)
-        self.assertEqual(rows["clamped"]["toggles"], 1)
-        self.assertTrue(rows["clamped"]["beside_name"])
-        self.assertFalse(rows["clamped"]["in_decoration"])
+        self.pages = {**self.pages, "row-toggle-probe": probe(_ROW_TOGGLE_TABLES)}
+        shown_at = {
+            PHONE_SCREEN[0]: {"dropped", "cut", "folded", "cut-in-a-kept-gutter"},
+            1280: {"folded", "cut-in-a-kept-gutter"},
+        }
+        for width, expected in shown_at.items():
+            with self.subTest(width=width):
+                self.open("row-toggle-probe", width)
+                self.page.evaluate(_SETTLED)
+                rows = self.page.evaluate(_ROW_TOGGLES)
+                self.assertEqual({(row["toggles"], row["beside_name"]) for row in rows}, {(1, True)})
+                self.assertEqual({row["probe"] for row in rows if row["shown"]}, expected)
 
     def test_a_wide_table_fits_a_phone_and_opening_a_row_moves_nothing(self):
         """A table of four columns or more keeps the column that names each row
@@ -2142,11 +2550,11 @@ class LayoutBrowserTests(BrowserGate):
                 self.assertLessEqual(closed["sideways"], 1)
                 self.assertGreater(closed["toggles"], 0)
 
-                self.page.evaluate(_PRESS_FIRST_ROW_TOGGLE, SELECTORS["table_scroll"])
+                pressed = self.page.evaluate(_PRESS_FIRST_ROW_TOGGLE, SELECTORS["table_scroll"])
                 opened = self.page.evaluate(_PHONE_TABLE, SELECTORS["table_scroll"])
                 self.assertTrue(opened["details"])
                 self.assertEqual(opened["columns"], closed["columns"])
-                self.assertEqual(opened["rows"][1:], closed["rows"][1:])
+                self.assertEqual(others(opened["rows"], pressed), others(closed["rows"], pressed))
                 self.assertLessEqual(opened["sideways"], 1)
 
                 self.page.evaluate(_PRESS_FIRST_ROW_TOGGLE, SELECTORS["table_scroll"])
@@ -2156,6 +2564,21 @@ class LayoutBrowserTests(BrowserGate):
                 self.assertEqual(again["columns"], closed["columns"])
                 self.assertEqual(again["rows"], closed["rows"])
 
+    def test_a_fragment_that_is_not_percent_encoding_breaks_no_table(self):
+        """`#%` is a legal fragment and no encoding of a row's id: it names no
+        row, and everything the table script sets up after landing still runs."""
+
+        self.start(java_script_enabled=True)
+        errors = []
+        self.page.on("pageerror", lambda error: errors.append(str(error)))
+        self.page.goto(f"{ORIGIN}/projects/#%", wait_until="load")
+        ready = self.page.eval_on_selector_all(
+            SELECTORS["selectable_table"], "(tables) => tables.map((table) => table.dataset.selectionReady)"
+        )
+        self.assertEqual(errors, [])
+        self.assertTrue(ready)
+        self.assertEqual(set(ready), {"true"})
+
     def test_a_wide_table_on_a_desktop_keeps_every_column_and_holds_them_when_a_row_opens(self):
         self.start(java_script_enabled=True)
         self.open("connections", 1440)
@@ -2163,10 +2586,10 @@ class LayoutBrowserTests(BrowserGate):
         self.assertEqual(len(closed["columns"]), closed["headings"])
 
         if closed["toggles"]:
-            self.page.evaluate(_PRESS_FIRST_ROW_TOGGLE, SELECTORS["table_scroll"])
+            pressed = self.page.evaluate(_PRESS_FIRST_ROW_TOGGLE, SELECTORS["table_scroll"])
             opened = self.page.evaluate(_PHONE_TABLE, SELECTORS["table_scroll"])
             self.assertEqual(opened["columns"], closed["columns"])
-            self.assertEqual(opened["rows"][1:], closed["rows"][1:])
+            self.assertEqual(others(opened["rows"], pressed), others(closed["rows"], pressed))
 
     def test_any_table_sorts_by_a_heading(self):
         """A table whose server does not sort it sorts on the page: ascending,
@@ -2218,7 +2641,7 @@ class LayoutBrowserTests(BrowserGate):
 
     def test_a_blank_column_is_not_drawn_and_a_short_word_is_not_split(self):
         self.start(java_script_enabled=True)
-        self.pages = {**self.pages, "blank-column-probe": _BLANK_PROBE}
+        self.pages = {**self.pages, "blank-column-probe": probe(_BLANK_TABLE)}
         for width in (PHONE_SCREEN[0], 820, 1360):
             with self.subTest(width=width):
                 self.open("blank-column-probe", width)
@@ -2226,8 +2649,7 @@ class LayoutBrowserTests(BrowserGate):
                 shown = self.page.evaluate(_COLUMNS_SHOWN)
                 self.assertNotIn("Nothing", shown)
                 self.assertIn("Title", shown)
-                if width > PHONE_SCREEN[0]:
-                    self.assertIn("Runs", shown)
+                self.assertIn("Runs", shown)
                 self.assertEqual(self.page.evaluate(_BROKEN_WORDS), [])
 
 
@@ -2241,14 +2663,41 @@ REFERENCE_PHONE = PHONE_SCREEN[0]
 # The viewer is one large script: parsing it takes longer than a page's load.
 REFERENCE_READY = 30_000
 _REFERENCE_MOUNTED = "() => document.querySelector('main main h1') !== null"
-# The sidebar as drawn: each top-level entry, and what stands under a group.
-_REFERENCE_OUTLINE = """() => [...document.querySelectorAll('aside > ul > li')].map((item) => {
-  const said = (el) => el.textContent.trim();
-  const link = item.querySelector(':scope > a, :scope > div > a');
-  if (link) return [link.getAttribute('href'), said(link), []];
-  return ['', [...item.children].filter((part) => part.tagName !== 'UL').map(said).join(''),
-    [...item.querySelectorAll(':scope > ul > li > div > a')].map(said)];
-})"""
+
+
+def wait_for_reference(page):
+    """Until the viewer has drawn the reference."""
+
+    page.wait_for_function(_REFERENCE_MOUNTED, timeout=REFERENCE_READY)
+
+
+# The sidebar is a list of entries, each named by its own link. An entry that
+# opens to show more carries the control that opens it; an operation is a leaf.
+_REFERENCE_ENTRY = """(path) => {
+  let entry = document.querySelector('aside');
+  for (const title of path) {
+    entry = [...entry.querySelectorAll(':scope > ul > li')].find((item) =>
+      item.querySelector(':scope > a, :scope > div > a').textContent.trim().startsWith(title));
+    if (!entry) return null;
+  }
+  return entry.querySelector(':scope > a, :scope > div > a');
+}"""
+# The sidebar as drawn: each top-level entry, and the entries under it that open in turn.
+_REFERENCE_OUTLINE = """() => {
+  const link = (item) => item.querySelector(':scope > a, :scope > div > a');
+  return [...document.querySelectorAll('aside > ul > li')].map((item) => [
+    link(item).getAttribute('href'), link(item).textContent.trim(),
+    [...item.querySelectorAll(':scope > ul > li')]
+      .filter((child) => child.querySelector(':scope > div > [aria-expanded]'))
+      .map((child) => link(child).textContent.trim()),
+  ]);
+}"""
+# Every top-level group opened, as a reader opens it.
+_REFERENCE_OPEN_GROUPS = """() => document
+  .querySelectorAll('aside > ul > li > div > [aria-expanded="false"]').forEach((control) => control.click())"""
+_REFERENCE_GROUPS_OPEN = """() => [...document.querySelectorAll('aside > ul > li > div > [aria-expanded]')]
+  .every((control) => control.getAttribute('aria-expanded') === 'true'
+    && control.closest('li').querySelector(':scope > ul') !== null)"""
 # What stands over HQ's header, what of the viewer's is pinned under it, and
 # any trail the viewer is showing.
 _REFERENCE_FRAME = """(root) => {
@@ -2272,8 +2721,8 @@ _REFERENCE_FRAME = """(root) => {
 _REFERENCE_PAINT = """() => {
   const behind = (el) => {
     for (let up = el; up; up = up.parentElement) {
-      const colour = getComputedStyle(up).backgroundColor;
-      if (!/rgba\\(0, 0, 0, 0\\)|transparent/.test(colour)) return colour;
+      const color = getComputedStyle(up).backgroundColor;
+      if (!/rgba\\(0, 0, 0, 0\\)|transparent/.test(color)) return color;
     }
     return '';
   };
@@ -2289,18 +2738,18 @@ _REFERENCE_PAINT = """() => {
 }"""
 _REFERENCE_CHROME = """() => ({
   said: document.querySelector('main').innerText,
-  leaves: [...document.querySelectorAll('main a[href]')]
+  // Every link drawn anywhere on the page, the viewer's sidebar and its foot included.
+  leaves: [...document.links]
     .filter((a) => a.origin !== location.origin && a.checkVisibility())
     .map((a) => a.href),
   search: document.querySelector('aside button').innerText,
 })"""
-_REFERENCE_FOLLOW = """(title) => {
-  const link = [...document.querySelectorAll('aside a[href]')]
-    .find((a) => a.textContent.trim().startsWith(title));
+_REFERENCE_FOLLOW = f"""(path) => {{
+  const link = ({_REFERENCE_ENTRY})(path);
   if (!link) return false;
   link.click();
   return true;
-}"""
+}}"""
 _REFERENCE_HEADING = """(title) => {
   const heading = [...document.querySelectorAll('main main h2, main main h3')]
     .find((h) => h.textContent.includes(title) && h.checkVisibility());
@@ -2318,8 +2767,7 @@ _REFERENCE_AT_REST = f"""(title) => {{
   return window.resting[title].runs >= 3;
 }}"""
 _REFERENCE_OPEN_MENU = "(root) => document.querySelector(root).querySelector('header button').click()"
-_REFERENCE_LISTED = """(title) => [...document.querySelectorAll('aside a[href]')]
-  .some((a) => a.textContent.trim().startsWith(title))"""
+_REFERENCE_LISTED = f"(path) => ({_REFERENCE_ENTRY})(path) !== null"
 
 
 def reference_outline(document):
@@ -2336,25 +2784,31 @@ def reference_outline(document):
     ]
 
 
+def render_reference():
+    """The reference in each theme, the document its viewer reads and the count
+    the header asks for, by path."""
+
+    with transaction.atomic():
+        client = Client()
+        client.force_login(get_user_model().objects.create_user(username="operator"))
+        page = reverse("api_reference:reference")
+        pages = {
+            url.strip("/"): client.get(url).content.decode()
+            for url in (page, reverse("hq_api:openapi"), reverse("action_item_count"))
+        }
+        client.post(reverse("theme"), {"theme": "dark"})
+        pages[REFERENCE_DARK] = client.get(page).content.decode()
+        transaction.set_rollback(True)
+    return pages
+
+
 class ReferenceBrowserTests(BrowserGate):
     """The API reference reads as a page of HQ's, at every width and in both themes."""
 
     @classmethod
     def render(cls):
-        with transaction.atomic():
-            client = Client()
-            client.force_login(get_user_model().objects.create_user(username="operator"))
-            document = reverse("hq_api:openapi")
-            page = reverse("api_reference:reference")
-            # The document the viewer reads, and the count the header asks for.
-            pages = {
-                url.strip("/"): client.get(url).content.decode()
-                for url in (page, document, reverse("action_item_count"))
-            }
-            client.post(reverse("theme"), {"theme": "dark"})
-            pages[REFERENCE_DARK] = client.get(page).content.decode()
-            transaction.set_rollback(True)
-        cls.document = json.loads(pages[document.strip("/")])
+        pages = render_reference()
+        cls.document = json.loads(pages[reverse("hq_api:openapi").strip("/")])
         return pages
 
     def start(self, **options):
@@ -2377,7 +2831,7 @@ class ReferenceBrowserTests(BrowserGate):
     def visit(self, width, name=REFERENCE, fragment=""):
         self.page.set_viewport_size({"width": width, "height": 900})
         self.page.goto(f"{ORIGIN}/{name}/{fragment}", wait_until="load")
-        self.page.wait_for_function(_REFERENCE_MOUNTED, timeout=REFERENCE_READY)
+        wait_for_reference(self.page)
 
     def frame(self):
         return self.page.evaluate(_REFERENCE_FRAME, SELECTORS["reference"])
@@ -2396,6 +2850,8 @@ class ReferenceBrowserTests(BrowserGate):
         no section for the version badge, none for the schemas."""
 
         self.visit(1360)
+        self.page.evaluate(_REFERENCE_OPEN_GROUPS)
+        self.page.wait_for_function(_REFERENCE_GROUPS_OPEN)
         drawn = [
             [title, under]
             for href, title, under in self.page.evaluate(_REFERENCE_OUTLINE)
@@ -2427,7 +2883,7 @@ class ReferenceBrowserTests(BrowserGate):
         self.assertIn(mode, paint["mode"].split())
         self.assertEqual(paint["viewer"], paint["page"])
         # The header lets the page show through its surface; the sidebar is that
-        # surface, so they match in colour whatever the header's opacity.
+        # surface, so they match in color whatever the header's opacity.
         self.assertEqual(_opaque(paint["sidebar"]), _opaque(paint["header"]))
         self.assertEqual(paint["title"], paint["ink"])
         self.assertEqual(paint["title_face"], paint["face"])
@@ -2457,6 +2913,10 @@ class ReferenceBrowserTests(BrowserGate):
         """One search that says it is the reference's, no request sent from the page,
         no token asked for, no way out to the vendor, and nothing fetched from it."""
 
+        self.visit(REFERENCE_PHONE)
+        self.page.evaluate(_REFERENCE_OPEN_MENU, SELECTORS["reference"])
+        self.settle()
+        self.assertEqual(self.page.evaluate(_REFERENCE_CHROME)["leaves"], [])
         self.visit(1360)
         chrome = self.page.evaluate(_REFERENCE_CHROME)
         for words in ("Test Request", "Bearer Token", "Open API Client", "Powered by", "Client Libraries"):
@@ -2486,15 +2946,19 @@ class ReferenceBrowserTests(BrowserGate):
             self.assertLess(heading["top"], heading["window"] * 0.6)
             return heading["hash"]
 
+        group = next(group["summary"] for group in self.document["tags"] if group["name"] == tag["parent"])
+        # A reader opens the group, then the domain in it, then the operation.
         self.visit(1360)
-        self.assertTrue(self.page.evaluate(_REFERENCE_FOLLOW, tag["summary"]))
-        self.page.wait_for_function(_REFERENCE_LISTED, arg=title)
+        self.assertTrue(self.page.evaluate(_REFERENCE_FOLLOW, [group]))
+        self.page.wait_for_function(_REFERENCE_LISTED, arg=[group, tag["summary"]])
+        self.assertTrue(self.page.evaluate(_REFERENCE_FOLLOW, [group, tag["summary"]]))
+        self.page.wait_for_function(_REFERENCE_LISTED, arg=[group, tag["summary"], title])
         self.page.wait_for_function(_REFERENCE_AT_REST, arg=tag["summary"], polling=100)
-        self.assertTrue(self.page.evaluate(_REFERENCE_FOLLOW, title))
+        self.assertTrue(self.page.evaluate(_REFERENCE_FOLLOW, [group, tag["summary"], title]))
         fragment = landed()
         self.assertNotEqual(fragment, "")
         self.page.reload(wait_until="load")
-        self.page.wait_for_function(_REFERENCE_MOUNTED, timeout=REFERENCE_READY)
+        wait_for_reference(self.page)
         self.assertEqual(landed(), fragment)
         self.assertEqual(self.refused, [])
         self.assertEqual(self.errors, [])
@@ -2544,7 +3008,7 @@ class FragmentBrowserTests(BrowserGate):
             answers = {
                 (url, ""): page.content.decode(),
                 (following, "calendar"): client.get(following, headers={"X-Fragment": "calendar"}).content.decode(),
-                (reverse("action_item_count"), ""): '{"count": 0}',
+                (reverse("action_item_count"), ""): client.get(reverse("action_item_count")).content.decode(),
             }
             transaction.set_rollback(True)
         return answers

@@ -1,7 +1,7 @@
 """How HQ reaches each connection: over which network, to which machine, by which path.
 
 Joined from readings HQ already holds: the connection's endpoint, the addresses
-HQ's DNS readings see its name answering at, the machine catalogue, and the
+HQ's DNS readings see its name answering at, the machine catalog, and the
 tailnet peering the machine page shows (``Presence.peer_path``). Nothing is
 probed and nothing is resolved live.
 """
@@ -15,6 +15,8 @@ from hq.domains.control_plane.names import normalized_hostname
 from .entity_links import EntityLink, entity_link
 from .facts import stored_snapshots
 from .reach import network_of
+lazy from . import connections
+lazy from .locate import host_of, machines_index, observed_answers
 
 NETWORK_LABELS = {
     "loopback": "Reached locally",
@@ -103,13 +105,10 @@ def _named_network(host: str) -> str:
     return "public"
 
 
-def connection_reach(connections: Iterable[tuple[str, str]]) -> dict[str, ConnectionReach]:
+def connection_reach(endpoints: Iterable[tuple[str, str]]) -> dict[str, ConnectionReach]:
     """``connection_ref -> ConnectionReach`` for each ``(ref, endpoint)`` with a host."""
 
-    from .connections import machines_once
-    from .locate import host_of, machines_index, observed_answers
-
-    catalog = machines_once()
+    catalog = connections.machines_once()
     known = {item.name.lower(): item for item in catalog}
     for item in catalog:
         for alias in item.aliases:
@@ -118,7 +117,7 @@ def connection_reach(connections: Iterable[tuple[str, str]]) -> dict[str, Connec
     # From the one read of every reading the connections page shares.
     answers = observed_answers(row for rows in stored_snapshots().values() for row in rows)
     found: dict[str, ConnectionReach] = {}
-    for ref, endpoint in connections:
+    for ref, endpoint in endpoints:
         host = host_of(endpoint)
         if not ref or not host:
             continue

@@ -36,7 +36,7 @@ capabilities are *exactly* the token's granted permissions, never widened.
 | Setting | Meaning |
 |---|---|
 | `SEVERINO_API_RESOURCE` | The Pocket ID API resource URI. **Empty disables the surface.** |
-| `SEVERINO_API_LEEWAY_SECONDS` | Clock-skew allowance. Default 30. |
+| `SEVERINO_API_LEEWAY_SECONDS` | Clock-skew allowance: 30 seconds. |
 
 Empty must mean off, and does: without a resource to check `aud` against, a
 token minted for any *other* API on the same Pocket ID instance would verify
@@ -142,7 +142,7 @@ reference, not a client:
   in its own place. The version tag is a badge (`kind: badge`) and carries
   `x-scalar-ignore`, the form the viewer reads, so it is no section.
 - **Appearance** is HQ's tokens, handed to the viewer's theme variables by
-  `static/css/api-reference.css`. That sheet holds no colour, size or face of
+  `static/css/api-reference.css`. That sheet holds no color, size or face of
   its own, and both of the viewer's modes take the same tokens, so the page
   follows the operator's theme (`data-theme` on `<html>`, else the system's)
   with no toggle of its own.
@@ -215,7 +215,7 @@ principal holds; the `SEVERINO_MCP_ENABLE_*` switches gate writes, not reads.
 |---|---|---|
 | Estate reading (`estate.cards`) | Dashboard | `estate` |
 | Action items (`dashboard.work_queue`, estate items included) | Action items | `action.items` |
-| Machine catalogue, roles, HQ's own machine | Machines | `machines` |
+| Machine catalog, roles, HQ's own machine | Machines | `machines` |
 | Running containers: standing, runtime, posture, supply chain (`containers.containers`) | Containers | `containers` (`get <machine:container>`) |
 | Upgrade plans, read-only (`upgrades.plans`) | Containers, container page | `upgrades` (`get <machine:container>`) |
 | Domains, their services and registration | Domains | `domains` |
@@ -244,6 +244,19 @@ page also shows how the request being answered reached HQ (network admission,
 transport, proxy identity and the caller's first hop); a read has no such
 request, so its `request` is null. Everything else is the same object the page
 renders, and a parity test holds the two equal.
+
+Every list and detail read takes `fields`, a field mask in the AIP-161
+convention: `?fields=observed_at,items.waiting` over HTTP, a list of paths to
+the MCP tools and the SDK. A name keeps its whole value; a dot steps into an
+object, or into every element of a list, so that example returns
+`{"observed_at": …, "items": [{"waiting": …}, …]}`. Paths that share a prefix
+merge, and a whole value wins over a path into it. On a list endpoint each
+path is read in each item, and the collection keeps its `count`. A segment
+that no record or element at its depth carries is refused with
+`invalid_input`, naming the names there are; so is a path into a scalar.
+Selection happens after authorization. Absent, the whole record is returned.
+Because every adapter reads it beside the query, no resource query may
+declare a field called `fields`; the registry refuses one at startup.
 
 Readings leave only through their schema: `ObservationSpec.admitted` drops any
 field the record model does not name. Node ids are the topology's:
@@ -288,7 +301,13 @@ Findings are another projection of that same authorized topology. General
 reads collapse several stale resource kinds onto their shared controller when
 the graph proves one, and expose the explained kinds in `affected_scopes`.
 Clients that need the underlying machine facts can request one declared
-`rule`; causal presentation never destroys the exact observations. Remedies
+`rule`; causal presentation never destroys the exact observations.
+`severity` is a floor on the ladder `serious`, `attention`, `neutral`, `good`
+(`attention` also returns `serious`), and `limit` caps how many are returned,
+most severe first. `summary.findings` and `summary.severities` still count
+every finding; `summary.returned` says how many came back and
+`summary.truncated` whether the limit held any back. A severity off the ladder
+or a limit below one is a 400 `invalid_input`. Remedies
 remain references to registered capabilities, while read-only "what HQ can do
 now" links come from the subject node's canonical actions rather than a second
 workflow registry.
@@ -322,8 +341,8 @@ Always `{"ok": false, "error": {"code", "message", "details"}}`.
 | `400` | `invalid_input`: the request did not match its schema. Fix the fields it names. |
 | `401` | No token, or it failed verification. Mint a new one. |
 | `403` | Verified, but this client was not granted that capability. Fix its scope. |
-| `404` | No such capability on this deployment. |
-| `409` | The domain refused the command, or a retry key was reused with different input. |
+| `404` | `unknown_capability`: no such capability on this deployment, or `not_found`: the record the command names does not exist. |
+| `409` | `conflict`: the record changed after it was read or clashes with another, `operation_failed`: the domain refused the command, or `idempotency_conflict`: a retry key was reused with different input. |
 | `413` | The request exceeds the deployment's body-size safety limit. |
 | `415` | A capability request was not sent as `application/json`. |
 | `503` | `SEVERINO_API_RESOURCE` is unset here. |
@@ -346,9 +365,8 @@ retry therefore receives the committed response without running the command a
 second time, even after a process restart. Reusing the key with different input
 returns `409 idempotency_conflict`.
 
-Records expire after 24 hours by default and expired records are pruned by the
-next machine write. Configure the window with
-`SEVERINO_API_IDEMPOTENCY_TTL_SECONDS`. Domain-level idempotency remains useful:
+Records expire after 24 hours (`SEVERINO_API_IDEMPOTENCY_TTL_SECONDS`) and
+expired records are pruned by the next machine write. Domain-level idempotency remains useful:
 it protects imports arriving through web, CLI, or MCP, while this transport
 contract protects an HTTP client that did not receive the first response.
 
@@ -404,9 +422,10 @@ it does; a patch release adds no features. No compatibility
 translation is applied. Resource filters emit individual query parameters;
 `x-hq-query-schema` retains the aggregate schema, including unknown-field policy.
 
-Install the locked contract tools with `npm --prefix scripts/openapi ci`.
-`scripts/check-openapi.sh` validates both descriptions against the specification
-and checks generated client freshness and runtime behavior. The TypeScript
+Install the locked contract tools with `npm --prefix tools/clients ci`.
+`mise run checks:openapi` validates both descriptions against the specification
+and runs the generated client's runtime tests; `mise run drift` checks that the
+client is current. The TypeScript
 client and CLI are generated from the host description. Redocly marks
 its client generator experimental; generated artifacts are pinned and checked
 rather than assumed compatible across upgrades.
@@ -422,7 +441,7 @@ All MCP tool input schemas and descriptions consume the live deployment's
 OpenAPI document after Django initialization. `x-hq-mcp-tools` records MCP-only
 metadata; it does not invent HTTP operations for those tools. Argument types
 and defaults are emitted from the declared service signatures with the MCP
-SDK and Pydantic. Resource names, identifiers and catalogues consume the
+SDK and Pydantic. Resource names, identifiers and catalogs consume the
 already-emitted resource paths. Registration fails if the document disagrees
 with the execution signature, and calls validate against the documented
 constraints before entering application code. Unknown arguments, mistyped

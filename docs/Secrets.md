@@ -402,13 +402,13 @@ for the operator's machine, for example:
 
 ```sh
 CLOUDFLARE_BOOTSTRAP_TOKEN='op://Example Bootstrap/cloudflare/credential' \
-  op run -- ./scripts/mint-cloudflare-token.sh --account 0123abcd \
+  op run -- mise run mint:cloudflare --account 0123abcd \
   --store 'op://Example Vault/exampleitem01/credential'
 ```
 
-`op run` resolves the bootstrap reference (Touch ID); the script checks the
+`op run` resolves the bootstrap reference (Touch ID); the task checks the
 connection item carries the field, mints a token with every permission in
-`scripts/cloudflare-observer-permissions.txt`, and pipes the secret into
+`tools/cloudflare-observer-permissions.txt`, and pipes the secret into
 `op item edit` as the item's JSON template. The secret reaches no argument,
 file or output. The controller reads it on its next render.
 
@@ -418,16 +418,16 @@ from the connection item's optional `bootstrap` field, an `op://<vault>/<item>`
 reference shaped like the connection. The renderer refuses a bootstrap in the
 vault it reads, because a reader of that vault could then mint.
 
-Two scripts mint read-only credentials. Both take the bootstrap credential
-from the environment. Without `--print-secret` (or `--store`) they print what
-they would create and create nothing.
+Two tasks mint read-only credentials, both over `tools/credentials.py`. Both take the bootstrap credential
+from the environment. Without `--store` they print what they would create and
+create nothing: a secret goes into 1Password and nowhere else.
 
-- `scripts/mint-cloudflare-token.sh` needs a bootstrap token with API Tokens
-  Write. It resolves the names in `scripts/cloudflare-observer-permissions.txt`
+- `mise run mint:cloudflare` needs a bootstrap token with API Tokens
+  Write. It resolves the names in `tools/cloudflare-observer-permissions.txt`
   and creates a user-owned token with an expiry and optional client IP ranges.
   `--list-groups` prints the current names.
-- `scripts/mint-tailscale-client.sh` creates an OAuth client with the scopes in
-  `scripts/tailscale-observer-scopes.txt`, all `:read`. The bootstrap needs the
+- `mise run mint:tailscale` creates an OAuth client with the scopes in
+  `tools/tailscale-observer-scopes.txt`, all `:read`. The bootstrap needs the
   `oauth_keys` scope: an API access token, or an OAuth client given as
   `TAILSCALE_BOOTSTRAP_CLIENT_ID` and `TAILSCALE_BOOTSTRAP_CLIENT_SECRET`.
 
@@ -473,16 +473,11 @@ lives on the tmpfs, so the first run of every boot is a full read.
 **An identity is compared as a key, not as bytes.** The OpenSSH encoding holds
 random check bytes, so the same key encodes differently on every render.
 
-**The certificate publisher still runs `op`.** 1Password's Go SDK
-(`onepassword-sdk-go` v0.4.1) was evaluated for it on 2026-10-04 and not
-adopted. It builds without cgo and can attach files, but it embeds a 9.5 MB
-closed-source WebAssembly core and runs it in process (extism on wazero): a
-minimal program linking it is 22.7 MB against 9.4 MB for the whole controller,
-client start-up took 2.8 seconds and 173 MB of memory before any request, its
-errors are strings apart from two types, it adds ten modules to the build, and
-its API is pre-1.0. It would also put a vault client inside the image the web
-container shares, which lending the host's `op` to one run avoids. Revisit when
-the SDK reaches 1.0 or Connect gains file upload.
+**The certificate publisher still runs `op`.** 1Password's Go SDK embeds a
+closed-source WebAssembly core run in process, would put a vault client inside
+the image the web container shares, which lending the host's `op` to one run
+avoids, and is pre-1.0. Revisit when the SDK reaches 1.0 or Connect gains file
+upload.
 
 ## Checking the renderer on a host
 

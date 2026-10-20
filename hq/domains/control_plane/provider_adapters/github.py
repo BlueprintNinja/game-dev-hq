@@ -16,7 +16,7 @@ from ..provider_spec import ConnectionKind, ProviderModel, ProviderSpec, SharedV
 
 KIND = "github.delivery"
 # Shared values (``SHARED``): the controller reports a sweep's record with the
-# same defaults, which is what lets `adopts` recognise it.
+# same defaults, which is what lets `adopts` recognize it.
 CURRENT = "Every extension's latest admission, confirmed on GitHub"
 COMPOSE_WORKFLOW = ".github/workflows/compose.yml"
 MAIN_BRANCH = "main"
@@ -140,7 +140,7 @@ CONNECTIONS = {
         "GitHub App",
         "scoped",
         GITHUB_APP,
-        create="A GitHub App on your account; scripts/wire-github-app.py records its ID and stores its key.",
+        create="A GitHub App on your account; mise run wire-github-app records its ID and stores its key.",
         create_url="https://github.com/settings/apps/new",
         gives="Repo checks on your repositories, and HQ's deploys waiting for your approval.",
     ),

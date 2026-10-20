@@ -27,7 +27,7 @@ Store it as an API Credential item:
 | `projection` | `api_token` | The shape the controller reads the item as. |
 | `env_prefix` | `CLOUDFLARE_DNS` | Says which service it is for. |
 | `credential` | the secret | The item's own credential field. |
-| `website` | yours | A field labelled website. |
+| `website` | yours | A field labeled website. |
 | `manages` | `1` | Optional. Lets HQ make changes through it, not only read. |
 
 ## Portainer
@@ -46,7 +46,7 @@ Store it as an API Credential item:
 | `projection` | `api_token` | The shape the controller reads the item as. |
 | `env_prefix` | `PORTAINER` | Says which service it is for. |
 | `credential` | the secret | The item's own credential field. |
-| `website` | yours | A field labelled website. |
+| `website` | yours | A field labeled website. |
 | `manages` | `1` | Optional. Lets HQ make changes through it, not only read. |
 
 ## Tailscale
@@ -66,7 +66,7 @@ Permissions, and no others:
 - `services:read`
 - `users:read`
 
-Or have `scripts/mint-tailscale-client.sh` issue one with exactly these.
+Or have `mise run mint:tailscale` issue one with exactly these.
 
 Store it as an API Credential item:
 
@@ -123,7 +123,7 @@ Permissions, and no others:
 - `Zone Read (zone)`
 - `Zone Settings Read (zone)`
 
-Or have `scripts/mint-cloudflare-token.sh` issue one with exactly these.
+Or have `mise run mint:cloudflare` issue one with exactly these.
 
 Store it as an API Credential item:
 
@@ -133,7 +133,7 @@ Store it as an API Credential item:
 | `projection` | `api_token` | The shape the controller reads the item as. |
 | `env_prefix` | `CLOUDFLARE_API` | Says which service it is for. |
 | `credential` | the secret | The item's own credential field. |
-| `website` | yours | A field labelled website. |
+| `website` | yours | A field labeled website. |
 | `manages` | `1` | Optional. Lets HQ make changes through it, not only read. |
 
 ## AdGuard Home
@@ -160,7 +160,7 @@ Store it as a Login item:
 
 Repo checks on your repositories, and HQ's deploys waiting for your approval.
 
-A GitHub App on your account; scripts/wire-github-app.py records its ID and stores its key. [Where to make it](https://github.com/settings/apps/new)
+A GitHub App on your account; mise run wire-github-app records its ID and stores its key. [Where to make it](https://github.com/settings/apps/new)
 
 Permissions, and no others:
 
@@ -184,8 +184,8 @@ Store it as an item of any type:
 | `connection_ref` | `github-app` | Any name; how HQ refers to this connection. |
 | `projection` | `github_app` | The shape the controller reads the item as. |
 | `env_prefix` | `GITHUB_APP` | Says which service it is for. |
-| `app_id` | yours | A field labelled app_id. |
-| `signing_key` | yours | A field labelled signing_key. |
+| `app_id` | yours | A field labeled app_id. |
+| `signing_key` | yours | A field labeled signing_key. |
 | `manages` | `1` | Optional. Lets HQ make changes through it, not only read. |
 
 ## SSH
@@ -203,12 +203,12 @@ Store it as an item of any type:
 | `connection_ref` | `ssh` | Any name; how HQ refers to this connection. |
 | `projection` | `ssh_transport` | The shape the controller reads the item as. |
 | `env_prefix` | `SSH` | Says which service it is for. |
-| `host` | yours | A field labelled host. |
-| `host_key` | yours | A field labelled host_key. |
-| `identity` | yours | A field labelled identity. |
-| `port` | yours | A field labelled port. |
-| `role` | yours | A field labelled role. Optional. |
-| `user` | yours | A field labelled user. |
+| `host` | yours | A field labeled host. |
+| `host_key` | yours | A field labeled host_key. |
+| `identity` | yours | A field labeled identity. |
+| `port` | yours | A field labeled port. |
+| `role` | yours | A field labeled role. Optional. |
+| `user` | yours | A field labeled user. |
 | `manages` | `1` | Optional. Lets HQ make changes through it, not only read. |
 
 ## 1Password

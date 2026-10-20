@@ -1,4 +1,4 @@
-"""Services: the catalogue, one service's page, publishing a new one, and the favourites order."""
+"""Services: the catalog, one service's page, publishing a new one, and the favorites order."""
 
 from functools import cached_property
 from typing import override
@@ -35,6 +35,8 @@ from hq.platform.application.service_facets import CERTIFICATE_FACET, DNS_FACET,
 from hq.platform.application.service_list import listed_service, listed_services
 from hq.platform.application.services import alias_target
 from hq.platform.application.ui import PageNavigation, PageSection
+lazy from hq.platform.application.page_relations import for_service
+lazy from hq.platform.application.pins import SERVICE, move, ordered, toggle
 
 from .models import ManagedResource
 from .names import normalized_hostname
@@ -63,9 +65,6 @@ class ServiceListView(PageMixin, TemplateView):
 
     @override
     def get_context_data(self, **kwargs):
-        from hq.platform.application.pins import SERVICE, ordered
-        from hq.platform.application.service_facets import RUNTIME_FACET
-
         context = super().get_context_data(**kwargs)
         favorites = ordered(self.request.user, SERVICE)
         # HQ's own name and observed names are rows like any other, marked.
@@ -79,6 +78,8 @@ class ServiceListView(PageMixin, TemplateView):
         context["service_groups"] = tuple(
             group for group in (("Favorites", pinned, True), ("Other services", rest, False)) if group[1]
         )
+        # Both groups are one table, sorted on the page with two rows in all.
+        context["service_count"] = len(found)
         # One answer for both groups, which share the table's columns.
         context["service_projects"] = any(item.project for item in found)
         # Where a service runs is one column, not two. The runtime facet named
@@ -141,8 +142,6 @@ class ServiceDetailView(PageMixin, TemplateView):
 
     @cached_property
     def relationships(self):
-        from hq.platform.application.page_relations import for_service
-
         return for_service(self.service, self.sections, principal=web_principal(self.request.user))
 
     @cached_property
@@ -278,8 +277,6 @@ class ServicePinView(View):
     """
 
     def post(self, request, hostname: str):
-        from hq.platform.application.pins import SERVICE, toggle
-
         name = normalized_hostname(hostname)
         if not name:
             raise Http404("No such service.")
@@ -288,15 +285,13 @@ class ServicePinView(View):
 
 
 class ServiceMoveView(View):
-    """Move one favorite past its neighbour.
+    """Move one favorite past its neighbor.
 
     Up and down rather than dragging: it is one POST, it works without script,
     and it says out loud which two things swapped, which a drag does not.
     """
 
     def post(self, request, hostname: str):
-        from hq.platform.application.pins import SERVICE, move
-
         name = normalized_hostname(hostname)
         if not name:
             raise Http404("No such service.")

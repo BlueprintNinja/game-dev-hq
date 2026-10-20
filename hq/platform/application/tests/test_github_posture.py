@@ -16,7 +16,6 @@ from ..github_posture import (
     PINS_UNREAD,
     REASONS,
     STANDARD,
-    WIRED_SECRETS,
     attention,
     build_attention,
     postures,
@@ -379,12 +378,6 @@ class PostureHelpTests(TestCase):
             ],
         )
         self.assertIn("only after its workflows read secrets.HQ_APP_CLIENT_ID", runs(item)[1][0])
-
-    def test_the_wired_secrets_are_the_ones_the_wiring_sets(self):
-        wiring = (Path(__file__).resolve().parents[4] / "scripts" / "wire-github-app.py").read_text()
-
-        for name in WIRED_SECRETS:
-            self.assertIn(f'"secret", "set", "{name}"', wiring)
 
     def test_a_collaborator_and_a_writable_key_are_removed_by_name(self):
         guest = self.item(

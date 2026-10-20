@@ -95,11 +95,17 @@ def as_someone(principal: capabilities.Principal) -> None:
     )
     assert_type(resources.list_resource("example.things", principal=principal), dict[str, Any])
     assert_type(resources.get_resource("example.things", 1, principal=principal), dict[str, Any])
+    assert_type(
+        resources.list_resource("example.things", principal=principal, fields=["name", "parts.name"]),
+        dict[str, Any],
+    )
+    assert_type(resources.get_resource("example.things", 1, principal=principal, fields=("name",)), dict[str, Any])
 
     # Every one of these acts as someone, and says who.
     outbound.run_now("example.work")  # type: ignore[call-arg]
     capabilities.execute_capability("example.do", {})  # type: ignore[call-arg]
     resources.get_resource("example.things", 1)  # type: ignore[call-arg]
+    resources.get_resource("example.things", 1, principal=principal, fields="name")  # type: ignore[arg-type]
     capabilities.execute_capability("example.do", ["x"], principal=principal)  # type: ignore[arg-type]
 
 
@@ -139,14 +145,30 @@ class Things(tables.TableListMixin, pages.PageMixin):
     page_title = "Things"
     table_empty = "No things yet."
     table_empty_why = "Add one in the vault."
-    table_columns = (tables.TableColumn("Name", "name"),)
+    table_columns = (
+        tables.TableColumn("Name", "name", kind="identifier"),
+        tables.TableColumn("Note", kind="prose", drop=1),
+    )
     table_search_fields = ("name",)
     table_default_sort = "name"
+    # How many ranked columns leave a mid-width box and a narrow one.
+    table_drop_mid = 0
+    table_drop_narrow = 1
+    # An identifier beside a wide prose column takes what it leaves.
+    table_room = "shared"
 
 
 class WronglyDeclared(tables.TableListMixin):
     table_empty = None  # type: ignore[assignment]
     table_columns = ("Name",)  # type: ignore[assignment]
+    table_drop_narrow = "1"  # type: ignore[assignment]
+    table_room = "wide"  # type: ignore[assignment]
+
+
+def a_column() -> None:
+    assert_type(tables.TableColumn("Cost", css="num-col").kind, str)
+    assert_type(tables.TableColumn("Note", drop=2).drop, int)
+    tables.TableColumn("Note", drop="2")  # type: ignore[arg-type]
 
 
 def the_deployment() -> None:

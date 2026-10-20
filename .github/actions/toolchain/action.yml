@@ -21,19 +21,16 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        . ./scripts/toolchain.env
+        . ./tools/pipeline/toolchain.env
+        mise="$("$GITHUB_ACTION_PATH/mise-version.sh" mise.toml)"
         {
           # shellcheck disable=SC2086  # the version list is meant to split
           echo "oldest-python=$(printf '%s\n' $PYTHON_VERSIONS | head -1)"
-          echo "mise=$(sed -n 's/^min_version = "\(.*\)"$/\1/p' mise.toml)"
+          echo "mise=$mise"
         } >> "$GITHUB_OUTPUT"
-        # Nothing installs that mise.lock does not record. The CodeQL bundle is
-        # the local mirror of CI's CodeQL job and age belongs to Compose; neither is
-        # a gate of these jobs.
-        {
-          echo "MISE_LOCKED=1"
-          echo "MISE_DISABLE_TOOLS=github:github/codeql-action,age"
-        } >> "$GITHUB_ENV"
+        # Nothing installs that mise.lock does not record. The tools no gate of
+        # these jobs runs are lazy in mise.toml, so they are never fetched here.
+        echo "MISE_LOCKED=1" >> "$GITHUB_ENV"
 
     - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:

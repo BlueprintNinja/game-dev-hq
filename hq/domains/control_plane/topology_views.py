@@ -134,8 +134,10 @@ class TopologyView(PageMixin, TemplateView):
                 # lanes rather than inside its card.
                 "topology_detail": detail,
                 "topology_left_out": left_out,
-                # What "N of M shown" is out of: every card, the left-out ones too.
-                "topology_total": left_out + sum(len(items) for items in groups.values()),
+                # "N of M shown": the cards drawn, out of every card, the
+                # left-out ones too.
+                "topology_shown": (shown := sum(len(items) for items in groups.values())),
+                "topology_total": left_out + shown,
                 "topology_everything": bool(self.request.GET.get("all")) and not (active_lens or trace),
                 "topology_lenses": topology_lenses(),
                 "active_lens": active_lens,
@@ -199,7 +201,7 @@ class TopologyView(PageMixin, TemplateView):
         hops = dict(trace.hops) if trace else {}
         neighbors: dict[str, set[str]] = {node.id: set() for node in topology.nodes}
         # An edge is a verb with a direction. Collapsing it to an undirected
-        # neighbour set answers "is this related" and throws away "how" and
+        # neighbor set answers "is this related" and throws away "how" and
         # "which way", which is the only part an operator is actually reading.
         # Both ends get a row so a node can state its relationships from where
         # it stands, without the reader re-deriving the arrow.

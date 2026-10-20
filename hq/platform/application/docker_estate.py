@@ -12,17 +12,24 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
 from typing import Any
 
+lazy from django.urls import NoReverseMatch
+
 from hq.domains.control_plane.observations.portainer import IMAGE_KIND, short_id
 from hq.domains.control_plane.provider_adapters.portainer import CONTAINER_KIND
+lazy from hq.platform.application.routes import reverse
 
 from .facts import inventory_records
 from .finding_model import (
     CANNOT_EDIT_COMPOSE,
     FindingRule,
+    OperatorStep,
+    Remedy,
     built_findings,
     cannot_run_commands,
     machine_step,
 )
+lazy from .adoption import unmanaged
+lazy from .inventory import record_token
 
 IMAGE_BEHIND = "image-behind"
 IMAGE_UNTAGGED = "image-untagged"
@@ -32,7 +39,7 @@ def add(nodes, edges, resources, machine: Callable[[Any], str]) -> None:
     """Container facts on machines."""
 
     _image_facts(nodes, machine)
-    _unrecognised(nodes, machine)
+    _unrecognized(nodes, machine)
 
 
 def _add_fact(nodes, node_id: str, fact: tuple[str, str]) -> None:
@@ -41,14 +48,12 @@ def _add_fact(nodes, node_id: str, fact: tuple[str, str]) -> None:
         nodes[node_id] = replace(node, facts=(*node.facts, fact))
 
 
-def _unrecognised(nodes, machine) -> None:
+def _unrecognized(nodes, machine) -> None:
     """A container on a machine that no compose project declares, as its fact.
 
     The sweep did not adopt it, so it has no node of its own; its machine
     carries it, and a finding reads it from there.
     """
-
-    from .adoption import unmanaged
 
     for item in unmanaged():
         if item.adoptable or item.kind != CONTAINER_KIND:
@@ -56,7 +61,7 @@ def _unrecognised(nodes, machine) -> None:
         host = str(item.spec.get("host", ""))
         machine_id = machine(host)
         if machine_id:
-            _add_fact(nodes, machine_id, ("unrecognised-container", f"{item.spec.get('name', '')}@{host}"))
+            _add_fact(nodes, machine_id, ("unrecognized-container", f"{item.spec.get('name', '')}@{host}"))
 
 
 def _on(record: Mapping[str, Any], machine: Callable[[Any], str]) -> str:
@@ -131,7 +136,7 @@ def _parts(value: str) -> tuple[str, ...]:
     return container, host, reference, running, tagged, service
 
 
-def unrecognised_containers(estate: Any) -> tuple[dict[str, Any], ...]:
+def unrecognized_containers(estate: Any) -> tuple[dict[str, Any], ...]:
     """A container a sweep found that no compose project declares.
 
     Every container that belongs on a machine is created by a compose project,
@@ -140,17 +145,10 @@ def unrecognised_containers(estate: Any) -> tuple[dict[str, Any], ...]:
     container nobody declared must never look like one somebody did.
     """
 
-    from django.urls import NoReverseMatch
-
-    from hq.platform.application.routes import reverse
-
-    from .finding_model import Remedy
-    from .inventory import record_token
-
     found: list[dict[str, Any]] = []
     for node in estate.nodes():
         for key, value in node.facts:
-            if key != "unrecognised-container":
+            if key != "unrecognized-container":
                 continue
             name, _, host = value.rpartition("@")
             try:
@@ -165,9 +163,9 @@ def unrecognised_containers(estate: Any) -> tuple[dict[str, Any], ...]:
                 adopt_url = ""
             found.append(
                 {
-                    "rule": "unrecognised-container",
+                    "rule": "unrecognized-container",
                     "subject": node.id,
-                    "title": f"Unrecognised container {name} on {node.label}",
+                    "title": f"Unrecognized container {name} on {node.label}",
                     "severity": "serious",
                     "explanation": (
                         "No compose project started it, so HQ is not tracking it. "
@@ -258,8 +256,6 @@ def images_untagged(estate: Any) -> tuple[dict[str, Any], ...]:
 
 
 def _step(**fields: Any) -> Any:
-    from .finding_model import OperatorStep
-
     return OperatorStep(**fields)
 
 
@@ -277,10 +273,10 @@ def _recreate(container: str, service: str, host: str) -> tuple:
 # The rules this module raises, beside the detectors that decide them.
 RULES: tuple[FindingRule, ...] = (
     FindingRule(
-        "unrecognised-container",
+        "unrecognized-container",
         "A container no compose project started",
         "serious",
-        lambda estate: built_findings(unrecognised_containers(estate)),
+        lambda estate: built_findings(unrecognized_containers(estate)),
         operator_action=("Adopt it if you started it. Otherwise remove it on its machine."),
         no_help_reason=("HQ cannot remove a container it did not start."),
     ),

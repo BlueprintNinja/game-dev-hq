@@ -10,6 +10,8 @@ from .entity_links import EntityLink, entity_link
 from .infrastructure import declared_machines
 from .locate import Machines, host_of, machines_index, split_endpoint
 from .projection import read_once
+lazy from .known_hosts import operator
+lazy from .reach import is_documentation, network_of
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,8 +37,6 @@ class Origin:
     @property
     def parked(self) -> bool:
         """Whether the name points at a documentation address, where nothing answers."""
-
-        from .reach import is_documentation
 
         return not self.known and is_documentation(host_of(self.address))
 
@@ -69,8 +69,6 @@ class Origin:
         which is the case this property exists for.
         """
 
-        from .reach import network_of
-
         if self.known or split_endpoint(self.address)[1]:
             return False
         return network_of(host_of(self.address)) not in (
@@ -82,8 +80,6 @@ class Origin:
     @property
     def operator(self) -> str:
         """What a person calls whoever serves this, read off the name itself."""
-
-        from .known_hosts import operator
 
         return operator(self.address) if self.external else ""
 
@@ -136,8 +132,8 @@ class MachineLink:
     """A machine named on a card, and the page for it.
 
     Built from the origin and the machines the caller already holds. Looking the
-    machine up instead would be a catalogue read per service, which on a board
-    is a catalogue read per row.
+    machine up instead would be a catalog read per service, which on a board
+    is a catalog read per row.
     """
 
     name: str
@@ -190,7 +186,7 @@ class Whereabouts:
 
     Both are estate-wide readings that every address in a pass shares: the
     connections, the container sweep and the container declarations. Taken per
-    address, a catalogue would pay for all three once per name.
+    address, a catalog would pay for all three once per name.
 
     Read at most once each and only if asked, for the same reason as the
     certificates below: a dashboard listing no service resolves no address, and
@@ -307,8 +303,6 @@ def locate(
 def _is_loopback(address: str) -> bool:
     """Whether an address means "this machine", by the ranges rather than a name."""
 
-    from .reach import network_of
-
     return network_of(address) == "loopback"
 
 
@@ -397,7 +391,7 @@ def _load_answering() -> dict[tuple[str, Any], list[str]]:
 
     Built whole rather than asked per address. The same two tables answer every
     such question in a pass, and read per question they would dominate what a
-    service catalogue spends.
+    service catalog spends.
     """
 
     found: dict[tuple[str, Any], set[str]] = {}

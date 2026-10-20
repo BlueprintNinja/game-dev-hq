@@ -46,22 +46,27 @@ transitions from nothing, so every button fades in on load.
 (`OVERFLOW_WIDTHS`); `test_viewport_breakpoints_only_go_down`, a ceiling that
 only falls.
 
-**A table fits its box, at every width, by one mechanism.** No screen width
-is asked anywhere in the table primitive. A table takes its box's width and
-wraps. `tables.js` gives each column a floor, the least it can be and still be
-read (its own one-line width or a few words' worth, whichever is less; more
-for the column that names the row), and the browser lays the table out above
-those floors, taking room from the columns that have it to give. Only when
-the floors themselves do not fit does a column leave: first any marked
-`optional-col`, then from the far end; never the column that names the row,
-one whose heading is marked `key-col` (`TableColumn(..., css="key-col")` on a
-list view), or the closing figure of a table that marks none. What leaves is
-in the row's toggle. A table in a narrow box, a phone or half a page beside a
-chart, is marked by its box's width and gets roomier rows and holds back what
-is marked `narrow-more`. A column with nothing but dashes in every row is not
-drawn, and a column's minimum width is rounded up so a short word like "Runbook" is not split. A page says only which columns are key or optional;
-the rest is the table primitive's (`app.css`, `tables.js`). A table never
-stacks into cards and is not swiped through. A key/value table (row headers,
+**A table fits its box, at every width, from its HTML.** No screen width is
+asked anywhere in the table primitive: its region (`{% table_region %}`) is a
+size container, and what a table shows is decided by the stylesheet on first
+paint. A table takes its box's width and wraps, the browser sizing each column
+from what it holds. Each column that may leave has a rank, 1 first
+(`{% table_heading ... drop=N %}`; a list's are derived by `ranked`:
+`optional-col` first, then from the far end, never the column that names the
+row, one marked `key-col`, or the closing figure of a table that marks none).
+The region says how many ranks leave in a box under 1000px (`mid=`) and under
+640px (`narrow=`; a list view's `table_drop_mid` and `table_drop_narrow`), so
+each heading carries the widest box it leaves in (`data-drop-tier`) and its
+column goes there. What leaves is in the row's toggle. A table in a narrow
+box, a phone or half a page beside a chart, also gets roomier rows and holds
+back what is marked `narrow-more`. The server marks each body cell that says
+nothing (`data-blank`), and a column blank in every row is not drawn. Since a
+table fits, its region is no scroll box and its heading pins under the page's
+chrome; only a region declared a pane (`pane=True`: a height of its own, as a
+chart's data or the topology ledger, or a table sized to its content) or a
+chart's (`chart=True`) scrolls, pins its heading to its own edge, and takes
+focus. A drop rank in a region that counts no drops is refused at render. A
+table never stacks into cards and is not swiped through. A key/value table (row headers,
 no `thead`) sizes its label column to its longest label. Rows that belong to
 sections share one table as a `tbody` per group with a `.row-group` heading
 row, never two tables kept aligned by hand. Rows that belong under one row
@@ -78,27 +83,49 @@ beneath the row, each part under its column's name. It is the row's own
 content moved there and moved back, never a copy, so a control in it is still
 the one control. The row's own cells stay as they were, and the columns are
 held at their widths for as long as any row is open, so every other row keeps
-its place. The toggle stands in a gutter that every row of the table keeps,
-so names share one edge whether or not a given row opens.
+its place. Every row that can open has its toggle drawn by the server
+(`{% row_toggle %}`), and it shows only where the row holds something back
+now: a column that left with something in it, a `narrow-more` or `row-below`
+part, a fold, or a value `tables.js` found cut (`data-cut`). The toggle
+stands in a gutter that every row of the table keeps while any row opens, so
+names share one edge whether or not a given row opens. The gutter follows from
+the server's markup and the box's width alone; a cut value shows its toggle
+only in a gutter already kept, so nothing the script marks moves a name. In a
+narrow box every table whose rows the server made openable keeps its gutter,
+since touch has no hover title and a value cut there must still open.
+With no script a toggle opens nothing, so nothing is held back for one: every
+column and part stays, and the table is sized to its content inside its region.
 *Gates:* `test_a_wide_table_fits_a_phone_and_opening_a_row_moves_nothing`,
 `a_tables_names_share_one_edge_whether_or_not_a_row_opens`.
 
-**Every table sorts.** A list its server sorts has links in its headings.
-Any other table with headings gets the same control, looking the same, from
-`tables.js`, sorting
-the rows on the page: ascending, descending, then as they came. Amounts,
-dates and lengths of time sort as what they are; a cell may say its own value
-with `data-sort`. Sections keep their own rows. Nothing per table.
+**Every table sorts.** A list its server sorts has links in its headings
+(`table_heading sort=`). Any other table whose rows are worth sorting has the
+same control, looking the same, drawn as a button (`local_sort=rows|sortable`,
+or a row count where rows come in groups), and `tables.js` sorts the rows on
+the page: ascending, descending, then as they came. Amounts, dates and lengths
+of time sort as what they are; a cell may say its own value with `data-sort`.
+Sections keep their own rows. A table drawn by hand, with no declared
+headings, gets its buttons from `tables.js`.
 *Gate:* `test_any_table_sorts_by_a_heading`.
 
-**A table cuts only what has no room.** A long identifier is one line, cut
-with an ellipsis, and a run of links can fold behind "+3". `tables.js` then
-shows each whole wherever that leaves the table no taller and inside its box,
-so a cut is never a guess: it is there only when showing more would cost a
-line. A stacked list longer than four shows three and "+N more", since
-showing more always costs lines. A row that holds anything back gets one
-toggle that lifts every cut and opens every fold in it.
-*Gate:* `nothing_is_held_back_while_its_table_has_room`.
+**A table is laid out before any script runs.** A long identifier is one
+line, cut with an ellipsis at a share of its region's width
+(`--identifier-max`, in container units between a floor and a ceiling), its
+whole value in its title and in the open row. A region whose rows leave an
+identifier less of the row names it with `room=`: `shared` when the
+identifier sits beside wide columns (it gets little until the region is wide),
+`snug` when it sits beside other identifiers (each is held near one short
+length); a list view says it as `table_room`. Free text in a cell (a message,
+a record's words) is marked `cell-data` and breaks a run with no seam in it (a
+link, a digest) wherever it must, so it never holds its column wider than its
+box; an identifier in a prose column waits for the open row (`row-more`)
+rather than holding that column at its cap. A run of links longer than the count its template
+declares folds behind "+N", and a stacked list longer than four shows three
+and "+N more". A row that holds anything back gets one toggle that lifts every
+cut and opens every fold in it. Nothing is measured to lay a table out:
+`tables.js` asks only whether a value is cut (`data-cut`), which shows a
+toggle in a gutter already kept, and holds the columns still while a row is
+open or the rows are refreshed.
 
 A row's opening is its only disclosure: what is shown only once a row is open
 is marked `.row-more` (a word, a list item), or `.row-below` for a block,
@@ -196,7 +223,7 @@ controls all take their size from `--control-size`.
 **One menu.** `.overflow-menu` for "more actions", the nav dropdown for
 navigation. Every dropdown carries `data-menu`, which gives it the shared
 dismissal (outside click, Escape). Inside a menu every control is a plain row;
-a destructive one is only its colour.
+a destructive one is only its color.
 
 **The user menu says whose session it is first.** The person's picture (kept
 by HQ from sign-on, never loaded from the provider by a page), their name,
@@ -233,23 +260,26 @@ A count's plural has one owner too: `counted`, which spells a single noun
 through `labels.plural` ("2 entries"). An audit type's plural is
 `AuditLog.type_plural`: the model's `verbose_name_plural` where declared.
 
-**Colour comes from tokens.** No colour literal outside `@layer tokens`, so a
+**Color comes from tokens.** No color literal outside `@layer tokens`, so a
 theme is a set of token values and dark mode is not a second stylesheet.
 
 **Buttons.** Primary for the one thing a page is for; default for the rest;
 `ghost` for link-like actions that sit inline; `danger` in red text on the same
-surface as its neighbours, loud only in its confirmation.
+surface as its neighbors, loud only in its confirmation.
 
 **A queue row says what is wrong and holds what fixes it.** The queue is
 named "Needs you" wherever it appears. The queue page, the findings page, a
 thing's urgent problems and a domain's own attention list use one projection
 (`hq/platform/application/decisions.py`) and draw it as one table
 (`partials/_work_queue.html`, its rows `partials/_queue_rows.html`), so every
-row's dot, words and buttons share one edge. A row reads, in order:
+row's urgency, words and buttons share one edge. A row reads, in order:
 
-- how urgent it is, a dot in its tone whose tip says it in one set of words
-  (`decisions.URGENCY`), and the title, which states what is wrong and links
-  to the thing it is about;
+- the title and, only when it is urgent, the word "Urgent" after it in its
+  tone (the words are `decisions.URGENCY`; a row that needs attention carries
+  no mark, its word kept for a screen reader), which states
+  what is wrong and links to the thing it is about. The title is what a reader
+  presses, so it leads; a domain's heading, a family's name and their counts
+  read below it;
 - since when, where its owner knows (`Insight(since=...)`), and never a guess;
   how old the reading it is drawn from is (`Insight(observed_at=...)`). An
   out-of-date reading never asserts a live condition: its owner says what was
@@ -260,14 +290,17 @@ row's dot, words and buttons share one edge. A row reads, in order:
   Where the reader sorts their own queue, Dismiss or Restore ends the row.
 
 Closed, a row is those one or two lines. Everything taller is the row's
-`row-below`, opened by its toggle into the line beneath, the table's width:
-what was read that shows it (`Insight(facts=...)`), each label once with its
-values beside it; what to do, where a command or an instruction is a step,
+`row-below`, opened by its toggle into the line beneath, from the title's edge
+to the table's: what it means in full; what was read that shows it
+(`Insight(facts=...)`), each label once with its values beside it; what to do, where a command or an instruction is a step,
 one standing alone and several numbered; the reason it cannot be done from
 here, as a sentence and never as a step; and the pages that help look into
-it (`Insight(links=...)`), the topology's as icons with HQ's tooltip. On a
-phone the buttons wait there too, and Dismiss stays. A command is
-`partials/_command.html`, with its copy button in its corner. The dot is
+it (`Insight(links=...)`), the topology's as icons with HQ's tooltip. The
+buttons past the first two follow, in one place under the rest, and on a
+phone every button waits there, each the line's width, while Dismiss stays in
+the row as a mark. A row toggles only where opening it shows something more.
+A command is `partials/_command.html`, with its copy button in its corner.
+The word is
 `partials/_urgency_pill.html`: a Cmd- or Ctrl-click opens what raised it (the
 finding rule, its severity and the line its detector is defined at, or the
 domain and key of anything else), read from the code rather than written
@@ -418,8 +451,8 @@ it was asked. Without script the same button is a form post back to the page,
 which draws the control from what is stored, so a page loaded while the work is
 live says so and resumes following it. A job's panel (`_job_progress.html`) and
 the readings a page asks for when it opens (`_visit_refresh.html`) are the same
-ask drawn differently; one behaviour in `app.js` follows all three.
-*Gates:* `RequestNeverWaitsTests.test_asked_for_work_is_followed_by_one_script_behaviour`;
+ask drawn differently; one behavior in `app.js` follows all three.
+*Gates:* `RequestNeverWaitsTests.test_asked_for_work_is_followed_by_one_script_behavior`;
 `hq/platform/core/tests/test_action_budgets.py`.
 
 **A read is a fragment.** A part of a page that is fetched after the page,
@@ -462,7 +495,7 @@ is not polled, and a region that fails is asked less often.
 
 Script that needs a part calls `hqFragment.swap(region, {url})`; script that
 needs to ask again calls `hqEvery(work, {ms})`. After a swap the new content
-hears `hq:fragment`, which is where a behaviour binds to it.
+hears `hq:fragment`, which is where a behavior binds to it.
 *Gates:* `FragmentPrimitiveTests` (no other script reads a response as text,
 parses markup or keeps an interval; every named part is defined);
 `FragmentBrowserTests` (browser).
@@ -487,7 +520,7 @@ page and fails on one that writes.
 1. Find the primitive. Most pages are a head, a band or card of facts, and a
    table or list.
 2. If one almost fits, extend it in `app.css` and its partial, with a comment
-   saying what it now covers and why.
+   saying what it covers and why.
 3. A new container of content is a surface: add its selector to the surface
    list, write only its layout.
 4. A new state of a page (empty, failing, waiting, crowded) gets a fixture in

@@ -45,13 +45,13 @@ with it. A rollback by hand, to a release that already stood, keeps the
 schema the newer release left: nothing unapplies a migration. So a migration is
 one the release before it can run on (add a table or a column with a default,
 remove one only in a later release), or that rollback starts from a backup
-([Backup](Backup.md)). `scripts/host-boot-drill.sh` deploys a migrating
+([Backup](Backup.md)). `tools/pipeline/host-boot-drill.sh` deploys a migrating
 release that cannot serve and proves the previous one comes back on its schema.
 
 ### Checked once
 
 When a pull request merges, the push to `main` asks
-`scripts/proven-on-pr.sh` whether the pull request already proved it: its last
+`tools/pipeline/proven-on-pr.sh` whether the pull request already proved it: its last
 CI run passed, its image carries a `dev.severino.hq.tree` label equal to the
 pushed commit's tree, and it is signed by that run. With all three, Checks,
 Tests and Browser are skipped and Image promotes that image by digest to the
@@ -71,11 +71,15 @@ HQ's GitHub App posts one check, linked to the run behind it:
   admission, and marked live by the controller once production runs it, when
   its connection manages `github.delivery`.
 
-Why a run failed comes from `deploy/diagnoses.json`: `scripts/diagnose.py`
+Why a run failed comes from `deploy/diagnoses.json`: `tools/pipeline/ci_report.py`
 matches the failed job's log against it and prints only the catalog's words.
 A new failure is added there once, and named with its fix every time after.
 
 ### When a run fails
+
+`mise run annotations RUN_ID` prints the annotations of each failed job, one
+per line (level, `path:line`, message): they appear as soon as a step fails,
+before its log can be read.
 
 Every log is public, so each failure is reported at two levels:
 
@@ -86,8 +90,8 @@ Every log is public, so each failure is reported at two levels:
 | the host, `/var/log/severino-hq/` | the pull, sync, install and failed-health output, root-only | the host's own detail |
 
 Compose writes what it withholds to `WITHHELD_DIR`;
-`scripts/seal-failure-logs.sh` encrypts it with [age](https://age-encryption.org)
-to `FAILURE_LOG_RECIPIENT` in [`scripts/toolchain.env`](../scripts/toolchain.env).
+`tools/pipeline/seal-failure-logs.sh` encrypts it with [age](https://age-encryption.org)
+to `FAILURE_LOG_RECIPIENT` in [`tools/pipeline/toolchain.env`](../tools/pipeline/toolchain.env).
 `mise run failure-logs RUN_ID` opens it with the identity in
 `SEVERINO_FAILURE_LOG_IDENTITY`. To rotate, generate a pair with
 `age-keygen -pq`, store the identity, and replace the recipient; runs sealed
@@ -109,7 +113,7 @@ use mints an hour-long token for only what it does:
 | an extension's admission | `HQ_APP_KEY` on its `admission` environment, `main` only | Actions write here: start Compose |
 | Compose, Deploy and CI | `HQ_APP_KEY` and `HQ_APP_CLIENT_ID` repository secrets | Actions and Contents read; Checks write |
 
-`scripts/wire-github-app.py` reads the key from 1Password and sets those
+`mise run wire-github-app` reads the key from 1Password and sets those
 secrets on this repository and each extension's `admission` environment,
 through standard input. The client ID is a secret too: a variable is state
 outside the repository that changes what a build does.
@@ -132,7 +136,7 @@ fingerprint, then delete the old key on GitHub.
 | `/usr/local/lib/severino-hq-verifier/cosign` | root's pinned cosign, outside the tree a deploy replaces | `hq-host install` |
 | `/etc/severino-hq/host.json` | the host's own values ([`deploy/host.example.json`](../deploy/host.example.json)) | the operator |
 | `/etc/systemd/system/` | every unit and drop-in under `deploy/systemd`, plus the drop-ins `hq-host bootstrap` renders | `hq-host install`, `hq-host bootstrap` |
-| `/etc/sudoers.d/severino-hq-deploy` | the runner's one rule: `deploy-image.sh` | `hq-host bootstrap` |
+| `/etc/sudoers.d/severino-hq-deploy` | the runner's one rule: `hq-host deploy` with one digest-pinned composition, and `scripts/deploy-image.sh`, which execs it, until the deploy job calls `hq-host` itself | `hq-host bootstrap` |
 | `/etc/credstore.encrypted/` | the Connect token, as an encrypted systemd credential | the operator ([Secrets](Secrets.md)) |
 | `/var/lib/severino-hq/release` | the digest-pinned image the web unit runs | a deploy |
 | `/run/severino-hq-secrets/` | rendered credentials, on a root-only `noswap` tmpfs (`run-severino\x2dhq\x2dsecrets.mount`) | `hq-secrets` |
@@ -156,7 +160,9 @@ from the tree, and every unit and the deploy call it.
 | `sync IMAGE` | replaces the tree with the image's, refusing a unit that names a path the tree lacks |
 | `verify` | reports where the host differs from its release: tree, units, and anything retired (`severino-hq-script-drift.timer`, daily) |
 | `bootstrap` | renders the drop-ins and sudo rule `host.json` decides |
-| `backup` | runs `scripts/backup.sh` over HQ's volumes, where docker says they are |
+| `backup` | snapshots and archives HQ's volumes, where docker says they are ([Backup](Backup.md)) |
+| `upgrade ARGS` | moves one compose service to a pinned image, through its own sudo rule ([Container upgrades](#container-upgrades)) |
+| `check` | the host's half of `mise run preflight`, as any account and read-only: the runner's sudo rule, `verify` (or the drift unit's run since the release was installed), every program a sudo rule names is root's alone, the established units, free disk. Preflight builds it from HEAD for the host's platform and runs it from a temporary directory over SSH, so the release being checked is the one checking. Exits 0 ready, 1 a fault, 3 unverified |
 
 ### Units
 
@@ -181,8 +187,8 @@ A unit that fails is reported to HQ with no wiring of its own:
 timers and paths) sets `OnFailure=severino-hq-job@units.read.service` for
 every unit whose name begins `severino-hq-`. The controller and the
 `units.read` job carry an empty drop-in of that name, because each would
-otherwise restart itself on failure. `scripts/test-systemd-units.sh` holds the
-shipped units to those rules.
+otherwise restart itself on failure. `controller/host/units_rules_test.go`
+holds the shipped units to those rules.
 
 ## A deploy
 
@@ -231,11 +237,92 @@ directory is not its account's alone. The design is in
 
 [Install](Install.md) brings up a new host, step by step: Connect, the
 encrypted credential, the runner, `host.json`, the vault items and the first
-start. `scripts/host-boot-drill.sh` does the web unit's part of it on every
+start. `tools/pipeline/host-boot-drill.sh` does the web unit's part of it on every
 image CI builds.
 
 Every later change arrives through Deploy. Rerun `hq-host bootstrap` when
 `host.json` changes.
+
+## Configuration
+
+Every setting is a value in [`hq/config/settings.py`](../hq/config/settings.py).
+The environment carries only what differs per installation or is secret, and
+these are all the variables HQ reads. An installer sets the *installer* rows on
+the application-environment item ([Install](Install.md#7-create-the-application-environment));
+the image, the composition and `hq-host run-web` set the *platform* rows; the
+*development* rows are for a checkout, its gates and CI. A real environment
+variable wins over the rendered file, so a platform row set on the item
+changes nothing. A secret marked `_FILE` may instead be read from the file
+that variable names. `test_settings_env.py` holds this table to the code.
+
+| Variable | Set by | Does |
+| :--- | :--- | :--- |
+| `DJANGO_SECRET_KEY` | installer | signs sessions; required, HQ will not start without it |
+| `DJANGO_ALLOWED_HOSTS` | installer | every hostname browsers and clients use, comma-separated; required, anything else gets 400 |
+| `DJANGO_CSRF_TRUSTED_ORIGINS` | installer | each full origin the browser uses, such as `https://hq.example.com`; sign-in through a proxy fails without it |
+| `DJANGO_BEHIND_TLS_PROXY` | installer | `1`: trust the proxy's `X-Forwarded-Proto` and redirect plain HTTP to `SEVERINO_SITE_HOST` |
+| `DJANGO_DEBUG` | installer | `0` in production; `1` turns on development's defaults |
+| `DJANGO_SESSION_COOKIE_SECURE` | installer | the session cookie only over HTTPS; on unless `DJANGO_DEBUG` |
+| `DJANGO_CSRF_COOKIE_SECURE` | installer | the CSRF cookie only over HTTPS; on unless `DJANGO_DEBUG` |
+| `DJANGO_HSTS_SECONDS` | installer | how long browsers insist on HTTPS; a year by default, `0` only while TLS is not working |
+| `DJANGO_TIME_ZONE` | installer | the time zone dates are shown in, such as `America/New_York`; `America/Chicago` by default |
+| `SEVERINO_SITE_NAME` | installer | the name in page titles and the header |
+| `SEVERINO_SITE_HOST` | installer | the canonical host for printed pages, exports and the HTTPS redirect; derived from the two lists above when unset |
+| `SEVERINO_TRUSTED_NETWORKS` | installer | who may reach HQ at all, as CIDR ranges; loopback and Tailscale's ranges by default |
+| `SEVERINO_TRUSTED_PROXIES` | installer | the proxy's exact address, the only source whose `X-Forwarded-For` HQ believes; loopback by default |
+| `SEVERINO_SECRET_STORE_KEY`, `SEVERINO_SECRET_STORE_KEY_FILE` | installer | 32 characters or more; seals the secrets an operator hands HQ ([Secrets](Secrets.md#severino_secret_store_key)); unset, HQ holds none |
+| `SEVERINO_POSTURE` | installer | `advanced` lists each unmet check of HQ's standard in Needs you ([Posture](Posture.md)) |
+| `SEVERINO_OIDC_ENABLED` | installer | `1` signs in through the identity provider and closes the password form |
+| `SEVERINO_OIDC_ISSUER` | installer | the identity provider's issuer URL |
+| `SEVERINO_OIDC_CLIENT_ID` | installer | HQ's client at the identity provider |
+| `SEVERINO_OIDC_CLIENT_SECRET` | installer | that client's secret |
+| `SEVERINO_OIDC_ALLOWED_GROUPS` | installer | the groups whose members may sign in, comma-separated |
+| `SEVERINO_OIDC_ALLOWED_EMAILS` | installer | addresses that may sign in, honored only when the provider marks them verified; setting it requests the `email` scope |
+| `SEVERINO_OIDC_CREATE_USER` | installer | whether a first sign-in creates the account; on by default |
+| `SEVERINO_PASSWORD_LOGIN_ENABLED` | installer | break-glass: `1` reopens the password form beside SSO; follows `SEVERINO_OIDC_ENABLED` when unset |
+| `SEVERINO_API_RESOURCE` | installer | the identity provider's API audience; empty disables the machine API and MCP |
+| `SEVERINO_MCP_ALLOWED_HOSTS` | installer | the host names MCP clients connect to; empty disables MCP |
+| `SEVERINO_MCP_ALLOWED_NETWORKS` | installer | the networks MCP answers; Tailscale's ranges by default |
+| `SEVERINO_MCP_ALLOWED_ORIGINS` | installer | browser origins MCP accepts; none by default |
+| `SEVERINO_MCP_ENABLE_WRITES` | installer | `1` lets an agent make ordinary writes |
+| `SEVERINO_MCP_ENABLE_DOC_SYNC` | installer | `1` lets an agent mirror the documentation index, without other writes |
+| `SEVERINO_MCP_ENABLE_INFRASTRUCTURE` | installer | `1` lets an agent declare infrastructure |
+| `SEVERINO_INFRASTRUCTURE_ENABLE_PUBLIC_DNS` | installer | `1` lets public DNS declarations reconcile |
+| `SEVERINO_DASHBOARD_LINKS` | installer | extra dashboard links, as a JSON list of `{"label", "sub", "href"}` |
+| `HQ_CONTROLLER_ID` | installer | the installation a sweep files its findings under; the machine's name when unset |
+| `CONTENT_INDEX_URL` | installer | a public site's content index to sync; unset turns the sync off |
+| `CONTENT_INDEX_PROJECT_SLUG` | installer | the project the index belongs to, when its public URL does not say |
+| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_ID_FILE` | installer | the Cloudflare Access service token's ID the index sits behind |
+| `CF_ACCESS_CLIENT_SECRET`, `CF_ACCESS_CLIENT_SECRET_FILE` | installer | that token's secret |
+| `CLOUDFLARE_D1_DATABASE_NAME` | installer | which D1 database is the contact inbox, when more than one holds the contact table |
+| `SEVERINO_APP_ENV_PATH` | platform | the rendered application environment, which settings load into every process |
+| `SEVERINO_DATABASE_PATH` | platform | the SQLite database; HQ will not start without it |
+| `SEVERINO_MEDIA_ROOT` | platform | where uploads are kept |
+| `SEVERINO_EXPORTS_ROOT` | platform | where exports are written |
+| `DJANGO_STATIC_ROOT` | platform | the collected static tree, built into the image |
+| `SEVERINO_HQ_SOURCE` | platform | the repository this build came from |
+| `SEVERINO_HQ_REVISION` | platform | the commit this build is |
+| `SEVERINO_HQ_PLUGINS` | platform | the installed extensions' manifests, as `package.module:PluginManifest` entries |
+| `SEVERINO_HQ_PLUGIN_LOCK` | platform | the composition's signed lock of admitted extensions |
+| `SEVERINO_HQ_PLUGIN_POLICY_SHA256` | platform | the digest of the admission policy the lock was made under |
+| `SEVERINO_HQ_REQUIRE_PLUGIN_ADMISSION` | platform | whether extensions must be admitted; on unless `DJANGO_DEBUG` when unset |
+| `SEVERINO_BRIDGE_SOCKET` | platform | the Unix socket the controller bridge is served on; unset serves none |
+| `SEVERINO_CONTROLLER_DOORBELL` | platform | the file HQ touches when it queues controller work |
+| `SEVERINO_SCHEMA_SNAPSHOT` | platform | where boot keeps a copy of the database before migrating it |
+| `SEVERINO_LOG_LEVEL` | development | a standard Python log level; `INFO` by default |
+| `DJANGO_TEMPLATE_CACHE` | development | whether rendered templates are cached; on unless `DJANGO_DEBUG` |
+| `DJANGO_WHITENOISE_AUTOREFRESH` | development | serves static files from the source trees, uncached; refused with `DJANGO_DEBUG` off in a deployment check |
+| `SEVERINO_DEBUG_TOOLBAR` | development | `1` with `DJANGO_DEBUG` shows Django Debug Toolbar |
+| `SEVERINO_DEBUG_TOOLBAR_IPS` | development | who sees the toolbar; loopback by default |
+| `SEVERINO_CONTROLLER_HEARTBEAT` | development | where HQ records that the controller reached it; beside the database when unset |
+| `SEVERINO_ACTIVITY_MARKER` | development | where HQ marks itself in use; beside the database when unset |
+| `SEVERINO_TEST_DATABASE_PATH` | development | the suite's database file; one per run in the temporary directory by default |
+| `SEVERINO_TEST_MARKERS` | development | the directory a test run keeps the controller's markers in |
+| `SEVERINO_TEST_BUILDS` | development | the directory a test run builds programs into |
+| `SEVERINO_TEST_LEAK_LEDGER` | development | the file parallel test workers record leaked resources in |
+| `HQ_BROWSER_ENGINE` | development | the browser gates' engine: `webkit` by default, `chromium` or `firefox` |
+| `HQ_BROWSER_CHANNEL` | development | a Playwright browser channel for that engine |
+| `HQ_API_RECORD_EXAMPLES` | development | `1`, with `--parallel 1`, writes the API responses a run receives to `openapi-examples.json` |
 
 ## Network exposure
 
@@ -265,9 +352,9 @@ cannot rewrite its own remote authorization.
 
 ## Container upgrades
 
-`scripts/upgrade-container.sh` is the program an upgrade plan in HQ
-describes. It runs as root for another account, so it trusts nothing that
-account passes beyond naming the upgrade:
+`hq-host upgrade` ([`controller/host/upgrade`](../controller/host/upgrade))
+is the program an upgrade plan in HQ describes. It runs as root for another
+account, so it trusts nothing that account passes beyond naming the upgrade:
 
 - The stack is a directory directly under `/opt/apps`, not a symlink. The
   directory, its compose file, any override and any `.env` are owned by root
@@ -284,16 +371,22 @@ the digest in the stack's compose override, recreates the service and
 verifies it stays up for a settle window. Any failure restores the override
 and the data. It is idempotent by operation id and prints one JSON result:
 exit 0 kept, 3 rolled back, 2 refused or unchanged, 1 failed and not put back.
-It needs Docker Compose 2.24.4 or later; `scripts/test-upgrade-container.sh`
-drills it.
+It needs Docker Compose 2.24.4 or later, `tar`, and Linux.
 
 A machine runs it only through a sudo rule for that one program with an
 upgrade's arguments, as a regular expression (sudo 1.9.10 or later); the plan
 shows the rule and how to check it. The rule is only worth having if that
-account cannot already reach Docker. HQ's own host has the helper in its tree;
-any other machine needs its own root-owned copy, checked against the digest the
-plan shows. HQ does not yet queue an upgrade to another machine, so the helper
+account cannot already reach Docker. HQ's own host has `hq-host` in its tree.
+Any other machine needs its own root-owned copy: the plan's fetch step takes
+it from the composed image HQ runs, by digest, after `cosign` verifies the
+compose workflow's signature, and stops if the image's platform is not the
+machine's. HQ does not yet queue an upgrade to another machine, so the helper
 is run by hand with the plan's values.
+
+A rule written before the helper moved into `hq-host` names
+`scripts/upgrade-container.sh`, which now only execs `hq-host upgrade`. Re-run
+the plan's allow step on each machine once to write the new rule; the script
+goes when no rule names it.
 
 ## Verifying
 

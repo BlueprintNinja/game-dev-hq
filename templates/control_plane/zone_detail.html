@@ -48,7 +48,7 @@ four domains behind a click and then need a second one to go anywhere.
 <div class="control-summary">
   {% comment %}
   Each card is contributed by whatever owns the knowledge behind it: the
-  service catalogue, the certificate registry, the records themselves. This
+  service catalog, the certificate registry, the records themselves. This
   template knows there are cards, not what they are made of, so an insight
   added later renders without an edit here.
 
@@ -99,7 +99,7 @@ four domains behind a click and then need a second one to go anywhere.
   {% endif %}
 </div>
 
-{% if zone.policy %}{% include "control_plane/_zone_records.html" with rows=zone.routing zone=zone public_dns_enabled=public_dns_enabled empty_message="None of this domain's records sends traffic anywhere. They are all below." %}{% else %}{% include "control_plane/_zone_records.html" with rows=zone.routing zone=zone public_dns_enabled=public_dns_enabled %}{% endif %}
+{% if zone.policy %}{% include "control_plane/_zone_records.html" with rows=zone.routing zone=zone public_dns_enabled=public_dns_enabled label="Records that send traffic" empty_message="None of this domain's records sends traffic anywhere. They are all below." %}{% else %}{% include "control_plane/_zone_records.html" with rows=zone.routing zone=zone public_dns_enabled=public_dns_enabled label="Records that send traffic" %}{% endif %}
 
 {% comment %}
 Verification strings and issuance rules, folded away. A domain apex answers
@@ -110,7 +110,7 @@ zone at the top of the page.
 {% if zone.policy %}
   <details class="control-diagnostics zone-policy">
     <summary>Policy and verification records ({{ zone.policy|length }})</summary>
-    {% include "control_plane/_zone_records.html" with rows=zone.policy zone=zone public_dns_enabled=public_dns_enabled %}
+    {% include "control_plane/_zone_records.html" with rows=zone.policy zone=zone public_dns_enabled=public_dns_enabled label="Policy and verification records" drop_mid=1 %}
   </details>
 {% endif %}
 

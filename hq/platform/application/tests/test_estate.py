@@ -23,6 +23,7 @@ from hq.platform.core.models import AuditLog
 
 from ..attention import infrastructure, tailnet
 from ..command_center import command_center
+from ..connection_lifecycle import Lifecycle
 from ..estate import Estate, attention as estate_attention, cards, estate_reading
 from ..glance import dashboard_panels
 from ..inventory_testing import store
@@ -320,7 +321,7 @@ class EstateCardTests(TestCase):
         with projection_scope():
             found = estate_reading().connections
 
-        self.assertEqual([(item.ref, item.state) for item in found], [("example-cf", "refused")])
+        self.assertEqual([(item.ref, item.state) for item in found], [("example-cf", Lifecycle.REVOKED)])
 
 
 class EdgeCertificateExpiryTests(TestCase):
@@ -642,7 +643,7 @@ class PublicAddressTests(TestCase):
     def test_the_machine_page_names_the_holder(self):
         store(
             "registry.address",
-            {"address": "203.0.113.7", "organisation": "Example Hosting", "read_at": timezone.now().isoformat()},
+            {"address": "203.0.113.7", "organization": "Example Hosting", "read_at": timezone.now().isoformat()},
         )
         user = get_user_model().objects.create_superuser("operator", password="x" * 20)
         self.client.force_login(user)
@@ -780,7 +781,7 @@ class EstateQueryBudgetTests(TestCase):
         self.assertEqual(small, large)
 
     def test_the_estate_reads_what_the_dashboard_already_read(self):
-        """Every catalogue it reads is shared with the queue in one projection."""
+        """Every catalog it reads is shared with the queue in one projection."""
 
         self.estate_of(3)
         with_estate = self.snapshot_queries()

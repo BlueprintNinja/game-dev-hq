@@ -11,9 +11,10 @@ from hq.domains.control_plane.provider_adapters.portainer import CONTAINER_KIND
 from ..capabilities import execute_capability
 from ..finding_model import FindingRule
 from ..findings import RULES
-from ..infrastructure import NotFoundError, PolicyError
+from ..infrastructure import PolicyError
 from ..inventory_testing import store
 from ..policy_fixes import policy_without_empty_groups, request_empty_groups_removal
+from ..record_errors import RecordNotFound
 from ..security import AuthorizationError, Capability, Principal, cli_principal, mcp_principal
 from .markup import elements, with_class
 from .test_approvals import POLICY_KEY, an_operator, declare_policy
@@ -52,7 +53,7 @@ class EveryRuleSaysHowTests(TestCase):
     def test_every_rule_declares_one(self):
         for rule in RULES:
             self.assertTrue(rule.operator_action.strip(), rule.name)
-            self.assertNotIn("—", rule.operator_action, rule.name)
+            self.assertNotIn("\u2014", rule.operator_action, rule.name)
 
     def test_a_finding_without_its_own_action_carries_the_rules(self):
         tailnet_connection()
@@ -153,7 +154,7 @@ class RemoveEmptyGroupsCapabilityTests(TestCase):
             spec={"domain": "a.example.com", "answer": "192.0.2.1"},
         )
         for key in ("missing", "example-rewrite"):
-            with self.subTest(key=key), self.assertRaises(NotFoundError):
+            with self.subTest(key=key), self.assertRaises(RecordNotFound):
                 request_empty_groups_removal(None, principal=cli_principal(), current_key=key)
 
 
@@ -213,7 +214,7 @@ class ProductionFindingsTests(TestCase):
             },
         )
 
-        (finding,) = raised("unrecognised-container")
+        (finding,) = raised("unrecognized-container")
 
         self.assertIn("docker rm -f example-leftover", steps_text(finding))
         self.assertTrue(any(remedy["label"] == "Adopt it" for remedy in finding["remedies"]))

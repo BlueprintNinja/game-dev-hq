@@ -23,6 +23,7 @@ from django.utils.timezone import now
 from hq.domains.control_plane.dns_lookup import LookupUnavailable, registry, resolve
 from hq.domains.control_plane.names import normalized_hostname
 from hq.platform.core.outbound import allowed
+lazy from hq.domains.control_plane.models import AddressReading
 
 from .projection import iso
 from .reach import is_documentation, is_public, network_of
@@ -39,7 +40,7 @@ HOSTNAME = re.compile(
 
 # The types HQ asks for, in the order a person reads them. The resolver matches
 # these case-sensitively and answers an unknown one with an empty list rather
-# than an error, so an unrecognised type would be indistinguishable from a name
+# than an error, so an unrecognized type would be indistinguishable from a name
 # with no records. Fixing the set here means that cannot happen.
 RECORD_TYPES = ("A", "AAAA", "CNAME", "MX", "TXT", "NS", "SOA", "CAA")
 
@@ -56,7 +57,7 @@ class AddressCommand:
     """An address to ask the public registries about.
 
     ``refresh`` asks again rather than reading the stored answer. The default
-    is the stored one: an allocation moves between organisations rarely and a
+    is the stored one: an allocation moves between organizations rarely and a
     PTR record changes when somebody reconfigures a network, so re-asking per
     page load spends a stranger's rate limit to hear the same thing, and
     discloses, every time, which addresses HQ is interested in.
@@ -114,7 +115,7 @@ def entity_name(payload: dict, role: str) -> str:
 
 
 def _registrant(payload: dict) -> str:
-    """The organisation an RDAP entity list names as holding the allocation."""
+    """The organization an RDAP entity list names as holding the allocation."""
 
     return entity_name(payload, "registrant")
 
@@ -128,7 +129,7 @@ def allocation_of(held: dict) -> dict[str, Any]:
         if isinstance(item, dict)
     ]
     return {
-        "organisation": _registrant(held),
+        "organization": _registrant(held),
         "name": str(held.get("name") or ""),
         "handle": str(held.get("handle") or ""),
         "country": str(held.get("country") or ""),
@@ -149,12 +150,10 @@ def look_up_name(
     command: NameCommand,
     *,
     principal: Principal,
-    expected_updated_at: str | None = None,
     resolver: Callable[..., dict] | None = None,
 ) -> dict[str, Any]:
     """What a resolver outside this network returns for a name."""
 
-    del expected_updated_at
     principal.require(Capability.LOOK_UP_PUBLIC_RECORDS)
     wanted = normalized_hostname(command.name or "")
     if not wanted or not HOSTNAME.match(wanted):
@@ -208,8 +207,6 @@ def _address_answer(command: AddressCommand, *, principal: Principal) -> tuple[A
     when only the registries could say.
     """
 
-    from hq.domains.control_plane.models import AddressReading
-
     principal.require(Capability.LOOK_UP_PUBLIC_RECORDS)
     try:
         parsed = ip_address(str(command.address or "").strip())
@@ -239,7 +236,6 @@ def look_up_address(
     command: AddressCommand,
     *,
     principal: Principal,
-    expected_updated_at: str | None = None,
     resolver: Callable[..., dict] = resolve,
     allocations: Callable[..., dict] = registry,
 ) -> dict[str, Any]:
@@ -255,9 +251,6 @@ def look_up_address(
     there.
     """
 
-    from hq.domains.control_plane.models import AddressReading
-
-    del expected_updated_at
     parsed, known = _address_answer(command, principal=principal)
     if known is not None and (not command.refresh or not is_public(str(parsed))):
         return known

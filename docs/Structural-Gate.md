@@ -44,10 +44,9 @@ paths and missing Go graph symbols fail the classification command. Unresolved o
 unsupported executable patterns remain in the similarity gate; they do not become
 an inferred exemption. Typed NPM projection loops remain gated in this iteration.
 
-Run `go build -o /tmp/structural-inspector scripts/structural_go.go`, then
-`STRUCTURAL_INSPECTOR=/tmp/structural-inspector python3 scripts/test_structural_classify.py`
-for focused adversarial tests. `STRUCTURAL_REVIEW_ROOT` optionally adds read-only
-checks of the actual reviewed declaration, generated, delegation and NPM pairs.
+The inspector is `controller/cmd/structural-inspector`, held by the
+controller's gate like the rest of its module. The adversarial tests are
+`mise run checks:source tools.structural`, which builds it.
 
 ## Asking the graph
 
@@ -59,7 +58,12 @@ With the repository indexed in a code knowledge graph, ask:
 | Hidden O(n²)? | `MATCH (f) WHERE (f:Function OR f:Method) AND f.linear_scan_in_loop >= 1 RETURN f.qualified_name, f.linear_scan_in_loop` | every hit bounded by a fixed or small input |
 | Did I tangle the call graph? | `get_architecture(aspects: ["cycles"])` | no new confirmed cycle |
 
-Write the queries exactly as given, and mind two traps in this engine.
+Write the queries exactly as given, and mind the traps in this engine. The
+generated `*.gen.go` files are near-duplicates of each other by design, so the
+pair query returns thousands of rows until it is scoped positively to the
+paths under review. The graph cannot answer "what has no callers": an `OPTIONAL
+MATCH` comes back empty and `max_degree` counts both directions, so dead code
+is found by diffing the defined names against the referenced ones with `rg`.
 `is_test` is **not** reliable: test classes carry `is_test: false`, so a filter
 on it silently counts the whole suite. And `NOT <prop> CONTAINS "..."` returns
 **no rows at all** rather than the complement, so a negated filter reads as a

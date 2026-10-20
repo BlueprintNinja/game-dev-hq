@@ -16,7 +16,6 @@ from hq.platform.application.findings import findings as application_findings
 from hq.platform.application.registry import audit_registry as audit_application_registry
 from hq.platform.application.reports import export_year_summary as export_application_year_summary
 from hq.platform.application.resources import (
-    ResourceNotFound,
     describe_resources as describe_application_resources,
     get_resource as get_application_resource,
     list_resource as list_application_resource,
@@ -24,10 +23,6 @@ from hq.platform.application.resources import (
 from hq.platform.application.security import Capability
 from hq.platform.application.topology import topology as application_topology
 from hq.platform.mcp.identity import current_principal
-
-
-class NotFoundError(ValueError):
-    """A requested HQ object does not exist."""
 
 
 def describe_capabilities() -> dict[str, Any]:
@@ -83,14 +78,19 @@ def list_connections() -> dict[str, Any]:
     return list_application_connections(principal=current_principal())
 
 
-def get_findings(rule: str = "") -> dict[str, Any]:
+def get_findings(rule: str = "", severity: str = "", limit: int | None = None) -> dict[str, Any]:
     """What HQ currently claims is wrong, with evidence and suggested remedies.
 
     Each remedy names an existing capability and target; run one with
     `execute_capability`. A remedy absent means this principal cannot run it.
+    ``severity`` is a floor (``attention`` also returns ``serious``) and
+    ``limit`` caps how many come back, most severe first; ``summary`` still
+    counts them all and says whether any were held back.
     """
 
-    return application_findings(principal=current_principal(), rule=rule.strip())
+    return application_findings(
+        principal=current_principal(), rule=rule.strip(), severity=severity.strip(), limit=limit
+    )
 
 
 def get_topology(
@@ -115,19 +115,24 @@ def get_topology(
     )
 
 
-def list_resource(name: str, filters: dict[str, Any] | None = None) -> dict[str, Any]:
-    """List any registered resource with schema-validated filters."""
+def list_resource(name: str, filters: dict[str, Any] | None = None, fields: list[str] | None = None) -> dict[str, Any]:
+    """List any registered resource with schema-validated filters.
 
-    return list_application_resource(name, filters, principal=current_principal(), strict=True)
+    ``fields`` is a field mask read in each item: ``name`` keeps that whole value and
+    ``runs.status`` keeps only ``status`` inside it, in every element of a list.
+    """
+
+    return list_application_resource(name, filters, principal=current_principal(), strict=True, fields=fields)
 
 
-def get_resource(name: str, identifier: str | int) -> dict[str, Any]:
-    """Get one record from any registered addressable resource."""
+def get_resource(name: str, identifier: str | int, fields: list[str] | None = None) -> dict[str, Any]:
+    """Get one record from any registered addressable resource.
 
-    try:
-        return get_application_resource(name, identifier, principal=current_principal(), strict=True)
-    except ResourceNotFound as exc:
-        raise NotFoundError(exc.reason) from exc
+    ``fields`` is a field mask: ``observed_at`` keeps that whole value and
+    ``items.waiting`` keeps only ``waiting`` in every element of ``items``.
+    """
+
+    return get_application_resource(name, identifier, principal=current_principal(), strict=True, fields=fields)
 
 
 def _reader() -> None:

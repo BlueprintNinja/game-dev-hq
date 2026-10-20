@@ -13,9 +13,12 @@ from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException
 from starlette.staticfiles import StaticFiles
 from whitenoise.storage import CompressedManifestStaticFilesStorage
+lazy from django.contrib.auth.decorators import login_not_required
+lazy from django.http import HttpResponsePermanentRedirect
+lazy from django.templatetags.static import static
 
 # A quoted string (kept whole, so a "/*" in one is not a comment) or a comment.
-# A comment that opens "/*!" is a licence, and is kept.
+# A comment that opens "/*!" is a license, and is kept.
 _CSS_STRING_OR_COMMENT = re.compile(r"""("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|/\*(?!!).*?\*/""", re.DOTALL)
 
 
@@ -73,18 +76,21 @@ def content_named(path: str) -> bool:
 
 
 def accepts_gzip(scope) -> bool:
-    """Whether the request's Accept-Encoding takes gzip (RFC 9110, section 12.5.3)."""
+    """Whether the request's Accept-Encoding takes gzip (RFC 9110, section 12.5.3).
 
+    gzip named outright decides, wherever it stands; ``*`` speaks only for a
+    coding the header does not name. A weight that is not a number refuses.
+    """
+
+    weights: dict[str, float] = {}
     for offer in Headers(scope=scope).get("accept-encoding", "").lower().split(","):
         coding, _, weight = offer.partition(";")
-        if coding.strip() not in ("gzip", "*"):
-            continue
         quality = weight.strip().removeprefix("q=")
         try:
-            return float(quality or 1) > 0
+            weights[coding.strip()] = float(quality or 1)
         except ValueError:
-            return False
-    return False
+            weights[coding.strip()] = 0
+    return weights.get("gzip", weights.get("*", 0)) > 0
 
 
 class CachedStaticFiles(StaticFiles):
@@ -157,10 +163,6 @@ def root_icon(name: str):
     links (``/favicon.ico``, iOS's ``/apple-touch-icon.png``): a permanent
     redirect to the collected file, so each client asks once. Open before sign
     in, since a browser asks on the sign-in page too."""
-
-    from django.contrib.auth.decorators import login_not_required
-    from django.http import HttpResponsePermanentRedirect
-    from django.templatetags.static import static
 
     @login_not_required
     def view(request):

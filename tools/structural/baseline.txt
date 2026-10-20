@@ -1,0 +1,2 @@
+# Structural baseline for `mise run checks:structural`: each near-duplicate
+# pair outside tests. Pairs only leave. Rewrite with --record.

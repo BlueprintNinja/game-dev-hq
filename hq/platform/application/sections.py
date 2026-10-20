@@ -12,13 +12,14 @@ renders host and extension cards through one loop and a new section needs no
 template change to appear.
 
 A section with nothing to report returns no card. That is the whole of the
-"dormant section" behaviour: a section carrying no data stops occupying a tile
+"dormant section" behavior: a section carrying no data stops occupying a tile
 on the page checked every day, and lights up on its own the moment it has
 something to say. No flag, no configuration, no decision to revisit.
 """
 
 from decimal import Decimal
 from typing import Any
+lazy from datetime import timedelta
 
 from django.conf import settings
 from django.db.models import Count, Q, Sum
@@ -33,6 +34,8 @@ from .derivations import passed, today as local_today
 from .money import money
 from .projection import read_once
 from .ui import counted
+lazy from .github_profile import accounts, profile, profiles
+lazy from .timestamps import moment
 
 Card = dict[str, Any]
 ZERO_MONEY = Decimal("0.00")
@@ -213,7 +216,7 @@ def _deductible(reading: dict[str, Any]) -> str:
 
 # ----- Recent rows -----------------------------------------------------------
 #
-# Each section decides which of its own fields summarise one of its records,
+# Each section decides which of its own fields summarize one of its records,
 # and how many of them a glance is worth. Held here beside the querysets they
 # read, so a field added to a summary is one edit in the section that owns it.
 
@@ -277,11 +280,6 @@ def watching() -> tuple[Card, ...]:
     """What is new in what you watch: advisories published in the last month,
     else releases. HQ has one operator, so the linked account is theirs; with
     more than one there is no single "you" and the card stays away."""
-
-    from datetime import timedelta
-
-    from .github_profile import accounts, profile, profiles
-    from .timestamps import moment
 
     # A profile is only ever read for a signed-in person's own linked account,
     # so its reading names them. A profile no account links is nobody's and is

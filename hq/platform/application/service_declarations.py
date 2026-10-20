@@ -64,6 +64,9 @@ class Claim:
     readings: tuple[Reading, ...] = ()
     # Whether the provider answers for the name itself (its ``fronts``).
     fronted: bool = False
+    # What tells this claim from another of its kind that would not replace it
+    # (the provider's ``slot``): a DNS record's type.
+    slot: str = ""
 
     @property
     def url(self) -> str:
@@ -181,7 +184,7 @@ class Declarations(NamedTuple):
 def declarations() -> Declarations:
     """Every enabled declaration, sorted into what it names and what it covers.
 
-    Shared by the catalogue and by a name nobody has declared anything for yet,
+    Shared by the catalog and by a name nobody has declared anything for yet,
     so a prospective service is assembled from the same reading of the world.
     Read once per projection.
     """
@@ -206,6 +209,7 @@ def _read_declarations() -> Declarations:
             resource_health(resource),
             _readings(provider, resource),
             fronted=_fronted(provider, resource),
+            slot=_slot(provider, resource),
         )
         ledger.file(provider, claim, reading)
 
@@ -272,7 +276,7 @@ def runtime_claim(origin: Origin | None, containers: dict[tuple[str, str], Any])
 
     Matched on what the origin already resolved: a machine and a container on
     it. That is the same pair the declaration carries, so the two are the same
-    thing recognised from opposite directions: one authored, one observed.
+    thing recognized from opposite directions: one authored, one observed.
     """
 
     if origin is None or not origin.host or not origin.container:
@@ -288,6 +292,15 @@ def runtime_claim(origin: Origin | None, containers: dict[tuple[str, str], Any])
         _readings(provider, resource),
         fronted=_fronted(provider, resource),
     )
+
+
+def _slot(provider: Any, resource: ManagedResource) -> str:
+    if provider.slot is None:
+        return ""
+    try:
+        return provider.slot(resource.spec)
+    except KeyError, TypeError, ValueError:
+        return ""
 
 
 def _fronted(provider: Any, resource: ManagedResource) -> bool:

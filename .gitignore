@@ -9,16 +9,13 @@ __pycache__/
 venv/
 .env
 .env.*
-!.env.example
 
 # Django
 *.sqlite3
 *.sqlite3-journal
-staticfiles/
-data/
+# Every database, upload, export, collected asset and coverage file a checkout
+# writes is under var/.
 var/
-media/
-exports/
 
 # OS
 .DS_Store
@@ -28,21 +25,13 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Backups (handled by ops scripts)
-backups/
+# Archives, sealed or not
 *.tar.gz
 *.tar.gz.age
 
 # Programs built into the image's root-run tree (the Dockerfile's controller
 # stage); a copy built here must never be committed or baked in from a checkout.
 deploy/bin/
-
-# Operator-only homelab doc — real LAN/tailnet IPs & deploy paths; not for the public repo
-docs/HOMELAB.md
-
-# Coverage
-htmlcov/
-coverage.xml
 
 # Agent worktrees. An isolated checkout an agent works in, which git already
 # tracks as a worktree, so it needs no second record here, and being
@@ -69,7 +58,7 @@ CLAUDE.local.md
 .mypy_cache/
 .hypothesis/
 
-# Developer-local mise settings (scripts/mise.local.example.toml), and the
-# proxied development server's own facts (scripts/dev.local.example.toml).
+# Developer-local mise settings (tools/dev/mise.local.example.toml), and the
+# proxied development server's own facts (tools/dev/dev.local.example.toml).
 mise.local.toml
 dev.local.toml

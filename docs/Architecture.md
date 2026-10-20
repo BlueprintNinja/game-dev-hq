@@ -176,9 +176,9 @@ median and p95 time, the query count, how many queries repeat one already made
 in the request, and the response size.
 
 ```bash
-DJANGO_STATIC_ROOT=/tmp/hq-static python manage.py bench_pages
-python manage.py bench_pages --only dashboard --sql
-python manage.py bench_pages --scale 0.25 --rounds 10
+DJANGO_STATIC_ROOT=/tmp/hq-static mise run manage -- bench_pages
+mise run manage -- bench_pages --only dashboard --sql
+mise run manage -- bench_pages --scale 0.25 --rounds 10
 ```
 
 `--only` with `--sql` prints one page's queries; `--scale` and `--rounds` make
@@ -200,8 +200,8 @@ statement, so it reports the lock waits behind each page, report and batch
 against the busy timeout, what each writes, derivations, and the slowest pages.
 
 ```bash
-DJANGO_STATIC_ROOT=/tmp/hq-static python manage.py bench_contention
-python manage.py bench_contention --no-ahead --seconds 10
+DJANGO_STATIC_ROOT=/tmp/hq-static mise run manage -- bench_contention
+mise run manage -- bench_contention --no-ahead --seconds 10
 ```
 
 Three rules keep a page from waiting on a writer:
@@ -229,7 +229,7 @@ the same seed, at two sizes where a per-row read would show.
 The first request after a change derives what it needs and stores it, about
 five statements per derivation on top of the reads. One change of the estate
 costs seven derivations in all, whichever pages ask first: the queue, the
-catalogue, the relation graph, and the topology and findings once for the
+catalog, the relation graph, and the topology and findings once for the
 queue's reader and once for the operator's. `test_page_budgets.py` pins both:
 each stored page's queries at two sizes with no derivation run, and the
 derivations a change costs.
@@ -255,7 +255,7 @@ something is written.
 
 ### Derived once per change
 
-The topology, the service catalogue, the findings and the action queue are
+The topology, the service catalog, the findings and the action queue are
 functions of a few tables, of who is reading, and of the clock. They are
 declared that way and computed once per change of those inputs:
 
@@ -378,7 +378,7 @@ costs nobody:
 The request that asks answers at once, in one shape for both
 (`hq.platform.application.asks`): how the work stands and, while it is live, a
 status resource, with 202. `partials/_ask.html` draws the control and one
-script behaviour follows it ([Design](Design.md), "Asked-for work is an ask").
+script behavior follows it ([Design](Design.md), "Asked-for work is an ask").
 
 The interpreter holds the rule (`hq/platform/core/outbound.py`). Python raises
 an audit event whenever any library opens a connection, resolves a name,
@@ -388,7 +388,7 @@ named entry in `ALLOWED` with its reason, entered with `allowed("name")`:
 signing in (bounded by `OIDC_TIMEOUT`) and a public lookup an operator asked
 for by name.
 `RequestNeverWaitsTests` holds the entries to their places.
-`SEVERINO_OUTBOUND_IN_REQUEST=report` logs `outbound.in_request` and lets the
+The setting `SEVERINO_OUTBOUND_IN_REQUEST = "report"` logs `outbound.in_request` and lets the
 call go, for a composition whose extensions still reach out from a request; an
 extension moves that work to [outbound work](Plugins.md#outbound-work).
 
@@ -443,8 +443,8 @@ record, so a rollback removes all three changes. The backend is replaceable
 without changing table views, query parameters, CLI output or models.
 
 ```bash
-python manage.py search_hq projects "certificate automation"
-python manage.py rebuild_search_index
+mise run dev:manage -- search_hq projects "certificate automation"
+mise run dev:manage -- rebuild_search_index
 ```
 
 `hq.platform.application.tables.TableListMixin` composes indexed search with

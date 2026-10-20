@@ -8,12 +8,11 @@ the first pages a visitor sees show a healthy homelab with demo data locked on.
 
 import os
 import re
-import threading
 import unittest
-from functools import partial
 from html import unescape
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+from demo.serve import serving
 
 # Where demo:build saved it. This file doesn't import Django.
 OUT = Path(os.environ.get("HQ_DEMO_OUT") or Path(__file__).resolve().parents[1] / "var" / "demo")
@@ -23,7 +22,7 @@ _ADDRESS = re.compile(r'(?:href|src|data-[\w-]+-url)="(/[^"#?]*)')
 _VISITED = ("/", "/hq/", "/infrastructure/findings/", "/action-items/", "/infrastructure/", "/connection/")
 # What a healthy homelab never says on its dashboard.
 _ALARMS = ("No reading yet", "Not set up yet", "not fully set up", "not answering", " failed", "not confirmed")
-# The showcase leaves one thing to do on purpose (an expense with no receipt);
+# The showcase leaves one thing to do on purpose (an image update);
 # anything more is the seed missing a reading.
 _MOST_ITEMS = 1
 
@@ -47,23 +46,12 @@ def _visible_lines(page: str) -> list[str]:
     return [line for line in (re.sub(r"\s+", " ", raw).strip() for raw in text.split("\n")) if line]
 
 
-class _Quiet(SimpleHTTPRequestHandler):
-    def log_message(self, *args):
-        pass
-
-
 class DemoSiteTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         if not (OUT / "index.html").is_file():
             raise unittest.SkipTest(f"no demo at {OUT}: run demo:build first")
-        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), partial(_Quiet, directory=str(OUT)))
-        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
-        cls.origin = f"http://127.0.0.1:{cls.server.server_port}"
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.server.shutdown()
+        cls.origin = cls.enterClassContext(serving(OUT))
 
     def test_every_address_a_page_names_is_in_the_demo(self):
         missing = set()
@@ -144,8 +132,8 @@ class DemoSiteTests(unittest.TestCase):
             page.reload(wait_until="load")
             kept = page.locator(f'[data-attention-item]:has(button[value="{key}"])').first
             self.assertIsNotNone(kept.get_attribute("data-dismissed"))
-            page.evaluate("document.querySelector('.demo-reset').click()")
-            page.wait_for_load_state("load")
+            with page.expect_navigation(wait_until="load"):
+                page.evaluate("document.querySelector('.demo-reset').click()")
             page.goto(self.origin + "/action-items/", wait_until="load")
             again = page.locator(f'[data-attention-item]:has(button[value="{key}"])').first
             self.assertIsNone(again.get_attribute("data-dismissed"))

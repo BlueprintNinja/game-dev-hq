@@ -5,25 +5,25 @@ requires-python = ">=3.15,<3.16"
 # Each is imported by host code, or listed under [tool.severino-hq.unimported]
 # with the reason it is installed anyway (a test holds that).
 dependencies = [
-    "argon2-cffi>=25.1,<26",
-    "cryptography>=50.0.2,<51",
-    "django>=6.1.2,<6.2",
-    "httpx2>=2.13,<3",
+    "argon2-cffi==25.1.0",
+    "cryptography==50.0.2",
+    "django==6.1.2",
+    "httpx2==2.13.1",
     # Imported directly: the bridge and MCP hold payloads to their schemas.
-    "jsonschema>=4.26.0,<5",
-    "mcp>=2.3.0,<3",
-    "mozilla-django-oidc>=5.0.2,<6.0",
-    "pydantic>=2.14.0,<3",
-    "pyjwt>=2.15.1,<3",
-    "referencing>=0.37.0,<1",
+    "jsonschema==4.26.0",
+    "mcp==2.3.0",
+    "mozilla-django-oidc==5.0.2",
+    "pydantic==2.14.1",
+    "pyjwt==2.15.1",
+    "referencing==0.37.0",
     # Strips comments from collected scripts (hq/platform/core/static.py); a
     # regex cannot tell a comment from a string or regex literal.
-    "rjsmin>=1.2,<2",
+    "rjsmin==1.3.0",
     # Imported directly: the ASGI application, its static mount and the bridge.
-    "starlette>=1.8.0,<2",
-    "tblib>=3,<4",
-    "uvicorn>=0.54.0,<1",
-    "whitenoise>=6.12.0",
+    "starlette==1.8.0",
+    "tblib==3.2.2",
+    "uvicorn==0.54.0",
+    "whitenoise==6.12.0",
 ]
 
 # Runtime dependencies no host code imports, and why each is installed anyway.
@@ -58,20 +58,28 @@ audit = [
 ]
 
 [tool.ruff]
-target-version = "py315"
+# The target version is requires-python's.
 # The width the code is wrapped at; it only decides when isort wraps an import.
 line-length = 120
 # Python without a .py name: the forced command HQ's key runs on shared hosting.
 extend-include = ["deploy/targets/severino-hq-cpanel-controller"]
 
 [tool.ruff.per-file-target-version]
-# Run by whatever interpreter the runner or workstation has, not the locked 3.15.
-"scripts/*.py" = "py312"
+# The python3 of the hosted runner (RUNNER_IMAGE in tools/pipeline/toolchain.env), stdlib
+# only: the jobs and the action that run them set up no toolchain first.
+"tools/pipeline/ci_report.py" = "py312"
+"tools/pipeline/compose_plugins.py" = "py312"
+"tools/pipeline/composition_set.py" = "py312"
+"tools/pipeline/plugin_identity.py" = "py312"
+"tools/pipeline/verify_admissions.py" = "py312"
+# Its shell suite runs it, and the verdict and ci_report it imports, on that same python3.
+"tools/gate/preflight.py" = "py312"
+"tools/gate/verdict.py" = "py312"
 "deploy/targets/severino-hq-cpanel-controller" = "py37"
 
 [tool.ruff.lint]
 # Keep the contract explicit and stable across developer machines and CI.
-select = ["E4", "E7", "E9", "W605", "F", "C90", "I", "UP", "B", "SIM", "PTH", "C4", "PERF", "RUF", "FURB", "DJ", "BLE"]
+select = ["E4", "E7", "E9", "W605", "F", "C90", "I", "UP", "B", "SIM", "PTH", "C4", "PERF", "RUF", "FURB", "DJ", "BLE", "TID251", "PLC0415"]
 ignore = [
     # En dashes, multiplication signs and curly quotes are deliberate typography in user-facing copy.
     "RUF001",
@@ -79,18 +87,29 @@ ignore = [
     "RUF003",
 ]
 
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"tools".msg = "tools/ is development and CI code the image does not ship; a test of it lives under tools/."
+
 [tool.ruff.lint.per-file-ignores]
+# Development and CI code imports its own package.
+"tools/**" = ["TID251"]
+# A fuzzing harness run by hand from a checkout, with atheris installed.
+"tests/fuzz/**" = ["TID251"]
 # Django's declarative class bodies: Meta options, form fields and migration operations are lists by contract.
-"**/migrations/*.py" = ["RUF012"]
+"**/migrations/*.py" = ["RUF012", "PLC0415"]
 "**/models.py" = ["RUF012"]
 "**/forms.py" = ["RUF012"]
-# Test classes hold fixtures as plain class attributes.
-"**/tests/**" = ["RUF012"]
-"hq/platform/core/browser_tests.py" = ["RUF012"]
+# Test classes hold fixtures as plain class attributes. A test imports inside
+# the test; converting the suite to lazy imports is its own pass.
+"**/tests/**" = ["RUF012", "PLC0415"]
+"hq/platform/core/browser_tests.py" = ["RUF012", "PLC0415"]
+"demo/check.py" = ["PLC0415"]
+# Django's AppConfig.create reads every name an apps module binds
+# (inspect.getmembers), which reifies a lazy import before the app registry is
+# ready; ready() imports what needs the registry.
+"**/apps.py" = ["PLC0415"]
 # Pydantic copies a field default for each instance.
 "hq/domains/control_plane/observations/*.py" = ["RUF012"]
-# The MCP and bridge modules load models, so they are imported after Django is set up.
-"hq/config/asgi.py" = ["E402"]
 # Runs on the 3.6 interpreter shared hosting ships; newer idioms would not run there.
 "deploy/targets/severino-hq-cpanel-controller" = ["UP", "SIM", "PTH", "PERF", "FURB", "B", "RUF", "C4"]
 
@@ -109,14 +128,18 @@ max-complexity = 15
 # The editor's language server, for navigation and for an import that is
 # actually broken. Types are mypy's (checks:mypy): a second checker with its
 # own opinions only contradicts the one the gates enforce. Each checkout,
-# worktrees included, resolves against its own environment.
+# worktrees included, resolves against its own environment; an agent's
+# worktree is checked by its own gates, not by the server rooted here.
 typeCheckingMode = "off"
 venvPath = "."
 venv = ".venv"
+ignore = [".claude/worktrees"]
 
 [tool.mypy]
-python_version = "3.15"
-files = ["hq/platform/application/security.py", "hq/platform/application/integration_specs.py", "hq/platform/application/plugins.py", "hq/platform/application/outbound_work.py", "hq/platform/application/capabilities.py", "hq/platform/application/resources.py", "hq/platform/application/sensitivity.py", "hq/platform/application/domains.py", "hq/platform/application/records.py", "hq/domains/control_plane/bridge_actions.py", "hq/domains/control_plane/bridge_application.py", "hq/domains/control_plane/bridge_contract.py", "hq/domains/control_plane/bridge_registry.py", "hq/domains/control_plane/connection_shapes.py", "hq/platform/core/unix_server.py", "hq/domains/control_plane/connection_kinds.py", "hq/domains/control_plane/credential_reads.py", "hq/domains/control_plane/names.py", "hq/domains/control_plane/provider_adapters/cloudflare.py", "hq/domains/control_plane/provider_adapters/declarations.py", "hq/domains/control_plane/provider_adapters/portainer.py", "hq/domains/control_plane/provider_adapters/tailscale.py", "hq/domains/control_plane/provider_adapters/tls.py", "hq/domains/control_plane/provider_spec.py", "hq/domains/control_plane/providers.py", "hq_sdk", "hq/platform/api", "hq/platform/mcp", "tests/sdk_consumer"]
+# The interpreter it runs on is the one requires-python admits. Every module
+# below is held to the strict flags; an import they follow is read for its
+# types and never reported, so the flags reach nothing else.
+files = ["hq/platform/application/security.py", "hq/platform/application/integration_specs.py", "hq/platform/application/plugins.py", "hq/platform/application/outbound_work.py", "hq/platform/application/capabilities.py", "hq/platform/application/resources.py", "hq/platform/application/sensitivity.py", "hq/platform/application/domains.py", "hq/platform/application/records.py", "hq/domains/control_plane/bridge_actions.py", "hq/domains/control_plane/bridge_application.py", "hq/domains/control_plane/bridge_contract.py", "hq/domains/control_plane/bridge_registry.py", "hq/domains/control_plane/connection_shapes.py", "hq/platform/core/unix_server.py", "hq/domains/control_plane/connection_kinds.py", "hq/domains/control_plane/credential_reads.py", "hq/domains/control_plane/names.py", "hq/domains/control_plane/provider_adapters/cloudflare.py", "hq/domains/control_plane/provider_adapters/declarations.py", "hq/domains/control_plane/provider_adapters/portainer.py", "hq/domains/control_plane/provider_adapters/tailscale.py", "hq/domains/control_plane/provider_adapters/tls.py", "hq/domains/control_plane/provider_spec.py", "hq/domains/control_plane/providers.py", "hq_sdk", "hq/platform/api", "hq/platform/mcp", "tests/sdk_consumer", "tools/credentials.py", "tools/pipeline/ci_report.py"]
 exclude = "(^|/)(tests\\.py|test_[^/]*\\.py|migrations/)"
 follow_imports = "silent"
 plugins = ["mypy_django_plugin.main"]
@@ -126,17 +149,14 @@ warn_unused_ignores = true
 strict_equality = true
 check_untyped_defs = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool", "explicit-override"]
-
-[tool.django-stubs]
-django_settings_module = "hq.config.settings_typecheck"
-
-[[tool.mypy.overrides]]
-module = ["hq.platform.application.security", "hq.platform.application.integration_specs", "hq.platform.application.plugins", "hq.platform.application.outbound_work", "hq.platform.application.capabilities", "hq.platform.application.resources", "hq.platform.application.sensitivity", "hq.platform.application.domains", "hq.platform.application.records", "hq.domains.control_plane.bridge_actions", "hq.domains.control_plane.bridge_application", "hq.domains.control_plane.bridge_contract", "hq.domains.control_plane.bridge_registry", "hq.domains.control_plane.connection_shapes", "hq.platform.core.unix_server", "hq.domains.control_plane.connection_kinds", "hq.domains.control_plane.credential_reads", "hq.domains.control_plane.names", "hq.domains.control_plane.provider_adapters.cloudflare", "hq.domains.control_plane.provider_adapters.declarations", "hq.domains.control_plane.provider_adapters.portainer", "hq.domains.control_plane.provider_adapters.tailscale", "hq.domains.control_plane.provider_adapters.tls", "hq.domains.control_plane.provider_spec", "hq.domains.control_plane.providers", "hq_sdk.*", "hq.platform.api.*", "hq.platform.mcp.*", "tests.sdk_consumer.*"]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 disallow_any_generics = true
 warn_return_any = true
+
+[tool.django-stubs]
+django_settings_module = "hq.config.settings_typecheck"
 
 [tool.coverage.run]
 # Under var/, so the shards a failed run leaves sit with the other scratch data.
@@ -145,7 +165,9 @@ source = ["."]
 parallel = true
 concurrency = ["multiprocessing", "thread"]
 sigterm = true
-omit = ["*/migrations/*", "*/tests/*", "manage.py", "hq/config/*", ".venv/*"]
+# tools/ and demo/ are development tooling, tested by checks:source, which the
+# suite this measures leaves out.
+omit = ["*/migrations/*", "*/tests/*", "manage.py", "hq/config/*", ".venv/*", "tools/*", "demo/*"]
 
 [tool.coverage.report]
 show_missing = false

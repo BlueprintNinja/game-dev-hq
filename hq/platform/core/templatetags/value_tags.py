@@ -1,17 +1,26 @@
 import re
 from datetime import date, datetime
 from urllib.parse import unquote, urlsplit
+lazy from dataclasses import replace
 
 from django import template
 from django.utils import timezone
 from django.utils.html import conditional_escape, format_html
 from django.utils.safestring import mark_safe
+lazy from django.conf import settings
 
-from hq.platform.application.entity_links import web_url as _web_url
+from hq.platform.application.entity_links import (
+    connection_anchor as anchor,
+    declared_link as declared,
+    entity_link,
+    kind_label as label,
+    web_url as _web_url,
+)
 from hq.platform.application.labels import human_bytes
 from hq.platform.application.moments import (
     ago as _ago,
     elapsed as _elapsed,
+    span as said,
     when as _when,
     when_day as _when_day,
     when_exact as _when_exact,
@@ -19,6 +28,12 @@ from hq.platform.application.moments import (
 from hq.platform.application.money import money as _money
 from hq.platform.application.timestamps import moment
 from hq.platform.application.ui import MISSING, counted as _counted
+lazy from hq.domains.control_plane.provider_spec import expiry_phrase
+lazy from hq.platform.application import references, security
+lazy from hq.platform.application.problems import problems_about as _problems_about
+lazy from hq.platform.application.references import reference_of
+lazy from hq.platform.application.where_it_runs import named_links as _named_links, where_it_runs as _where_it_runs
+lazy from hq.platform.core.oidc import SIGNED_IN_SESSION_KEY
 
 register = template.Library()
 
@@ -163,7 +178,6 @@ def signed_in(request):
     session says when its sign-in was; one that does not (a password sign-in)
     falls back on the account's last login.
     """
-    from hq.platform.core.oidc import SIGNED_IN_SESSION_KEY
 
     session = getattr(request, "session", None)
     when = moment(str(session.get(SIGNED_IN_SESSION_KEY) or "")) if session is not None else None
@@ -181,7 +195,6 @@ def signed_in(request):
 @register.filter
 def span(days):
     """``{{ days_left|span }}``: a count of days as a length of time, from its one owner."""
-    from hq.platform.application.moments import span as said
 
     try:
         return said(int(days))
@@ -208,7 +221,6 @@ def seconds(value):
 @register.filter
 def expiry(value):
     """``{{ not_after|expiry }}``: "22 Dec 2026 · 87 days", the one phrasing HQ uses for an end date."""
-    from hq.domains.control_plane.provider_spec import expiry_phrase
 
     return expiry_phrase(str(value or ""))
 
@@ -238,41 +250,52 @@ def readable(value):
     return when(value)
 
 
-# Where an address, hostname or path may wrap: after a dot or slash, before a
-# port's colon (before an IPv6 "::" as one), never inside a scheme's "://".
-# Without them a narrow box cuts "10.0.0.10:8000" mid-number.
-_BREAK_AFTER = re.compile(r"([./])(?=[^/])")
-_BREAK_BEFORE = re.compile(r"(?<=[^:\s])(:+)(?=[^/])")
+# Where an address, a hostname, a path or an image reference may wrap: after a
+# slash, after a colon run (never inside a scheme's "://" or an IPv6 "::"), and
+# after a dot unless digits stand either side of it, so a version ("2.39.8")
+# and an IPv4 address are each one piece.
+_BREAK_AFTER = re.compile(r"(/|:+|(?<!\d)\.|\.(?!\d))(?=[^/:])")
 
 
 # A part with a hyphen inside it ("nginx-proxy-manager") is kept on one line:
 # a browser breaks after a hyphen, and a name split there reads as two. A flag
 # ("-a") has nothing before its hyphen to break from.
-_PARTS = re.compile(r"(<wbr>|\s+)")
 _INNER_HYPHEN = re.compile(r"[^-\s]-")
+# A seam inside a word, between two of its letters or digits: an address, a
+# path, a host name. A dot after a bracket ("(.zip)") is punctuation.
+_INNER_SEAM = re.compile(r"\w(?:/|:+|\.)\w")
+_WORDS = re.compile(r"(\s+)")
 
 
 def _whole(part: str) -> str:
     return f'<span class="whole">{part}</span>' if _INNER_HYPHEN.search(part) else part
 
 
+def _token(word: str) -> str:
+    """A word with a seam or a hyphen inside it, as a token. A word with
+    neither reads as a word, and stays plain text."""
+
+    if not (_INNER_SEAM.search(word) or _INNER_HYPHEN.search(word)):
+        return word
+    parts = _BREAK_AFTER.sub(r"\1<wbr>", word).split("<wbr>")
+    return '<span class="token">' + "<wbr>".join(_whole(part) for part in parts) + "</span>"
+
+
 @register.filter(is_safe=True)
 def breakable(value):
-    """``value`` as a token: escaped, with a line-break opportunity where an
-    address or a path may wrap, and none inside a hyphenated part.
+    """``value`` as tokens, one per word: escaped, with a line-break
+    opportunity where an address or a path may wrap, and none inside a
+    hyphenated part.
 
     The one way a template writes an identifier (``<code>{{ x|breakable }}</code>``,
-    or bare as a link's text). The ``token`` class keeps it from breaking
-    anywhere else unless one part alone is longer than its line.
+    or bare as a link's text). A token that fits on its line moves to the next
+    one whole; one longer than its line wraps at its seams; a part longer than
+    its line alone breaks wherever it must.
     """
 
     # Escaped first, so the only markup in the result is what is added here.
     text = str(conditional_escape(value))
-    if not text:
-        return ""
-    marked = _BREAK_BEFORE.sub(r"<wbr>\1", _BREAK_AFTER.sub(r"\1<wbr>", text))
-    inner = "".join(_whole(part) for part in _PARTS.split(marked))
-    return mark_safe(f'<span class="token">{inner}</span>')
+    return mark_safe("".join(_token(word) for word in _WORDS.split(text)))
 
 
 def _is_this_page(context, url: str) -> bool:
@@ -297,10 +320,8 @@ def entity(context, link, code=False, label=""):
     if link is None:
         return format_html('<span class="empty-value" title="None">{}</span>', MISSING)
     if label:
-        from dataclasses import replace
-
         link = replace(link, label=str(label))
-    label = format_html("<code>{}</code>", breakable(link.label)) if code else link.label
+    label = format_html("<code>{}</code>", breakable(link.label)) if code else breakable(link.label)
     if link.url and not link.external and _is_this_page(context, link.url):
         return format_html('<span data-entity="{}">{}</span>', link.kind_label, label)
     if link.url and link.external:
@@ -326,9 +347,7 @@ def entity(context, link, code=False, label=""):
 def _viewer(context):
     """Who the page is rendered for, as the application asks about them."""
 
-    from hq.platform.application.security import web_principal
-
-    return web_principal(context["request"].user)
+    return security.web_principal(context["request"].user)
 
 
 @register.simple_tag(takes_context=True)
@@ -336,8 +355,6 @@ def reference(context, row, field):
     """``{% reference expense "paid_from" as account %}``: the link for the
     reference a row holds, for ``{% entity %}``. None when it holds none, or
     one this viewer may not be told about."""
-
-    from hq.platform.application.references import reference_of
 
     return reference_of(row, field, principal=_viewer(context))
 
@@ -353,8 +370,6 @@ def referenced_by(context, thing, identity="", cards=True):
     still pass. One statement, whatever names it.
     """
 
-    from hq.platform.application import references
-
     principal = _viewer(context)
     if isinstance(thing, str):
         found = references.referenced_by(thing, str(identity), principal=principal)
@@ -366,7 +381,6 @@ def referenced_by(context, thing, identity="", cards=True):
 @register.filter
 def kind_label(kind):
     """What a registry kind is called in a sentence: ``tailscale.device`` reads "Tailnet device"."""
-    from hq.platform.application.entity_links import kind_label as label
 
     return label(str(kind or ""))
 
@@ -374,7 +388,6 @@ def kind_label(kind):
 @register.filter
 def entity_of(kind, identity):
     """``{% entity "machine"|entity_of:name %}``: the link builder's answer for one thing."""
-    from hq.platform.application.entity_links import entity_link
 
     return entity_link(str(kind), str(identity or ""))
 
@@ -382,7 +395,6 @@ def entity_of(kind, identity):
 @register.filter
 def declared_link(link):
     """A link an emitter declared (a label and a url), as an entity mention."""
-    from hq.platform.application.entity_links import declared_link as declared
 
     return declared(link.label, link.url)
 
@@ -390,7 +402,6 @@ def declared_link(link):
 @register.filter
 def connection_anchor(ref):
     """The id of a connection's row, the target of its entity link."""
-    from hq.platform.application.entity_links import connection_anchor as anchor
 
     return anchor(str(ref or ""))
 
@@ -406,7 +417,7 @@ def readout(value):
     would write in a sentence (a count, a word, a phrase) as text.
 
     Every value in code made "11", "On" and "Need approval" look like keys to
-    copy, and put a grey chip around each number in a list of three numbers.
+    copy, and put a gray chip around each number in a list of three numbers.
     """
 
     text = str(value)
@@ -426,18 +437,14 @@ def web_url(value):
 def where_it_runs(public_url):
     """The service, machine and container behind a published address, for
     ``partials/_runs_on.html``; nothing when no service answers there."""
-    from hq.platform.application.where_it_runs import where_it_runs as found
-
-    return found(public_url)
+    return _where_it_runs(public_url)
 
 
 @register.filter
 def named_links(text):
     """Free text as plain stretches and the links of the names HQ knows in
     it, for ``partials/_linked_text.html``."""
-    from hq.platform.application.where_it_runs import named_links as found
-
-    return found(text)
+    return _named_links(text)
 
 
 @register.simple_tag(takes_context=True)
@@ -445,10 +452,8 @@ def problems_about(context, url=""):
     """The open problems about the thing at ``url``, by default the page this
     is drawn on, for ``partials/_problems.html``. One read of a stored answer,
     made only by a page that asks."""
-    from hq.platform.application.problems import problems_about as found
-
     request = context.get("request")
-    return found(url or (request.path if request is not None else ""))
+    return _problems_about(url or (request.path if request is not None else ""))
 
 
 @register.filter
@@ -466,7 +471,5 @@ def not_urgent(problems):
 @register.simple_tag
 def rendered_copy() -> bool:
     """Whether this render is a saved copy of HQ (``SEVERINO_RENDERED_COPY``)."""
-
-    from django.conf import settings
 
     return bool(settings.SEVERINO_RENDERED_COPY)

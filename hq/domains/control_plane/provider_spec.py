@@ -24,6 +24,8 @@ from pydantic import (
 
 from hq.platform.application.moments import span, when_day
 from hq.platform.application.routes import reverse
+lazy from hq.platform.application.expiry import days_until
+lazy from hq.platform.application.timestamps import moment
 
 from .names import in_zone
 from .observations.contract import ReadingPart
@@ -153,7 +155,7 @@ class ProviderModel(BaseModel):
 
         HTML submits a textarea as CRLF and every provider returns LF, so a
         multi-line field saved through a form never again equals the identical
-        document read back. Normalised on the way in, so the declaration and
+        document read back. Normalized on the way in, so the declaration and
         the reading are comparable at all, and asked of every string field
         rather than the two that have textareas today. Runs ``after`` because
         a ``before`` validator is not allowed on a discriminated union's
@@ -226,7 +228,7 @@ def origin_is_authoritative(provider: ProviderSpec) -> bool:
     is the answer to "what serves this", so the first has to yield wherever both
     are present.
 
-    Stated once, here, because two surfaces rank origins (the service catalogue
+    Stated once, here, because two surfaces rank origins (the service catalog
     and the machine board) and must agree.
     """
 
@@ -417,6 +419,11 @@ class ProviderSpec:
     # proxied Cloudflare record. A reading whose ``fronted_by`` names this kind
     # applies to a name only where this says so.
     fronts: Callable[[dict[str, Any]], bool] | None = None
+    # What decides whether two records of this kind on one name replace each
+    # other: they do when this answers the same. A name's A and AAAA records sit
+    # side by side (dual stack), so a DNS kind answers its record type or
+    # address family. Unset: one record of the kind per name.
+    slot: Callable[[dict[str, Any]], str] | None = None
     # From an observed record: the source policy it applies to its names, as a
     # ``provider_adapters.contracts.IngressPolicy``.
     ingress_policy: Callable[[dict[str, Any]], Any] | None = None
@@ -632,9 +639,6 @@ def expiry_phrase(stamp: str) -> str:
     before it means anything, and the number it resolves to (how many days are
     left) is the entire reason anyone looks at it.
     """
-
-    from hq.platform.application.expiry import days_until
-    from hq.platform.application.timestamps import moment
 
     expires = moment(stamp)
     if expires is None:

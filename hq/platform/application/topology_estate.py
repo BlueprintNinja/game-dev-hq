@@ -3,10 +3,10 @@
 The estate is the hub of the topology. A controller or a reached target that
 names a machine, a service or a domain folds into that node. Every stored
 reading joined to an estate node through ``application.facts`` becomes an edge
-from the connection that read it, labelled with the reading's relation phrase,
+from the connection that read it, labeled with the reading's relation phrase,
 and exists only while the reading does.
 
-Resolution is the machine catalogue's own index, the service catalogue and the
+Resolution is the machine catalog's own index, the service catalog and the
 zone inventory: never a match on labels alone. What an extension reaches that
 is none of these stays a target.
 """
@@ -20,8 +20,11 @@ from hq.domains.control_plane.names import normalized_hostname
 from hq.domains.control_plane.observations import OBSERVATIONS
 from hq.domains.control_plane.observations.adguard import QUERY_KIND
 from hq.domains.control_plane.providers import PROVIDERS
+lazy from hq.domains.control_plane.observations.contract import container_key
+lazy from hq.domains.control_plane.provider_adapters.portainer import CONTAINER_KIND
 
 from .action_links import ActionLink as TopologyAction
+from .connection_lifecycle import UNREPORTED_NODE, Lifecycle
 from .connections import machines_once
 from .entity_links import entity_link
 from .facts import Joined, Subject, inventory_records, readings
@@ -35,6 +38,12 @@ from .topology_model import (
     edge_between,
     newest_stamp,
 )
+lazy from . import certificate_expiry, docker_estate, reference_findings, render_status_findings, tailnet, unit_findings
+lazy from .hq_self import hq_service
+lazy from .machines import declares_host
+lazy from .service_facets import zone_holding
+lazy from .service_list import listed_services
+lazy from .zones import ZONE_KIND, zone_reads
 
 # Derived node kinds that only stand for a machine something mentioned: a
 # controller is the machine it runs on, a target is the machine it reaches.
@@ -142,7 +151,7 @@ def _machines(nodes, edges, resources) -> _Estate:
             machine_ids.setdefault(name, node_id)
         if machine.declaration:
             _declared_by(edges, node_id, f"resource:{machine.declaration}", nodes)
-        # The connections the catalogue says reach it, the same answer as the
+        # The connections the catalog says reach it, the same answer as the
         # machine list's "Reached through".
         for ref in machine.reached_by:
             for connection_id in connections.get(ref, ()):
@@ -163,8 +172,6 @@ def _machines(nodes, edges, resources) -> _Estate:
 
 
 def _zones(nodes, edges, resources, estate: _Estate) -> tuple[str, ...]:
-    from .zones import ZONE_KIND, zone_reads
-
     names, read = zone_reads(resources)
     for name in names:
         estate.saw(f"zone:{name}", *read.get(name, ()))
@@ -196,10 +203,6 @@ _SERVICE_SUBTITLES = {"observed": "Service not in HQ"}
 
 
 def _services(nodes, edges, estate: _Estate, zones: tuple[str, ...]) -> None:
-    from .hq_self import hq_service
-    from .service_facets import zone_holding
-    from .service_list import listed_services
-
     own = hq_service(catalog=machines_once())
     for service in listed_services():
         node_id = f"service:{service.hostname}"
@@ -326,9 +329,6 @@ def _container_subjects(nodes, resources, estate: _Estate) -> None:
     networks, mounts, image, runtime, compose project) joins to it as it
     joins to its machine."""
 
-    from hq.domains.control_plane.observations.contract import container_key
-    from hq.domains.control_plane.provider_adapters.portainer import CONTAINER_KIND
-
     for resource in resources:
         node_id = f"resource:{resource.key}"
         if resource.kind != CONTAINER_KIND or node_id not in nodes:
@@ -342,8 +342,6 @@ def _container_subjects(nodes, resources, estate: _Estate) -> None:
 
 
 def _runs_edges(nodes, edges, resources, estate: _Estate) -> None:
-    from .machines import declares_host
-
     for resource in resources:
         resource_id = f"resource:{resource.key}"
         if resource_id not in nodes or not declares_host(resource.kind):
@@ -355,8 +353,6 @@ def _runs_edges(nodes, edges, resources, estate: _Estate) -> None:
 
 
 def _tailnet_edges(nodes, edges, resources, estate: _Estate) -> None:
-    from . import tailnet
-
     devices = None
     for resource in resources:
         device_id = f"resource:{resource.key}"
@@ -468,14 +464,6 @@ def _reader_index(nodes) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
 
 def _derived_from_readings(nodes, edges, resources, estate: _Estate) -> None:
     """What provider-specific joins add: container edges, and image, render status, unit and certificate facts."""
-
-    from . import (
-        certificate_expiry,
-        docker_estate,
-        reference_findings,
-        render_status_findings,
-        unit_findings,
-    )
 
     if estate.machine_ids:
         docker_estate.add(nodes, edges, resources, estate.machine)
@@ -596,7 +584,7 @@ def _unreported(nodes, by_ref, name: str, provider: str) -> tuple[str, ...]:
     than vanishing.
     """
 
-    node_id = f"connection:unreported:{name}"
+    node_id = f"{UNREPORTED_NODE}{name}"
     nodes.setdefault(
         node_id,
         TopologyNode(
@@ -604,7 +592,7 @@ def _unreported(nodes, by_ref, name: str, provider: str) -> tuple[str, ...]:
             kind="connection",
             label=name,
             subtitle=provider,
-            status_label="Not reported",
+            status_label=Lifecycle.UNREPORTED.label,
             detail="No controller reports this connection now.",
             kind_key=provider,
         ),

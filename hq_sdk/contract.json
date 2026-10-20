@@ -1189,7 +1189,8 @@
           "identifier",
           "*",
           "principal",
-          "strict="
+          "strict=",
+          "fields="
         ]
       },
       "list_resource": {
@@ -1199,7 +1200,8 @@
           "query=",
           "*",
           "principal",
-          "strict="
+          "strict=",
+          "fields="
         ]
       }
     },
@@ -1296,7 +1298,9 @@
           "sort=",
           "ascending_label=",
           "descending_label=",
-          "css="
+          "css=",
+          "kind=",
+          "drop="
         ],
         "fields": [],
         "kind": "dataclass",
@@ -1384,6 +1388,14 @@
             "kind": "attribute",
             "type": "str"
           },
+          "table_drop_mid": {
+            "kind": "attribute",
+            "type": "int"
+          },
+          "table_drop_narrow": {
+            "kind": "attribute",
+            "type": "int"
+          },
           "table_empty": {
             "kind": "attribute",
             "type": "str"
@@ -1399,6 +1411,10 @@
           "table_filters": {
             "kind": "attribute",
             "type": "tuple"
+          },
+          "table_room": {
+            "kind": "attribute",
+            "type": "str"
           },
           "table_search_fields": {
             "kind": "attribute",
@@ -1978,7 +1994,8 @@
       "ago": {
         "kind": "function",
         "parameters": [
-          "moment"
+          "moment",
+          "now="
         ]
       },
       "counted": {
@@ -2353,11 +2370,13 @@
   "sdk_version": 1,
   "templates": {
     "classes": [
+      "actions-col",
       "allocation",
       "allocation-legend",
       "btn",
       "card",
       "card-columns",
+      "cell-data",
       "chart-axis",
       "chart-card",
       "chart-data",
@@ -2386,12 +2405,14 @@
       "ghost",
       "help",
       "inline",
+      "key-col",
       "kv",
       "list-rows",
       "msg",
       "msg-error",
       "msg-warning",
       "muted",
+      "narrow-more",
       "notice",
       "notice-attention",
       "num-col",
@@ -2408,6 +2429,11 @@
       "print-footer",
       "print-only",
       "prose-list",
+      "route-band-1",
+      "route-band-2",
+      "route-band-3",
+      "route-band-4",
+      "route-band-5",
       "route-frame",
       "route-line",
       "route-map",
@@ -2415,8 +2441,10 @@
       "route-scale",
       "route-swatch",
       "row-actions",
+      "row-below",
       "row-empty",
       "row-group",
+      "row-gutter",
       "row-less",
       "row-main",
       "row-meta",
@@ -2557,6 +2585,9 @@
       "or_empty": {
         "argument": "none"
       },
+      "sortable": {
+        "argument": "none"
+      },
       "span": {
         "argument": "none"
       },
@@ -2580,7 +2611,7 @@
         ]
       },
       "list_page.html": {
-        "about": "A `TableListMixin` list: toolbar, table, empty state and pagination. `row` is one row's cells, `summary` sits above the table, `foot` is its `<tfoot>`.",
+        "about": "A `TableListMixin` list: toolbar, table, empty state and pagination. `row` is one row's cells, `summary` sits above the table and is redrawn with it when a search or filter changes, `foot` is its `<tfoot>`.",
         "blocks": {
           "foot": {
             "given": []
@@ -2802,6 +2833,39 @@
           "thing",
           "identity=",
           "cards="
+        ]
+      },
+      "row_toggle": {
+        "parameters": []
+      },
+      "table_heading": {
+        "parameters": [
+          "label",
+          "kind=",
+          "*",
+          "css=",
+          "drop=",
+          "sort=",
+          "descending=",
+          "local_sort=",
+          "hidden=",
+          "title=",
+          "gutter=",
+          "select_all=",
+          "note=",
+          "note_css="
+        ]
+      },
+      "table_region": {
+        "parameters": [
+          "label",
+          "*",
+          "css=",
+          "chart=",
+          "pane=",
+          "room=",
+          "mid=",
+          "narrow="
         ]
       }
     }

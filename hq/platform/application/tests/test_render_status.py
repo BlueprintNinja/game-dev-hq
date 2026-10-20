@@ -203,7 +203,7 @@ class OneDeclarationTests(SimpleTestCase):
 
         self.assertIn("OnUnitActiveSec=1h\n", timer)
         self.assertIn("RandomizedDelaySec=30s\n", timer)
-        # gofmt aligns the field to its neighbours, so any run of spaces.
+        # gofmt aligns the field to its neighbors, so any run of spaces.
         self.assertRegex(main, r"FullEvery: +24 \* time\.Hour,")
         # Read from the timer, not restated beside it.
         self.assertEqual(rules.RENDER_EVERY, timedelta(hours=1))
@@ -297,7 +297,7 @@ class FailingTests(TestCase):
         (finding,) = raised("render-failing")
 
         self.assertEqual(finding["severity"], "serious")
-        self.assertIn({"label": "Last refreshed", "value": "1\xa0week, 1\xa0day ago"}, finding["evidence"])
+        self.assertIn({"label": "Last refreshed", "value": "1\xa0week ago"}, finding["evidence"])
         self.assertEqual(raised("render-stale"), [])
 
     def test_a_renderer_that_never_succeeded_is_serious(self):
@@ -316,7 +316,7 @@ class FailingTests(TestCase):
 
         self.assertIn("(example_class)", finding["title"])
         self.assertIn(
-            {"label": "Reason", "value": "an error HQ does not recognise (example_class)"}, finding["evidence"]
+            {"label": "Reason", "value": "an error HQ does not recognize (example_class)"}, finding["evidence"]
         )
 
     def test_a_renderer_with_no_known_unit_gets_the_steps_in_words(self):
@@ -351,7 +351,7 @@ class StaleTests(TestCase):
 
         self.assertEqual(finding["severity"], "serious")
         self.assertIn("example-controller has not refreshed its credentials since ", finding["title"])
-        self.assertIn({"label": "Last refreshed", "value": "3\xa0hours, 2\xa0minutes ago"}, finding["evidence"])
+        self.assertIn({"label": "Last refreshed", "value": "3\xa0hours ago"}, finding["evidence"])
         self.assertEqual(
             [step["command"] for step in finding["operator_steps"]],
             [
@@ -367,7 +367,7 @@ class StaleTests(TestCase):
 
         (finding,) = raised("render-stale")
 
-        self.assertIn({"label": "Last read in full", "value": "1\xa0day, 3\xa0hours ago"}, finding["evidence"])
+        self.assertIn({"label": "Last read in full", "value": "1\xa0day ago"}, finding["evidence"])
 
     def test_a_reading_taken_hours_ago_while_nobody_looked_raises_nothing(self):
         # Idle, the controller reads half a day apart. The renderer was current

@@ -6,18 +6,22 @@ shared module that reached for any of their models would make importing one of
 them mean importing all of them.
 
 What lives here is the handful of rules every surface shares: paging bounds,
-the page-size ceiling and the timestamp rendering. Each is defined once so a
-change to it reaches every surface.
+the page-size ceiling, the timestamp rendering and the refusal of an input
+that cannot narrow. Each is defined once so a change to it reaches every
+surface.
 """
 
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from django.conf import settings
 from django.db.models import FETCH_PEERS, FETCH_RAISE, Q, QuerySet
+lazy from django.utils import timezone
+
+from .record_errors import RecordNotFound
 
 # The most rows any single read will return, whatever a caller asks for.
 #
@@ -32,11 +36,23 @@ _READ_SCOPE: ContextVar[dict[str, Any] | None] = ContextVar("hq_projection_read_
 _SEED = "projection.seed"
 
 
+class QueryRefusal(ValueError):
+    """A narrowing input a projection cannot be read by.
+
+    ``reason`` is HQ's own sentence for the caller, and the only text an
+    adapter answers with: never ``str(exc)``, never the value sent.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 @contextmanager
 def projection_scope(seed: Mapping[str, Any] | None = None, *, apart: bool = False) -> Iterator[None]:
     """Share exact read results for one assembled projection, then forget them.
 
-    This is request/use-case memoisation, not a process cache. Nested composers
+    This is request/use-case memoization, not a process cache. Nested composers
     reuse the active scope and the outermost caller clears it in ``finally``,
     so two consumers assembling one answer cannot disagree or repeat a read,
     while the next request always sees current state.
@@ -91,10 +107,6 @@ def day_span(first: date, last: date | None = None) -> tuple[datetime, datetime 
     into a local date first, which on SQLite is a call back into Python per
     row: the slow part of a read that returns a few hundred rows of thousands.
     """
-
-    from datetime import time, timedelta
-
-    from django.utils import timezone
 
     def day(value: date) -> date:
         if isinstance(value, datetime):
@@ -162,15 +174,26 @@ def guarded(queryset: QuerySet) -> QuerySet:
     return queryset.fetch_mode(FETCH_RAISE if settings.SEVERINO_STRICT_FETCH else FETCH_PEERS)
 
 
-def listing(model, serialize, *, search: tuple[str, ...], status=None, query=None, limit: int = 50) -> dict[str, Any]:
+def listing(
+    rows,
+    serialize,
+    *,
+    search: tuple[str, ...] = (),
+    status=None,
+    query=None,
+    order: tuple[str, ...] = ("slug",),
+    limit: int = 50,
+) -> dict[str, Any]:
     """One list read: an optional status, an optional text match, one page.
 
-    Domains differ only in the model, the serializer and which fields a search
-    looks at: a person searches an asset by vendor and a project by the
-    technologies it uses. Nothing else about the read differs.
+    Domains differ only in the rows (a model, or a queryset a domain has
+    already narrowed or joined), the serializer, the order and which fields a
+    search looks at: a person searches an asset by vendor and a project by the
+    technologies it uses. Each item is the serializer's, so a record's list
+    item is the same shape as the record a save or a fetch answers.
     """
 
-    qs = guarded(model.objects.all())
+    qs = guarded(rows if isinstance(rows, QuerySet) else rows.objects.all())
     if status:
         qs = qs.filter(status=status)
     if query:
@@ -178,24 +201,15 @@ def listing(model, serialize, *, search: tuple[str, ...], status=None, query=Non
         for field in search:
             matches |= Q(**{f"{field}__icontains": query})
         qs = qs.filter(matches)
-    items = list(qs.order_by("slug")[: page_size(limit)])
+    items = list(qs.order_by(*order)[: page_size(limit)])
     return {"items": [serialize(row) for row in items], "count": len(items)}
 
 
-def addressable(model, serialize, slug: str, *, label: str, missing) -> dict[str, Any]:
-    """One record by the slug every registered resource is addressed with.
-
-    ``label`` names the thing in the error, because "Asset 'x' was not found"
-    is the sentence a client shows and the model's own name is not always it.
-
-    ``missing`` is the exception class to raise. Passed in rather than imported
-    because each domain declares its own ``NotFoundError`` and its callers
-    catch that one by name, and because this module stays free of domain
-    imports on purpose, per the note at the top.
-    """
+def addressable(model, serialize, slug: str) -> dict[str, Any]:
+    """One record by the slug every registered resource is addressed with."""
 
     try:
         row = model.objects.get(slug=slug)
     except model.DoesNotExist as exc:
-        raise missing(f"{label} {slug!r} was not found.") from exc
+        raise RecordNotFound("No record has that slug.") from exc
     return serialize(row, relationships=True)

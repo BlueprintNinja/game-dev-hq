@@ -432,7 +432,7 @@ class TopologyPageTests(TestCase):
         self.assertNotContains(response, "#}")
 
     def test_a_node_states_each_edge_from_where_it_stands(self):
-        """Direction is the half of an edge a neighbour list throws away."""
+        """Direction is the half of an edge a neighbor list throws away."""
 
         response = self.page(all=1)
 
@@ -514,6 +514,7 @@ class TopologyPageTests(TestCase):
         self.assertEqual(len(cards(everything)), len(cards(shown)) + left_out)
         # "N of M shown" is out of every card, the ones left out included.
         self.assertEqual(shown.context["topology_total"], len(cards(everything)))
+        self.assertEqual(shown.context["topology_shown"], len(cards(shown)))
         self.assertTrue(select(shown, "data-topology-total", str(len(cards(everything)))))
 
     def test_a_view_shows_everything_it_holds(self):
@@ -1000,7 +1001,7 @@ class OneNodePerMachineTests(TestCase):
         self.assertIn("elsewhere.example.com", {node.label for node in nodes.values()})
 
 
-class AnUnrecognisedContainerIsCarriedByItsMachineTests(TestCase):
+class AnUnrecognizedContainerIsCarriedByItsMachineTests(TestCase):
     """A container the sweep declined has no node, so its machine holds it."""
 
     def setUp(self):
@@ -1036,7 +1037,7 @@ class AnUnrecognisedContainerIsCarriedByItsMachineTests(TestCase):
         facts = self.nodes["machine:a-docker-host"].facts
 
         self.assertEqual(
-            [value for key, value in facts if key == "unrecognised-container"],
+            [value for key, value in facts if key == "unrecognized-container"],
             ["a-stray@a-docker-host"],
         )
 

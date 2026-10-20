@@ -6,7 +6,10 @@ from a declared proxy, an upload cannot choose its response type, are ones
 whose loss is invisible in review of the change that causes it.
 """
 
+import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlsplit
@@ -21,6 +24,7 @@ from django.utils import timezone
 from hq.platform.application.routes import routed
 from hq.platform.core.models import AuditLog
 from hq.platform.core.network import client_ip, parse_ip
+from hq.platform.core.tests.test_settings_env import REPO_ROOT, subprocess_env
 
 PROXY = "10.0.0.5"
 
@@ -348,7 +352,7 @@ PUBLIC_SURFACE = (
     "/apple-touch-icon-precomposed.png",
 )
 
-# A value each URL converter accepts, so a parameterised route can be asked for.
+# A value each URL converter accepts, so a parameterized route can be asked for.
 _CONVERTER_SAMPLES = {
     "IntConverter": "1",
     "StringConverter": "sample",
@@ -742,6 +746,10 @@ class PrecompressedStaticTests(SimpleTestCase):
             "gzip;q=0": False,
             "gzip;q=nonsense": False,
             "xgzip": False,
+            "gzip;q=0, *;q=1": False,
+            "*;q=1, gzip;q=0": False,
+            "br, *;q=0.1": True,
+            "*;q=0": False,
         }
         for header, expected in cases.items():
             with self.subTest(header=header):
@@ -854,7 +862,7 @@ class ReturnDestinationTests(TestCase):
         response = self.client.post("/domains/example.com/pin/", {"next": "//example.net/phish"})
         self.assertNotIn("example.net", response["Location"])
 
-    def test_a_local_destination_is_honoured(self):
+    def test_a_local_destination_is_honored(self):
         response = self.client.post("/domains/example.com/pin/", {"next": "/domains/example.com/"})
         self.assertEqual(response["Location"], "/domains/example.com/")
 
@@ -891,6 +899,52 @@ class BrowserBoundaryTests(TestCase):
         response = self.client.get("/accounts/login/")
 
         self.assertEqual(response["Cross-Origin-Resource-Policy"], "same-origin")
+
+
+FORM_ACTION_PROBE = "; ".join(
+    [
+        "import json",
+        "from hq.config import settings as s",
+        "print(json.dumps([s.SECURE_CSP['form-action'], s.SEVERINO_API_REFERENCE_CSP['form-action']]))",
+    ]
+)
+
+
+def form_action(issuer: str | None) -> list[list[str]]:
+    """form-action as settings derive it for ``issuer``, in a fresh process
+    because settings read the issuer once, at import."""
+
+    overrides = {"DJANGO_SECRET_KEY": "csp-probe-key-not-a-real-secret-only-for-this-test"}
+    if issuer is not None:
+        overrides["SEVERINO_OIDC_ISSUER"] = issuer
+    result = subprocess.run(
+        [sys.executable, "-c", FORM_ACTION_PROBE],
+        cwd=REPO_ROOT,
+        env=subprocess_env(drop=("SEVERINO_OIDC_ISSUER",), **overrides),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(result.stderr)
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+class FormActionTests(SimpleTestCase):
+    """Where a form may be sent. A submission follows its redirects under
+    form-action, so one whose session has expired must be able to reach
+    sign-in at the identity provider, and nowhere else."""
+
+    def test_a_form_may_reach_the_configured_provider_and_only_its_origin(self):
+        for policy in form_action("https://sso.example.com/application/o/hq/"):
+            self.assertEqual(policy, ["'self'", "https://sso.example.com"])
+
+    def test_without_a_provider_a_form_reaches_hq_alone(self):
+        for issuer in (None, "", "sso.example.com"):
+            with self.subTest(issuer=issuer):
+                for policy in form_action(issuer):
+                    self.assertEqual(policy, ["'self'"])
 
 
 @tag("source")
@@ -942,7 +996,7 @@ class SourceBoundaryTests(SimpleTestCase):
 
 
 class CookiePrefixTests(SimpleTestCase):
-    """A cookie no neighbouring host can have written, on a deployment whose browser will keep it."""
+    """A cookie no neighboring host can have written, on a deployment whose browser will keep it."""
 
     def test_a_cookie_carries_the_host_prefix_exactly_when_it_is_secure(self):
         # A browser refuses a `__Host-` cookie that is not Secure, scoped to a
@@ -1074,7 +1128,7 @@ class SafeNextTests(SimpleTestCase):
         request = getattr(RequestFactory(), method)("/", {"next": next_}, secure=secure)
         return safe_next(request, fallback="/fallback/", scope=scope)
 
-    def test_what_is_honoured_and_what_falls_back(self):
+    def test_what_is_honored_and_what_falls_back(self):
         cases = (
             ("/calendar/2026/", "", True),
             ("/expenses/", "", True),
@@ -1085,9 +1139,9 @@ class SafeNextTests(SimpleTestCase):
             ("https://example.net/", "", False),
             ("", "", False),
         )
-        for next_, scope, honoured in cases:
+        for next_, scope, honored in cases:
             with self.subTest(next=next_, scope=scope):
-                self.assertEqual(self.destination(next_, scope=scope), next_ if honoured else "/fallback/")
+                self.assertEqual(self.destination(next_, scope=scope), next_ if honored else "/fallback/")
 
     def test_a_secure_request_is_not_sent_back_over_plain_http(self):
         self.assertEqual(self.destination("http://testserver/expenses/", secure=True), "/fallback/")

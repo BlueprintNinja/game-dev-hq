@@ -2,7 +2,7 @@
 # One local and CI contract check for every trusted HQ plugin.
 #   check-plugin.sh [--plugin-root PATH]     # default: the current directory
 # The plugin reference and Django app are read from the package
-# (scripts/plugin-identity.py), where they are declared once.
+# (tools/pipeline/plugin_identity.py), where they are declared once.
 set -eu
 unset CDPATH
 
@@ -21,7 +21,7 @@ done
 
 hq_root=$(cd -- "$(dirname -- "$0")/.." && pwd)
 plugin_root=$(cd -- "$plugin_root" && pwd)
-identity=$(python3 "$hq_root/scripts/plugin-identity.py" "$plugin_root" ${PLUGIN_REPOSITORY:+--repository "$PLUGIN_REPOSITORY"})
+identity=$(PYTHONPATH="$hq_root" python3 -P -m tools.pipeline.plugin_identity "$plugin_root" ${PLUGIN_REPOSITORY:+--repository "$PLUGIN_REPOSITORY"})
 plugin_reference=$(printf '%s\n' "$identity" | sed -n 's/^plugin-reference=//p')
 django_app=$(printf '%s\n' "$identity" | sed -n 's/^django-app=//p')
 
@@ -47,6 +47,10 @@ export DJANGO_DEBUG=true
 export DJANGO_SETTINGS_MODULE=hq.config.settings
 # A check never opens the host checkout's own database.
 export SEVERINO_DATABASE_PATH="$scratch/check.sqlite3"
+# The settings refuse to load without a signing key. A check signs nothing, and
+# this one exists for its processes alone.
+DJANGO_SECRET_KEY="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+export DJANGO_SECRET_KEY
 export PYTHONPATH="$hq_root"
 export SEVERINO_HQ_PLUGINS="$plugin_reference"
 "$hq_root/scripts/plugin-typecheck.sh" "$virtualenv/bin/python"

@@ -32,18 +32,15 @@ from hq.platform.application.routes import reverse
 
 from .entity_links import entity_link
 from .expiry import days_until
-from .facts import (
-    Subject,
-    inventory_about,
-    inventory_records,
-    readings as stored_readings,
-)
+from .facts import Subject, inventory_about, inventory_records, readings as stored_readings, refusals_about
 from .infrastructure import delivery_targets, enabled_resources, resolved_spec
 from .known_hosts import operator, registrable
 from .mail_policy import is_null_mx
 from .timestamps import moment
 from .ui import ListRow, counted, ended
 from .zones import ZONE_KIND, ZoneInsight
+lazy from . import zones
+lazy from .service_list import services_by_zone
 
 # The authority HQ's own certificate provider issues from. Stated here because
 # the insight below compares it against what a zone's CAA record permits, and
@@ -63,15 +60,12 @@ def _earliest(stamps) -> str:
 def services(zone) -> ZoneInsight | None:
     """What runs in this domain: its services, what serves them, what fronts them.
 
-    Counted from the service catalogue, which decides what a service is and
+    Counted from the service catalog, which decides what a service is and
     when one is parked. Readings joined to names in the domain add what serves
     them (a Pages project) and how many sit behind an overlay (Access).
     """
 
-    from .service_list import services_by_zone
-    from .zones import zone_names
-
-    members = services_by_zone(zone_names()).get(zone.zone, ())
+    members = services_by_zone(zones.zone_names()).get(zone.zone, ())
     inside = [member.service for member in members if member.service is not None]
     joined = stored_readings().about(Subject.of(zones=(zone.zone,)))
     serving = tuple(
@@ -358,7 +352,7 @@ def email(zone) -> ZoneInsight | None:
     refuses = is_null_mx(tuple(mail))
     if refuses:
         mail = []
-    # Assembled as whole sentences rather than joined fragments: capitalising
+    # Assembled as whole sentences rather than joined fragments: capitalizing
     # a comma-joined list lowercases the acronyms and states nothing clearly.
     sentences = []
     if not mail:
@@ -376,7 +370,7 @@ def email(zone) -> ZoneInsight | None:
 def leftover_challenges(zone) -> ZoneInsight | None:
     """Challenge records that outlived the issuance they existed for.
 
-    The one judgement this page makes without a declared policy, because it
+    The one judgment this page makes without a declared policy, because it
     does not need one: a challenge record exists for the seconds an authority
     takes to verify a request and is removed afterwards. One still present at a
     scheduled sweep was left behind and serves nothing.
@@ -409,7 +403,7 @@ def _mail_host(mail) -> str:
     hosts = {registrable(record.content) for record in mail}
     if len(hosts) != 1:
         # Split across operators, unusual enough to state plainly rather than
-        # summarise into one name that would be half wrong.
+        # summarize into one name that would be half wrong.
         return f"{len(mail)} mail servers"
     return operator(hosts.pop())
 
@@ -568,8 +562,6 @@ def registration(zone) -> ZoneInsight | None:
 
 def _zone_part_refused(zone: str, part: str):
     """The zone sweep's refusal of one part on this zone, or None."""
-
-    from .facts import refusals_about
 
     return next(
         (

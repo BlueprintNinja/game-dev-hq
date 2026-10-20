@@ -5,11 +5,13 @@ from unittest import mock
 
 from asgiref.sync import async_to_sync
 from django.test import SimpleTestCase, TestCase, override_settings
+from mcp import types
 
 from hq.domains.assets.models import Asset
 from hq.domains.docs_index.models import DocumentationRecord
 from hq.domains.projects.models import Project
 from hq.platform.application import projection
+from hq.platform.application.record_errors import RecordNotFound
 from hq.platform.application.security import Capability, Principal, is_interactive
 from hq.platform.application.tests.host_only import host_only
 from hq.platform.application.tests.sentinel import (
@@ -169,9 +171,16 @@ class ServiceTests(SentinelMixin, TestCase):
 
         self.assertEqual(result["count"], projection.MAX_PAGE_SIZE)
 
-    def test_missing_object_uses_structured_service_error(self):
-        with self.assertRaisesRegex(services.NotFoundError, "No 'assets' record"):
-            services.get_resource("assets", "missing")
+    def test_a_missing_record_is_not_found_and_names_nothing_sent(self):
+        sent = "sent-by-the-caller-7f3a"
+        for name in ("assets", "machines", "infrastructure.resources"):
+            with self.subTest(name):
+                with self.assertRaises(RecordNotFound):
+                    services.get_resource(name, sent)
+                params = types.CallToolRequestParams(name="get_resource", arguments={"name": name, "identifier": sent})
+                answer = async_to_sync(mcp._call)(None, params)
+                self.assertTrue(answer.is_error)
+                self.assertNotIn(sent, answer.content[0].text)
 
     def test_registry_audit_names_the_orphans(self):
         Project.objects.create(name="Unreferenced", slug="unreferenced")
@@ -184,7 +193,7 @@ class ServiceTests(SentinelMixin, TestCase):
     def test_resource_kinds_are_derived_from_the_live_document(self):
         from hq.platform.api.openapi import document
 
-        from ..contract import catalogue, resource_contract
+        from ..contract import catalog, resource_contract
 
         contract = resource_contract(document())
         listable = [resource.name for resource in contract.listable]
@@ -193,8 +202,8 @@ class ServiceTests(SentinelMixin, TestCase):
 
         self.assertEqual(tools["list_resource"].input_schema["properties"]["name"]["enum"], listable)
         self.assertEqual(tools["get_resource"].input_schema["properties"]["name"]["enum"], addressable)
-        self.assertIn(catalogue(contract.listable), tools["list_resource"].description)
-        self.assertIn(catalogue(contract.addressable), tools["get_resource"].description)
+        self.assertIn(catalog(contract.listable), tools["list_resource"].description)
+        self.assertIn(catalog(contract.addressable), tools["get_resource"].description)
 
     def test_each_tool_is_served_once_and_only_execute_writes(self):
         from hq.platform.mcp.server import mcp as served
@@ -244,6 +253,15 @@ class ServiceTests(SentinelMixin, TestCase):
                 "get_resource readings": services.get_resource("readings", SENTINEL_READING),
                 **{f"list_resource {name}": self.readable(services.list_resource, name) for name in listable},
             }
+            # A selection names every key the record has, so nothing it keeps
+            # can come from anywhere but the redacted record.
+            reading = answers["get_resource readings"]
+            answers["get_resource readings fields"] = services.get_resource(
+                "readings", SENTINEL_READING, fields=list(reading)
+            )
+            answers["list_resource readings fields"] = services.list_resource(
+                "readings", None, fields=list(answers["list_resource readings"]["items"][0])
+            )
 
         for name, answer in answers.items():
             with self.subTest(name):
@@ -256,7 +274,7 @@ class ServiceTests(SentinelMixin, TestCase):
 
         try:
             return read(*args)
-        except AuthorizationError, services.NotFoundError:
+        except AuthorizationError, RecordNotFound:
             return {}
 
     def test_derived_topology_traces_from_a_focus(self):
@@ -337,6 +355,44 @@ class ServiceTests(SentinelMixin, TestCase):
 
         self.assertIn("projects: limti is not a known field.", str(refused.exception))
         self.assertNotIn("hunter2", str(refused.exception))
+
+    def test_the_narrowing_arguments_are_in_each_schema_and_nothing_else_is_taken(self):
+        tools = {tool.name: tool for tool in mcp.tools.values()}
+
+        for name, arguments in {
+            "get_resource": {"fields"},
+            "list_resource": {"fields"},
+            "get_findings": {"severity", "limit"},
+        }.items():
+            with self.subTest(name):
+                self.assertLessEqual(arguments, set(tools[name].input_schema["properties"]))
+
+        async def call(name, arguments):
+            return await mcp.tools[name].call(arguments)
+
+        for name, arguments in {
+            "get_resource": {"name": "projects", "identifier": "x", "feilds": ["slug"]},
+            "list_resource": {"name": "projects", "fields": "slug"},
+            "get_findings": {"limit": "1"},
+        }.items():
+            with self.subTest(name), self.assertRaises(ValueError):
+                async_to_sync(call)(name, arguments)
+
+    def test_an_agent_reads_only_the_keys_it_names(self):
+        project = Project.objects.create(name="Named keys")
+
+        async def call(name, arguments):
+            return await mcp.tools[name].call(arguments)
+
+        detail = async_to_sync(call)(
+            "get_resource", {"name": "projects", "identifier": project.slug, "fields": ["slug"]}
+        )
+        with host_only():
+            found = async_to_sync(call)("get_findings", {"severity": "serious", "limit": 1})
+
+        self.assertEqual(detail, {"slug": project.slug})
+        self.assertLessEqual(len(found["findings"]), 1)
+        self.assertIn("truncated", found["summary"])
 
     def test_connection_state_is_filtered_by_the_mcp_principal(self):
         from hq.platform.application.connections import ConnectionSpec
@@ -456,7 +512,7 @@ class MCPBoundaryTests(TestCase):
             for name in listable:
                 try:
                     services.list_resource(name)
-                except AuthorizationError, services.NotFoundError:
+                except AuthorizationError, RecordNotFound:
                     continue
                 except Exception as exc:  # noqa: BLE001 - every resource that fails is named, not only the first
                     failed[name] = repr(exc)
@@ -923,7 +979,7 @@ class ResourceContractTests(SimpleTestCase):
         }
 
     def test_an_injected_document_owns_the_catalog(self):
-        from ..contract import catalogue, resource_contract
+        from ..contract import catalog, resource_contract
 
         with mock.patch(
             "hq.platform.application.resources.resource_registry", side_effect=AssertionError("registry walk")
@@ -931,7 +987,7 @@ class ResourceContractTests(SimpleTestCase):
             contract = resource_contract(self._document())
         self.assertEqual([r.name for r in contract.listable], ["example.events", "example.notes"])
         self.assertEqual([r.name for r in contract.addressable], ["example.notes", "example.single"])
-        self.assertIn("`example.notes`: Synthetic notes. Identifier: `slug`.", catalogue(contract.addressable))
+        self.assertIn("`example.notes`: Synthetic notes. Identifier: `slug`.", catalog(contract.addressable))
 
     def test_altering_the_document_changes_the_catalog(self):
         from ..contract import resource_contract

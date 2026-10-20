@@ -22,6 +22,8 @@ from collections.abc import Callable
 from hq.domains.control_plane.names import normalized_hostname
 from hq.platform.application.routes import reverse
 from hq.platform.core.models import AuditLog
+lazy from hq.domains.control_plane.models import ManagedResource
+lazy from hq.domains.control_plane.providers import service_facets
 
 from . import docker_sections
 from .analytics import HOST_TRAFFIC_DAYS, traffic_for_hosts
@@ -30,6 +32,15 @@ from .moments import ago
 from .projection import projection_scope
 from .service_context import Cell, ServiceSection
 from .ui import MISSING
+lazy from . import connections, services
+lazy from .hq_self import hq_service
+lazy from .locate import host_of
+lazy from .own_addresses import tailnet_sightings
+lazy from .policy_links import PolicyNames
+lazy from .public_registry import public_endpoints
+lazy from .reach import network_of
+lazy from .tailnet import TAILNET_KIND
+lazy from .topology_model import RELATIONS
 
 
 def sections_for(machine) -> tuple[ServiceSection, ...]:
@@ -57,8 +68,6 @@ def _identity(machine) -> ServiceSection | None:
     so, because a name that looks like a duplicate is worth one row to explain
     and expensive to rediscover.
     """
-
-    from hq.domains.control_plane.models import ManagedResource
 
     keys = [
         key
@@ -114,17 +123,13 @@ def _names(machine) -> ServiceSection | None:
     and not the same as unmeasured. Each is said in its own words.
     """
 
-    from hq.domains.control_plane.providers import service_facets
-
-    from .services import service_catalog
-
     hostnames = tuple(getattr(machine, "hostnames", ()) or ())
     if not hostnames:
         return None
 
     # One derivation for the whole catalog rather than one per name: asking
     # per hostname would re-resolve the same estate nine times over.
-    catalog = {service.hostname: service for service in service_catalog()}
+    catalog = {service.hostname: service for service in services.service_catalog()}
     measured = traffic_for_hosts(set(hostnames), days=HOST_TRAFFIC_DAYS)
     facets = service_facets()
 
@@ -215,14 +220,10 @@ def serves_links(machine, relationships) -> tuple:
     Relationships panel, so the header and the panel cannot disagree. HQ's
     own service leads where HQ runs here."""
 
-    from .connections import machines_once
-    from .hq_self import hq_service
-    from .topology_model import RELATIONS
-
     group = relationships.group(RELATIONS["runs_on"].inverse)
     serves = [item.entity for item in (group.items if group else ())]
     if getattr(machine, "runs_hq", False):
-        own = hq_service(catalog=machines_once())
+        own = hq_service(catalog=connections.machines_once())
         if own is not None:
             first = entity_link("service", own.hostname)
             serves = [first, *(link for link in serves if link.label != first.label)]
@@ -237,9 +238,6 @@ def machine_links(machine, relationships) -> dict[str, object]:
     names an address; it links to the machine answering there.
     """
 
-    from .policy_links import PolicyNames
-    from .tailnet import TAILNET_KIND
-
     presence = getattr(machine, "presence", None)
     serves = serves_links(machine, relationships)
     links: dict[str, object] = {
@@ -249,7 +247,7 @@ def machine_links(machine, relationships) -> dict[str, object]:
         "serves_links": serves,
         "serves_count": len(serves) + len(getattr(machine, "roles", ()) or ()),
         "declaration_links": tuple(entity_link("resource", key) for key in machine.other_declarations),
-        "labelled_addresses": (),
+        "labeled_addresses": (),
         "tailscale_version": "",
         "device_link": None,
         "magic_dns_link": None,
@@ -257,7 +255,7 @@ def machine_links(machine, relationships) -> dict[str, object]:
     }
     if presence is None:
         return links
-    links["labelled_addresses"] = labelled_addresses(machine)
+    links["labeled_addresses"] = labeled_addresses(machine)
     # The release, without the build it was cut from.
     links["tailscale_version"] = str(presence.client_version or "").partition("-")[0]
     record = {"addresses": presence.addresses}
@@ -276,12 +274,9 @@ def machine_links(machine, relationships) -> dict[str, object]:
 _NETWORKS = {"tailnet": "Tailnet", "network": "LAN", "public": "Public"}
 
 
-def labelled_addresses(machine) -> tuple[tuple[str, str], ...]:
+def labeled_addresses(machine) -> tuple[tuple[str, str], ...]:
     """``(label, address)`` for each address the machine is reached at, by the
     network it is on. A loopback address is left out: it places no machine."""
-
-    from .locate import host_of
-    from .reach import network_of
 
     return tuple(
         (_NETWORKS.get(network, ""), address)
@@ -296,9 +291,6 @@ def header_addresses(machine) -> tuple[tuple[str, str, str], ...]:
     Tailnet, then LAN, then public: each only when it is the device's own
     (``application.own_addresses``).
     """
-
-    from .own_addresses import tailnet_sightings
-    from .public_registry import public_endpoints
 
     presence = getattr(machine, "presence", None)
     if presence is None:

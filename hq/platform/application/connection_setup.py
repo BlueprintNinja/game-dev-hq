@@ -12,9 +12,15 @@ code does not.
 
 from dataclasses import dataclass
 
+lazy from django.conf import settings
+
 from hq.domains.control_plane.connection_kinds import CONNECTION_KINDS
 from hq.domains.control_plane.credential_reads import MINTERS, observer_permissions
 from hq.domains.control_plane.provider_spec import ConnectionShape, Setting
+
+lazy from .credential_sight import credential_sight
+lazy from .entity_links import web_url
+lazy from .page_reads import need
 
 # 1Password's own names for the built-in fields a setting can come from.
 _BUILT_IN = {"credential": "credential", "password": "password", "username": "username"}
@@ -60,10 +66,6 @@ class ProviderSetup:
 def docs_url(page: str, anchor: str = "") -> str:
     """One of HQ's own docs, in the source it names; blank when it names none."""
 
-    from django.conf import settings
-
-    from .entity_links import web_url
-
     source = web_url(str(getattr(settings, "SEVERINO_HQ_SOURCE", "") or ""))
     return f"{source}/blob/main/docs/{page}" + (f"#{anchor}" if anchor else "") if source else ""
 
@@ -78,9 +80,6 @@ def setups(exclude: frozenset[str] = frozenset()) -> tuple[ProviderSetup, ...]:
     """Every provider HQ can connect to, but those in ``exclude``, in the order
     to connect them: what the dashboard reads first, then what the most pages
     read (``page_reads.need``), then by name."""
-
-    from .credential_sight import credential_sight
-    from .page_reads import need
 
     sight = {found.provider: found for found in credential_sight(inventory={})}
     needed = need()
@@ -109,7 +108,7 @@ def _setup(provider: str, sight) -> ProviderSetup:
         permissions=tuple(sorted({*observer_permissions(provider), *kind.writes}))
         if kind.credential == "scoped"
         else (),
-        mint=minter.script if minter else "",
+        mint=" ".join(minter.invocation) if minter else "",
         item_type=_item_type(kind.shape),
         fields=_fields(provider, kind.shape),
         sees=tuple(dict.fromkeys(seen.label for seen in sight.sights)) if sight else (),
@@ -148,7 +147,7 @@ def _field(setting: Setting) -> ItemField:
         return ItemField(name, "", f"The item's own {name} field.{optional}", setting.secret)
     if setting.url is not None:
         return ItemField("website", "", f"The item's website: the service's address.{optional}", setting.secret)
-    return ItemField(setting.label, "", f"A field labelled {setting.label}.{optional}", setting.secret)
+    return ItemField(setting.label, "", f"A field labeled {setting.label}.{optional}", setting.secret)
 
 
 REFERENCE_HEADER = """# Connections

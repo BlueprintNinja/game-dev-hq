@@ -165,15 +165,23 @@ credential and a 403 a missing permission (`runtime.StatusFailure`).
 
 ### The controller's own machine
 
-Three readings are of the machine a controller runs on and need no credential:
+Four readings are of the machine a controller runs on and need no credential:
 root reads a fact on the host and `hq-host controller` mounts the answer into
 the controller read-only, naming it in an environment variable. The controller
 never holds the ruleset or directory the fact came from. A fact the launcher
 does not name is a kind that reads `Not connected` (`hasSource` in
-`controller/providers/controller.go`).
+`controller/providers/controller.go`). Each is a kind of its own, never a field
+of another kind's record, so a run not handed it cannot store an empty value
+over the last reading (`TestEveryHostReadingIsAHeldSource`).
 
 `host.firewall` is whether HQ's port must arrive on the tailnet interface, one
 distilled record (`SEVERINO_HOST_FIREWALL`).
+
+`host.tailnet_lock` is tailnet lock as the machine's own daemon states it,
+counted: whether it is on, whether this node is signed, how many keys sign and
+which machines it filters out (`SEVERINO_TAILNET_LOCK`). The launcher names the
+file whether or not the daemon answered, so a status it could not take is a
+failed read that keeps the last one and says why.
 
 `host.render_status` is what each secret renderer says about its own runs
 (`SEVERINO_RENDER_STATUS`). Its record, its findings and why the mount is safe
@@ -398,9 +406,9 @@ destructive, so a finding never offers it as a remedy.
 Machines, services and domains are nodes of their own
 (`hq.platform.application.topology_estate`). A controller or target that names
 one folds into it; anything else a connection reaches stays a target. A machine
-is reached through the connections the machine catalogue names. A domain's join
+is reached through the connections the machine catalog names. A domain's join
 keys are every name under it. HQ's own service is a service node, running on
-the machine the catalogue names (`hq.platform.application.hq_self`), the same
+the machine the catalog names (`hq.platform.application.hq_self`), the same
 answer as the machine page and the services list.
 
 Nothing in the topology names a provider to draw its edges. They follow from
@@ -408,7 +416,7 @@ the declarations:
 
 - A reading joins its subject through the `hostnames`, `addresses` and
   `containers` its spec declares. The edge comes from the connection that read
-  it, labelled with the reading's `relation` and carrying its kind, its age and
+  it, labeled with the reading's `relation` and carrying its kind, its age and
   each record as a linked entity; it exists only while the reading does. A
   tailnet device is a subject by its addresses too. A reading HQ takes itself
   comes from its public registry's node; one whose connection no controller
@@ -643,8 +651,8 @@ and search read `Machine.roles`.
 
 ## The estate at a glance
 
-`hq.platform.application.estate.estate_reading` reads the machine catalogue,
-the service catalogue, the zone names, the connection rows and the joined
+`hq.platform.application.estate.estate_reading` reads the machine catalog,
+the service catalog, the zone names, the connection rows and the joined
 readings once per projection. The dashboard's estate card, the estate action
 items (offline machines, managed certificates in their renewal window) and the
 command center's estate results read it. Every derived read is a registered
@@ -666,10 +674,10 @@ connection acts, and HQ manages through it only when its item says so
 refused kind is a missing permission.
 
 `requires` on each reading is a tuple of exact permission names, as the minting
-scripts use them: Cloudflare as `<permission group name> (<account|zone>)`,
+tasks use them: Cloudflare as `<permission group name> (<account|zone>)`,
 Tailscale as the bare scope name; a part names its subset in `parts`.
-`scripts/cloudflare-observer-permissions.txt` and
-`scripts/tailscale-observer-scopes.txt` hold every reading's `requires` plus
+`tools/cloudflare-observer-permissions.txt` and
+`tools/tailscale-observer-scopes.txt` hold every reading's `requires` plus
 the reads in `hq.domains.control_plane.credential_reads` that are not readings
 yet; a test keeps them equal. Minting is in
 [Secrets](Secrets.md#minting-observer-credentials).

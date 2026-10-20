@@ -14,36 +14,7 @@ from starlette.staticfiles import StaticFiles
 from hq.platform.core.network import TrustedNetworkASGI
 from hq.platform.core.static import CachedStaticFiles
 
-from .source import parsed
-
-# Installed or generated trees inside a checkout. With hidden directories
-# (.git, a virtualenv under any name) they are not this project's source.
-NOT_SOURCE = {
-    "venv",
-    "site-packages",
-    "node_modules",
-    "staticfiles",
-    "build",
-    "data",
-    "var",
-    "media",
-    "exports",
-    "backups",
-}
-
-
-def source_files(root: Path, pattern: str) -> list[Path]:
-    """This checkout's own files matching ``pattern``.
-
-    Read from the directory tree, not from git: the suite also runs inside the
-    image, where there is no git to ask what is tracked.
-    """
-
-    return sorted(
-        path
-        for path in root.rglob(pattern)
-        if not any(part.startswith(".") or part in NOT_SOURCE for part in path.relative_to(root).parts[:-1])
-    )
+from .source import parsed, source_files
 
 
 def view_modules(root: Path) -> list[Path]:
@@ -279,7 +250,7 @@ class StyleContractTests(SimpleTestCase):
     def test_a_blur_has_something_to_show_through(self):
         """A backdrop filter costs a layer redrawn on every scroll; behind an
         opaque background it shows nothing, so a rule that blurs must also let
-        the page through (`transparent` mixed in, or a colour with alpha)."""
+        the page through (`transparent` mixed in, or a color with alpha)."""
 
         for body in re.findall(r"\{([^{}]*backdrop-filter[^{}]*)\}", self._stylesheet()):
             background = re.search(r"background(?:-color)?:\s*([^;]+);", body)
@@ -516,7 +487,7 @@ class StyleContractTests(SimpleTestCase):
         Rounding padding by a pixel is visible in a dense table in a way that
         moving type by half a pixel is not, so each is judged on its own
         rather than swept. `1px` is exempt: it is a hairline rule (the grid
-        lines in `.sweep-grid` are a 1px gap over a coloured background) and
+        lines in `.sweep-grid` are a 1px gap over a colored background) and
         not a space at all.
         """
 
@@ -527,9 +498,9 @@ class StyleContractTests(SimpleTestCase):
         offenders = sorted(
             {
                 f"{value}px"
-                for match in declaration.finditer(self._stylesheet())
                 # calc() and max() carry their own arithmetic; the scale is
                 # still the input, and rewriting inside them buys nothing.
+                for match in declaration.finditer(self._stylesheet())
                 if not re.search(r"\b(?:calc|max|min|clamp)\(", match.group(1))
                 for value in re.findall(r"(?<![-\w.])([0-9]+)px", match.group(1))
                 if int(value) in on_scale
@@ -538,9 +509,9 @@ class StyleContractTests(SimpleTestCase):
 
         self.assertEqual(offenders, [], "This spacing is on the scale; write it as --space-*.")
 
-    # Every CSS named colour and system colour, so `color: tomato` is caught as
+    # Every CSS named color and system color, so `color: tomato` is caught as
     # surely as a hex.
-    _NAMED_COLOURS = frozenset(
+    _NAMED_COLORS = frozenset(
         [
             "aliceblue",
             "antiquewhite",
@@ -598,7 +569,7 @@ class StyleContractTests(SimpleTestCase):
             "gray",
             "green",
             "greenyellow",
-            "grey",
+            "gray",
             "honeydew",
             "hotpink",
             "indianred",
@@ -742,18 +713,18 @@ class StyleContractTests(SimpleTestCase):
                 values.append((css.count("\n", 0, segment.end()) + 1, value))
         return values
 
-    def test_colour_is_named_only_in_the_tokens_layer(self):
-        """Colour lives in tokens, so a theme is a set of token overrides.
+    def test_color_is_named_only_in_the_tokens_layer(self):
+        """Color lives in tokens, so a theme is a set of token overrides.
 
         The dark palette overrides `--bg`, `--ink` and the rest and nothing
-        else. A literal anywhere else is a colour the theme cannot reach: it
+        else. A literal anywhere else is a color the theme cannot reach: it
         stays a light-mode value on a dark page, and nothing but a person
         looking at that one screen would notice. Literals also let related
-        colours drift apart: hex written per component makes `published`,
+        colors drift apart: hex written per component makes `published`,
         `reachable` and `success` three different greens.
 
         Allowed outside the layer: `var()` references, `color-mix()` of two
-        tokens, and the keywords that are not a colour choice (`transparent`,
+        tokens, and the keywords that are not a color choice (`transparent`,
         `currentColor`, `inherit`).
         """
 
@@ -769,11 +740,11 @@ class StyleContractTests(SimpleTestCase):
         for line, value in declarations:
             for match in literal.finditer(value):
                 word = match.group(1)
-                if word is None or word.lower() in self._NAMED_COLOURS:
+                if word is None or word.lower() in self._NAMED_COLORS:
                     offenders.append(f"{line}: {value.strip()[:70]}")
                     break
 
-        self.assertEqual(offenders, [], "Colour belongs in a token in `@layer tokens`, not the component.")
+        self.assertEqual(offenders, [], "Color belongs in a token in `@layer tokens`, not the component.")
 
     def test_no_tracked_file_names_a_reachable_endpoint(self):
         """Addresses, ports and account names are deployment facts, not source.
@@ -1029,7 +1000,7 @@ class StyleContractTests(SimpleTestCase):
             with self.subTest(theme=theme):
                 self.assertEqual(len(values), len(set(values)), "series slots must be distinct")
 
-    def test_series_fills_use_categorical_slots_not_status_colours(self):
+    def test_series_fills_use_categorical_slots_not_status_colors(self):
 
         css = self._stylesheet()
         reserved = {"--danger", "--warn", "--ok", "--attn"}
@@ -1037,7 +1008,7 @@ class StyleContractTests(SimpleTestCase):
             used = set(re.findall(r"var\(\s*(--[a-z0-9-]+)", rule))
             self.assertFalse(
                 used & reserved,
-                f"status colours are reserved and must not encode a series: {used & reserved}",
+                f"status colors are reserved and must not encode a series: {used & reserved}",
             )
 
 
@@ -1285,32 +1256,53 @@ class CommentHistoryTests(SimpleTestCase):
     How the code came to be belongs in the commit message. Narration in a
     comment is read as a description of the code by everyone who opens the
     file, long after it stopped being true. The phrases below cannot describe
-    present behaviour, so any of them in a comment is history.
+    present behavior, so any of them in a comment is history.
     """
 
     NARRATION = re.compile(
         r"\b(used to be|the first version|the old version|reached production"
         r"|turned out|until now|until recently|this regression|the bug (?:that|was)"
-        r"|shipped (?:once|unstyled|for a while)|we (?:had|used|found|added|removed|changed|tried))\b",
+        r"|shipped (?:once|unstyled|for a while)|we (?:had|used|found|added|removed|changed|tried)"
+        r"|now also|evaluated on)\b",
         re.IGNORECASE,
     )
 
     def _comments(self, path: Path, text: str):
-        if path.suffix in (".css", ".js"):
+        if path.suffix == ".md":
+            # Prose outside fenced code, which keeps its offsets so a hit names its line.
+            masked = re.sub(r"```.*?```", lambda m: re.sub(r"[^\n]", " ", m.group()), text, flags=re.DOTALL)
+            return re.finditer(r"(?:[^\n]+\n?)+", masked)
+        if path.suffix in (".css", ".js", ".go"):
             return re.finditer(r"/\*.*?\*/|//[^\n]*", text, re.DOTALL)
         if path.suffix in (".py", ".sh"):
             return re.finditer(r"#[^\n]*|\"\"\".*?\"\"\"", text, re.DOTALL)
         return re.finditer(r"\{% comment %\}.*?\{% endcomment %\}|\{#.*?#\}", text, re.DOTALL)
 
-    SUFFIXES = {".py", ".js", ".css", ".html", ".sh"}
+    SUFFIXES = {".py", ".js", ".css", ".html", ".sh", ".go", ".md"}
     # Generated or installed trees, and anything hidden (.git, .venv). The suite
     # also runs inside the image, where there is no git to ask what is tracked.
     SKIPPED = {"node_modules", "staticfiles", "build", "data", "var", "media", "exports", "backups"}
+
+    @staticmethod
+    def _in_scope(relative: Path) -> bool:
+        """Go and Markdown are read where HQ's own prose lives, not in vendored or generated trees."""
+
+        if relative.suffix == ".go":
+            return (
+                relative.parts[0] == "controller"
+                and "vendor" not in relative.parts
+                and not relative.name.endswith(".gen.go")
+            )
+        if relative.suffix == ".md":
+            return relative.parts[0] == "docs" or relative.parts in (("AGENTS.md",), ("README.md",))
+        return True
 
     def _sources(self, root: Path):
         for path in sorted(root.rglob("*")):
             parts = path.relative_to(root).parts
             if path.suffix not in self.SUFFIXES or not path.is_file():
+                continue
+            if not self._in_scope(path.relative_to(root)):
                 continue
             if any(part.startswith(".") or part in self.SKIPPED for part in parts[:-1]):
                 continue
@@ -2060,7 +2052,7 @@ class RequestNeverWaitsTests(SimpleTestCase):
         self.assertEqual(leaving, {"hq/platform/core/outbound.py", "hq/domains/jobs/runner.py"})
 
     @tag("source")
-    def test_asked_for_work_is_followed_by_one_script_behaviour(self):
+    def test_asked_for_work_is_followed_by_one_script_behavior(self):
         script = (self.ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
         templates = "\n".join(
             path.read_text(encoding="utf-8") for path in sorted((self.ROOT / "templates").rglob("*.html"))
@@ -2080,7 +2072,7 @@ class FragmentPrimitiveTests(SimpleTestCase):
 
     A script that parses a response itself, or keeps its own timer to ask
     again, is a second fetch-and-swap with its own focus, session and failure
-    behaviour. Both are refused here, so the next read is an attribute on an
+    behavior. Both are refused here, so the next read is an attribute on an
     element rather than a function in a page's script.
     """
 
@@ -2090,12 +2082,18 @@ class FragmentPrimitiveTests(SimpleTestCase):
     # on a timer.
     REFUSED = {
         "reads a response body as text": r"\.text\(\)",
+        "reads a response body as data": r"\.json\(\)",
         "parses markup": r"DOMParser|parseFromString|insertAdjacentHTML|\.innerHTML\b|\.outerHTML\s*=",
         "keeps its own interval": r"\bsetInterval\(",
         "sleeps in a loop": r"setTimeout\(\s*resolve\b",
         "opens its own stream": r"\bEventSource\b|\bXMLHttpRequest\(",
         "fetches outside the session boundary": r"(?<![\w.])fetch\(|window\.fetch\(",
     }
+    # How many times a script may still do what is refused, and why. Asked-for
+    # work answers with how it stands (state, note, seconds, status address),
+    # which every copy of its control on the page draws in place; that answer
+    # is data no one region is drawn from: the ask's post and its status poll.
+    ALLOWED = {("app.js", "reads a response body as data"): 2}
     # The attributes of the hand-rolled reads the primitive replaced.
     RETIRED = (
         "data-deferred",
@@ -2106,6 +2104,7 @@ class FragmentPrimitiveTests(SimpleTestCase):
         "data-dashboard-glance",
         "data-calendar-source",
         "X-Command-Center",
+        "data-action-count-url",
     )
 
     def scripts(self) -> dict[str, str]:
@@ -2122,8 +2121,9 @@ class FragmentPrimitiveTests(SimpleTestCase):
                 continue
             for what, pattern in self.REFUSED.items():
                 with self.subTest(script=name, rule=what):
-                    self.assertIsNone(
-                        re.search(pattern, source),
+                    self.assertEqual(
+                        len(re.findall(pattern, source)),
+                        self.ALLOWED.get((name, what), 0),
                         f"{name} {what}; a read is a `data-fragment` region or "
                         "`hqFragment.swap`, and a poll is `hqEvery`",
                     )

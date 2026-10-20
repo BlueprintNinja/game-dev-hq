@@ -16,6 +16,8 @@ from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
+lazy from django.conf import settings
+
 from hq.platform.application.routes import reverse
 
 from .derivations import passed
@@ -24,6 +26,7 @@ from .item_help import cannot_help, do_step, run_step, steps
 from .standards import UNMET, Check as _Check, Posture, measure
 from .timestamps import moment
 from .ui import Insight, counted
+lazy from .projects import repository_key
 
 BOTH = "both"
 PUBLIC = "public"
@@ -219,7 +222,7 @@ STANDARD: tuple[Check, ...] = (
 )
 
 
-# The secrets the host's own wiring sets (scripts/wire-github-app.py). A
+# The secrets the host's own wiring sets (mise run wire-github-app). A
 # variable by one of these names is one of them kept in the wrong place.
 WIRED_SECRETS = frozenset({"HQ_APP_KEY", "HQ_APP_CLIENT_ID"})
 
@@ -473,12 +476,7 @@ FOLLOWS_HOST = "It calls HQ's own workflows at their main branch, which requirin
 def _host() -> str:
     """``owner/name`` of the repository HQ is built from; "" when it says none."""
 
-    from django.conf import settings
-
-    from .github_public import github_repository
-
-    parts = github_repository(str(getattr(settings, "SEVERINO_HQ_SOURCE", "") or ""))
-    return "/".join(parts).lower() if parts else ""
+    return repository_key(str(getattr(settings, "SEVERINO_HQ_SOURCE", "") or ""))
 
 
 def _intended(repo: Repository) -> dict[str, str]:

@@ -53,11 +53,11 @@ ruleset before they can publish anything.
    [`deploy/github-apps.json`](../deploy/github-apps.json). Install it on
    this repository and each extension.
 2. Store the app's private key in 1Password, then set the secrets with
-   `scripts/wire-github-app.py`; name each extension with `--extension`, or
+   `mise run wire-github-app`; name each extension with `--extension`, or
    none. It needs `gh` and `op` signed in:
 
    ```sh
-   scripts/wire-github-app.py --vault 'Example Vault' --item 'example github app' --client-id EXAMPLE_CLIENT_ID --extension example-owner/example-extension
+   mise run wire-github-app --vault 'Example Vault' --item 'example github app' --client-id EXAMPLE_CLIENT_ID --extension example-owner/example-extension
    ```
 
 3. Set the `COMPOSITION_EXTENSIONS` repository secret: JSON in the shape of
@@ -202,58 +202,22 @@ variable: the field's label is the variable's name, its value the value.
 Only labels in UPPER_SNAKE_CASE with a non-empty value are rendered; anything
 else on the item is ignored. A Secure Note with custom fields works.
 
-Every name is read in [`hq/config/settings.py`](../hq/config/settings.py);
-[`.env.example`](../.env.example) has the longer notes.
+The variables are the *installer* rows of the table in
+[Deployment](Deployment.md#configuration), each with what it does and its
+default.
 
-**Required.** HQ will not start or cannot serve without these. The renderer
-refuses an item that lacks one, or holds it empty, and names each one missing
-(`REQUIRED_APP_VARIABLES` in `hq/config/settings.py`):
-
-| Variable | For |
-| :--- | :--- |
-| `DJANGO_SECRET_KEY` | signs sessions; HQ will not start without it. Generate a long random value in 1Password. |
-| `DJANGO_ALLOWED_HOSTS` | every hostname browsers and clients use, comma-separated; anything else gets 400 |
-
-**Behind a TLS proxy.** The renderer does not require these, but sign-in
-through a proxy does not work without them:
-
-| Variable | For |
-| :--- | :--- |
-| `DJANGO_CSRF_TRUSTED_ORIGINS` | each full origin the browser uses, such as `https://hq.example.com`; without it sign-in fails |
-| `DJANGO_BEHIND_TLS_PROXY` | `1`: trust the proxy's `X-Forwarded-Proto` and redirect plain HTTP |
-
-**Set on a first install.** Each has a default; setting it records this host's choice:
-
-| Variable | For |
-| :--- | :--- |
-| `DJANGO_DEBUG` | `0` in production |
-| `DJANGO_SESSION_COOKIE_SECURE` | `1`: the session cookie only over HTTPS |
-| `DJANGO_CSRF_COOKIE_SECURE` | `1`: the CSRF cookie only over HTTPS |
-| `DJANGO_HSTS_SECONDS` | how long browsers insist on HTTPS; `31536000` is a year |
-| `DJANGO_HSTS_INCLUDE_SUBDOMAINS` | `1` or `0`: whether HSTS covers subdomains |
-| `DJANGO_HSTS_PRELOAD` | `0` for a name the public internet cannot resolve |
-| `DJANGO_TIME_ZONE` | your time zone, such as `America/New_York`; the default is `America/Chicago` |
-| `SEVERINO_SITE_NAME` | the name in page titles and the header |
-| `SEVERINO_TRUSTED_PROXIES` | the proxy's exact address, such as `127.0.0.1/32`; the only source whose `X-Forwarded-For` HQ believes |
-| `SEVERINO_SECRET_STORE_KEY` | 32 characters or more; seals certificates you ask HQ to install ([Secrets](Secrets.md#severino_secret_store_key)) |
-| `SEVERINO_OIDC_ENABLED` | `0` to start with a password; `1` once sign-in is set up below |
-
-**Optional.** Set when you use the feature:
-
-| Variable | For |
-| :--- | :--- |
-| `SEVERINO_OIDC_ISSUER`, `SEVERINO_OIDC_CLIENT_ID`, `SEVERINO_OIDC_CLIENT_SECRET`, `SEVERINO_OIDC_ALLOWED_GROUPS` | sign-in through your identity provider; turning it on closes the password form |
-| `SEVERINO_API_RESOURCE` | the identity provider's API audience; empty disables the machine API and MCP |
-| `SEVERINO_MCP_ALLOWED_HOSTS` | the host names MCP clients connect to; empty disables MCP |
-| `SEVERINO_MCP_ENABLE_*` | MCP write switches, all off by default |
-| `SEVERINO_TRUSTED_NETWORKS` | who may reach HQ at all; the default is loopback and Tailscale's ranges |
-| `CONTENT_INDEX_URL` | a public site's content index to sync; unset turns the sync off |
-| `CLOUDFLARE_D1_DATABASE_NAME` | which D1 database is the contact inbox, when more than one holds the contact table; the inbox itself is read and written through the Cloudflare API connection |
-
-The image sets the storage paths (`SEVERINO_DATABASE_PATH`,
-`SEVERINO_MEDIA_ROOT`, `SEVERINO_EXPORTS_ROOT`, `DJANGO_STATIC_ROOT`) and the
-composition sets `SEVERINO_HQ_PLUGINS`. A real environment variable wins over
-the rendered file, so setting those on the item changes nothing.
+- **Required:** `DJANGO_SECRET_KEY` (generate a long random value in
+  1Password) and `DJANGO_ALLOWED_HOSTS`. The renderer refuses an item that
+  lacks one, or holds it empty, and names each one missing
+  (`REQUIRED_APP_VARIABLES` in `hq/config/settings.py`).
+- **Behind a TLS proxy:** `DJANGO_CSRF_TRUSTED_ORIGINS` and
+  `DJANGO_BEHIND_TLS_PROXY`, and the proxy's address in
+  `SEVERINO_TRUSTED_PROXIES`. The renderer does not require them, but sign-in
+  through a proxy does not work without them.
+- **On a first install:** `DJANGO_DEBUG=0`, the two cookie switches,
+  `DJANGO_TIME_ZONE`, `SEVERINO_SITE_NAME` and `SEVERINO_SECRET_STORE_KEY`,
+  with `SEVERINO_OIDC_ENABLED=0` until sign-in is set up below.
+- **The rest** when you use the feature it names.
 
 **Check:** the item has `DJANGO_SECRET_KEY` and `DJANGO_ALLOWED_HOSTS` with
 values, and no name appears twice.
@@ -271,7 +235,7 @@ shape needs. Every provider's item, field by field, is in
 
 Tailscale is a natural first, because HQ already needs a tailnet. In the
 Tailscale admin console, create an OAuth client with the read scopes in
-[`scripts/tailscale-observer-scopes.txt`](../scripts/tailscale-observer-scopes.txt).
+[`tools/tailscale-observer-scopes.txt`](../tools/tailscale-observer-scopes.txt).
 Then create an **API Credential** item in the vault:
 
 | Field | Value |
@@ -488,11 +452,13 @@ off until you want HQ to change things through it
 - **HQ's standard.** The Connections page lists checks beyond what every HQ
   enforces, such as tailnet lock. `SEVERINO_POSTURE=advanced` on the env item
   lists each unmet one in Needs you ([Posture](Posture.md)).
-- **Releases.** From now on a merge to `main` reaches this host through
+- **Releases.** A merge to `main` reaches this host through
   Compose and Deploy, after your approval ([Deployment](Deployment.md)).
-  Rerun `hq-host bootstrap` whenever `host.json` changes.
+  Rerun `hq-host bootstrap` whenever `host.json` changes, and once after a
+  release that changes the sudo rule it renders.
 - **Backup.** `hq-host install` enabled the nightly backup. It needs
-  `/etc/severino-hq/backup.env` ([Backup](Backup.md)).
+  `/etc/severino-hq/backup.env`, `sqlite3`, and `age` to encrypt
+  ([Backup](Backup.md)).
 
 ## When the first run fails
 

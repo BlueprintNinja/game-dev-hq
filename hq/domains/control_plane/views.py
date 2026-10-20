@@ -57,11 +57,13 @@ from hq.platform.application.topology_model import RELATIONS
 from hq.platform.application.ui import counted
 from hq.platform.application.whereabouts import whereabouts
 from hq.platform.core.templatetags.nav_tags import returning_to
+lazy from hq.platform.application.page_relations import for_container
 
 from .models import ManagedResource, OperationRequest
 from .provider_adapters.portainer import CONTAINER_KIND
 from .provider_adapters.tls import CERTIFICATE_KIND
 from .providers import PROVIDERS, describe_providers, shown_spec
+lazy from .container_views import container_detail
 
 # Which use case serves which verb. A table rather than a fall-through, so a
 # lifecycle verb such as Restart never reaches reconciliation, which is locked
@@ -369,7 +371,6 @@ class InfrastructureDetailView(PageMixin, DetailView):
 
         if self.object.kind != CONTAINER_KIND:
             return None
-        from .container_views import container_detail
 
         return container_detail(self.object, self.request)
 
@@ -398,8 +399,6 @@ class InfrastructureDetailView(PageMixin, DetailView):
 
         found = self.all_relationships
         if self.object.kind == CONTAINER_KIND:
-            from hq.platform.application.page_relations import for_container
-
             return for_container(found)
         return found
 
@@ -508,7 +507,7 @@ class InfrastructureDetailView(PageMixin, DetailView):
         )
         derived = self.derived
         context["status"] = record_status(self.object, health=derived.health, newest=newest_reading(self.object.kind))
-        # A running container is summarised by what it runs, in its own band.
+        # A running container is summarized by what it runs, in its own band.
         if not (self.container and self.container["standing"]):
             context["page_aside"] = "control_plane/_record_status.html"
         # What this resource does, said by its own provider.

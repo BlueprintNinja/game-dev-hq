@@ -40,7 +40,9 @@ from urllib.parse import urlencode
 
 from django.conf import settings
 
-from hq.domains.control_plane.providers import PROVIDERS
+from hq.domains.control_plane.providers import PROVIDERS, enabled_controller_actions
+lazy from hq.domains.control_plane.models import OperationRequest
+lazy from hq.domains.control_plane.observations import OBSERVATIONS
 
 from . import (
     certificate_expiry,
@@ -78,6 +80,7 @@ from .finding_model import (
 )
 from .first_seen import recorded
 from .integrations import IntegrationGraph, integration_graph
+from .projection import QueryRefusal
 from .security import Capability, Principal
 from .topology import derive_topology
 from .topology_model import (
@@ -90,6 +93,10 @@ from .workflows import (
     claim_resolution_plan,
     serialize_workflow,
 )
+lazy from . import cadence
+lazy from .estate import estate_reading
+lazy from .moments import ago
+lazy from .ui import counted
 
 _CLAIM_NAMESPACE = "infrastructure.finding"
 
@@ -216,9 +223,6 @@ class Coverage:
 
     @property
     def sentence(self) -> str:
-        from .moments import ago
-        from .ui import counted
-
         return (
             f"{counted(self.rules, 'check')} over {counted(self.machines, 'machine')} and "
             f"{counted(self.services, 'service')}, from readings {ago(self.read_at)}."
@@ -226,11 +230,8 @@ class Coverage:
 
 
 def coverage() -> Coverage:
-    from .cadence import controller_standing
-    from .estate import estate_reading
-
     estate = estate_reading()
-    return Coverage(len(RULES), len(estate.machines), len(estate.services), controller_standing().seen_at)
+    return Coverage(len(RULES), len(estate.machines), len(estate.services), cadence.controller_standing().seen_at)
 
 
 def rule_for(name: str) -> FindingRule | None:
@@ -370,8 +371,6 @@ def _read_subject(finding: Finding, subject: TopologyNode | None) -> dict[str, A
     """What to read now so the check re-runs on fresh data; None when no reading
     is involved."""
 
-    from hq.domains.control_plane.observations import OBSERVATIONS
-
     if subject is not None and subject.kind == "connection" and subject.connection_ref:
         return {"connection_ref": subject.connection_ref}
     kind = finding.scope or (subject.kind_key if subject is not None else "")
@@ -510,8 +509,15 @@ def derive_findings(topology: Topology, *, principal: Principal, rule: str = "")
                 continue
             findings.append(_resolved(finding, principal, node))
 
-    order = {"serious": 0, "attention": 1, "neutral": 2, "good": 3}
-    return tuple(sorted(findings, key=lambda f: (order.get(f.severity, 9), f.rule, f.subject)))
+    return tuple(sorted(findings, key=lambda f: (_rank(f.severity), f.rule, f.subject)))
+
+
+# Most severe first: the order findings are served in and a floor reads.
+SEVERITIES = ("serious", "attention", "neutral", "good")
+
+
+def _rank(severity: str) -> int:
+    return SEVERITIES.index(severity) if severity in SEVERITIES else len(SEVERITIES)
 
 
 def estate_findings(*, principal: Principal, rule: str = "") -> tuple[Any, ...]:
@@ -570,14 +576,37 @@ def serialize_finding(finding: Finding) -> dict[str, Any]:
     }
 
 
-def findings(*, principal: Principal, rule: str = "") -> dict[str, Any]:
-    """The serialized claims, for machine delivery adapters."""
+class InvalidFindingsQuery(QueryRefusal):
+    """A narrowing input the findings cannot be read by; ``reason`` says which."""
 
+
+def _narrowing(severity: str, limit: int | None) -> int:
+    """The rank a floor of ``severity`` admits up to, refusing what names nothing."""
+
+    if severity and severity not in SEVERITIES:
+        raise InvalidFindingsQuery(f"findings: severity must be one of {', '.join(SEVERITIES)}.")
+    if limit is not None and limit < 1:
+        raise InvalidFindingsQuery("findings: limit must be at least 1.")
+    return SEVERITIES.index(severity) if severity else len(SEVERITIES)
+
+
+def findings(*, principal: Principal, rule: str = "", severity: str = "", limit: int | None = None) -> dict[str, Any]:
+    """The serialized claims, for machine delivery adapters.
+
+    ``severity`` is a floor (``attention`` also returns ``serious``) and
+    ``limit`` bounds how many are returned, most severe first. The summary
+    still counts every finding, and says how many came back and whether the
+    limit held some back.
+    """
+
+    floor = _narrowing(severity, limit)
     selected = rule_for(rule) if rule else None
     raised = estate_findings(principal=principal, rule=selected.name if selected else "")
     counts: dict[str, int] = {}
     for finding in raised:
         counts[finding.severity] = counts.get(finding.severity, 0) + 1
+    eligible = [finding for finding in raised if _rank(finding.severity) <= floor]
+    kept = eligible[:limit]
     return {
         "ok": True,
         "schema_version": 2,
@@ -585,8 +614,13 @@ def findings(*, principal: Principal, rule: str = "") -> dict[str, Any]:
         # that asked for an unknown one is told it got everything.
         "rule": selected.name if selected else None,
         "rules": [{"name": item.name, "title": item.title, "severity": item.severity} for item in RULES],
-        "summary": {"findings": len(raised), "severities": counts},
-        "findings": [serialize_finding(finding) for finding in raised],
+        "summary": {
+            "findings": len(raised),
+            "severities": counts,
+            "returned": len(kept),
+            "truncated": len(kept) < len(eligible),
+        },
+        "findings": [serialize_finding(finding) for finding in kept],
     }
 
 
@@ -602,7 +636,7 @@ def findings(*, principal: Principal, rule: str = "") -> dict[str, Any]:
 #     work would fail a minute later in a job result;
 #   - and a cap, because a class-wide condition fires on the whole class at once.
 #
-# HQ forms no opinion about what is safe to run unattended. That judgement is
+# HQ forms no opinion about what is safe to run unattended. That judgment is
 # already written down, per kind and per action, in the controller contract,
 # so the only actions considered here are the ones it already declares
 # automatic, and withdrawing one there withdraws it here.
@@ -626,9 +660,6 @@ def auto_remediable(*, principal: Principal, limit: int = 10) -> tuple[Repair, .
     the controller pulls; reversing that would put a provider credential in the
     web process, which is the one property the cadence design exists to protect.
     """
-
-    from hq.domains.control_plane.models import OperationRequest
-    from hq.domains.control_plane.providers import enabled_controller_actions
 
     automatic_kinds = {
         kind

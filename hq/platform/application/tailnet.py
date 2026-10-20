@@ -20,9 +20,18 @@ from ipaddress import ip_address
 
 from hq.domains.control_plane.models import ProviderInventory
 from hq.domains.control_plane.provider_adapters.tailscale import TAILNET_KIND, TAILNET_POLICY_KIND
+lazy from hq.domains.control_plane.connection_kinds import CONNECTION_LABELS
+lazy from hq.domains.control_plane.observations.host import TAILNET_LOCK_KIND
+lazy from hq.domains.control_plane.observations.hq import ARRIVAL_KIND
 
-from .projection import read_once
+from .projection import projection_scope, read_once
 from .ui import counted
+lazy from . import connections
+lazy from .connections import connection_rows
+lazy from .facts import inventory_records
+lazy from .hq_self import scoped_served_port, site_label
+lazy from .infrastructure import enabled_resources
+lazy from .locate import host_of, points_at_host, split_endpoint
 
 # The settings row naming the tailnet's resolvers, by address.
 RESOLVES_THROUGH = "Resolves through"
@@ -57,7 +66,7 @@ class Device:
     public_key: str = ""
     offers_exit_node: bool = False
     # What actually admits a node, as distinct from what lists one. A device in
-    # the inventory has been seen; a device the tailnet has authorised and lock
+    # the inventory has been seen; a device the tailnet has authorized and lock
     # has signed is one the tailnet will carry traffic for.
     authorized: bool = True
     lock_error: str = ""
@@ -319,6 +328,8 @@ class Policy:
     # Alias -> address, as the policy defines them.
     hosts: dict = field(default_factory=dict)
     dns: dict = field(default_factory=dict)
+    # The controller's machine's own reading of tailnet lock, which the API
+    # the rest is read from does not hold.
     lock: dict = field(default_factory=dict)
     services: tuple[dict, ...] = ()
     app_connectors: tuple[dict, ...] = ()
@@ -402,8 +413,6 @@ def declaration() -> str:
     came from.
     """
 
-    from .infrastructure import enabled_resources
-
     # From the read every estate page already shares, in its order.
     return next((resource.key for resource in enabled_resources() if resource.kind == POLICY_KIND), "")
 
@@ -433,17 +442,16 @@ def snapshots() -> dict[str, list]:
     """The tailnet readings, and HQ's record of which devices reached it, in
     one query, once per projection.
 
-    They live in the same table under three kinds, and the dashboard wants
-    them together: what each machine reports, what lock is filtering out, and
-    when each device last reached HQ. Read together they are one query, and
-    every caller inside the projection shares it.
+    They live in the same table under four kinds, and the dashboard wants
+    them together: what each machine reports, the policy, what lock is
+    filtering out, and when each device last reached HQ. Read together they
+    are one query, and every caller inside the projection shares it.
     """
 
-    from hq.domains.control_plane.observations.hq import ARRIVAL_KIND
-
     def load() -> dict[str, list]:
-        found: dict[str, list] = {TAILNET_KIND: [], POLICY_KIND: [], ARRIVAL_KIND: []}
-        for snapshot in ProviderInventory.objects.filter(kind__in=(TAILNET_KIND, POLICY_KIND, ARRIVAL_KIND)):
+        kinds = (TAILNET_KIND, POLICY_KIND, TAILNET_LOCK_KIND, ARRIVAL_KIND)
+        found: dict[str, list] = {kind: [] for kind in kinds}
+        for snapshot in ProviderInventory.objects.filter(kind__in=kinds):
             found.setdefault(snapshot.kind, []).append(snapshot)
         return found
 
@@ -451,9 +459,12 @@ def snapshots() -> dict[str, list]:
 
 
 def policy() -> Policy:
-    """What the tailnet's policy says, or an empty one if nothing swept it."""
+    """What the tailnet's policy says, or an empty one if nothing swept it,
+    with the last lock reading either way."""
 
-    for snapshot in snapshots()[POLICY_KIND]:
+    found = snapshots()
+    lock = next((dict(record) for snapshot in found[TAILNET_LOCK_KIND] for record in snapshot.records), {})
+    for snapshot in found[POLICY_KIND]:
         for record in snapshot.records:
             document = _document(record)
             return Policy(
@@ -465,13 +476,13 @@ def policy() -> Policy:
                 settings=record.get("settings") or {},
                 hosts=record.get("hosts") or {},
                 dns=record.get("dns") or {},
-                lock=record.get("lock") or {},
+                lock=lock,
                 services=tuple(record.get("services") or ()),
                 app_connectors=tuple(record.get("app_connectors") or ()),
                 ssh_rules=tuple(record.get("ssh_rules") or ()),
                 observed_at=snapshot.observed_at,
             )
-    return Policy()
+    return Policy(lock=lock)
 
 
 def _document(record) -> dict:
@@ -580,17 +591,13 @@ def grant_ports(grants, known: dict[str, Device] | None = None, machines=None) -
     name is blank.
     """
 
-    from .projection import projection_scope
-
     with projection_scope():
         return _grant_ports(grants, known, machines)
 
 
 def _grant_ports(grants, known, machines) -> tuple[dict, ...]:
-    from .connections import machines_once
-
     known = devices() if known is None else known
-    machines = machines_once() if machines is None else machines
+    machines = connections.machines_once() if machines is None else machines
     by_name: dict[str, object] = {}
     for item in machines:
         for name in (item.name, *item.aliases):
@@ -609,9 +616,6 @@ def _grant_ports(grants, known, machines) -> tuple[dict, ...]:
 
 def _ssh_ports() -> dict[str, set[int]]:
     """The port each SSH-shaped connection opens, by connection ref."""
-
-    from .connections import connection_rows
-    from .locate import points_at_host, split_endpoint
 
     found: dict[str, set[int]] = {}
     for row in connection_rows():
@@ -636,11 +640,6 @@ class _ServicePort:
 
 def _service_ports() -> tuple[_ServicePort, ...]:
     """The port each connection to a service names in its URL, with the service's name."""
-
-    from hq.domains.control_plane.connection_kinds import CONNECTION_LABELS
-
-    from .connections import connection_rows
-    from .locate import points_at_host, split_endpoint
 
     found = []
     for row in connection_rows():
@@ -679,17 +678,11 @@ class _PortNamer:
     """What answers on a port of a grant's machines: HQ, SSH, a container, a service."""
 
     def __init__(self, ssh_ports: dict[str, set[int]], service_ports: tuple[_ServicePort, ...] = ()):
-        from .hq_self import scoped_served_port
-
         self.ssh_ports = ssh_ports
         self.service_ports = service_ports
         self.hq_port = scoped_served_port()
 
     def name(self, port: int, targets) -> str:
-        from hq.domains.control_plane.connection_kinds import CONNECTION_LABELS
-
-        from .hq_self import site_label
-
         if port == self.hq_port and any(getattr(t, "runs_hq", False) for t in targets):
             return site_label()
         if any(self._opens(target, port) for target in targets):
@@ -706,8 +699,6 @@ class _PortNamer:
 
     def _service(self, target, port: int) -> str:
         """The service a connection reads on this port of this machine."""
-
-        from .locate import host_of
 
         refs = {*target.reached_by, *target.opened_by}
         names = {str(name).lower() for name in (target.name, *target.aliases)}
@@ -737,9 +728,7 @@ def _policy_admits_only_named() -> bool:
     policy read), so an unknown never silences the finding.
     """
 
-    from .connections import machines_once
-
-    machine = next((item for item in machines_once() if item.runs_hq), None)
+    machine = next((item for item in connections.machines_once() if item.runs_hq), None)
     if machine is None or not machine.addresses:
         return False
     addresses = set(machine.addresses)
@@ -792,10 +781,6 @@ def unworn_tags(named) -> tuple[str, ...]:
     is the part before them. Nothing is said while no device was read: every
     tag would look unworn.
     """
-
-    from hq.domains.control_plane.provider_adapters.tailscale import TAILNET_KIND
-
-    from .facts import inventory_records
 
     records = [record for _snapshot, record in inventory_records(TAILNET_KIND)]
     if not records:

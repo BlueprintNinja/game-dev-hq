@@ -88,8 +88,14 @@ annotations so it is identical across the interpreter matrix. A test fails when
 the exports drift from the file, because an extension's binding to a renamed
 field or a new required parameter is a change this repository cannot otherwise
 see. Regenerate it with `mise run regen`, read the diff as the review, and
-decide there whether `PLUGIN_API_VERSION` moves; `mise run regen --check`
-fails on drift.
+decide there whether `PLUGIN_API_VERSION` moves; `mise run drift` fails on
+drift.
+
+What the annotations promise is held from an extension's side by
+`tests/sdk_consumer/consumer.py`, which mypy checks: a valid call pins its
+return with `assert_type`, and a call an extension must not make carries the
+`# type: ignore[code]` mypy must report for it. A new export gets a case
+there; an annotation that slides to `Any` fails it.
 
 Capability input models inherit `StrictCommand`, so unknown JSON keys fail at
 the boundary instead of being dropped. Class-based views inherit
@@ -122,7 +128,7 @@ jobs:
 ```
 
 The extension's identity is declared once, by the package:
-`scripts/plugin-identity.py` reads the distribution from `pyproject.toml` and
+`tools/pipeline/plugin_identity.py` reads the distribution from `pyproject.toml` and
 the plugin id and Django app from the `plugin = PluginManifest(...)` in
 `src/<package>/plugin.py`, where `<package>` is the distribution with
 underscores. It fails when the two disagree, before anything is built or
@@ -179,7 +185,7 @@ repository's admission workflow on `main` and has not failed.
 
 Each leg retains its own artifact, `admission-<plugin id>`. Compose resolves
 each repository's admission run once and reads every listed extension's
-artifact from it by id (`scripts/admissions.sh`); a listed id with no artifact
+artifact from it by id (`tools/pipeline/admissions.sh`); a listed id with no artifact
 in that run fails the composition. A coordinated branch builds each listed
 extension from its `path`, which must declare that id, and nothing else in the
 repository.
@@ -359,6 +365,13 @@ invoking the registry: name, effect, required permissions, target kind and
 label, command JSON Schema, duplicates and the handler's signature. MCP grants
 must be a subset of the plugin's operator grants. A typo fails the composition's
 checks instead of becoming a production-only failure or an authority gap.
+
+A handler is called as `handler(command, *, principal, <target keyword>)`,
+the keyword being the one its `target_kind` binds (`current_slug`,
+`current_id`, ...). A handler that checks for a stale write also declares
+`expected_updated_at` and receives the caller's token; any other handler
+leaves it out and is never handed it.
+
 Fields that shape the Command Center form:
 
 - `subject_resource` names the `ResourceSpec` the operation acts on, which
@@ -458,12 +471,29 @@ which `page.html` draws once with the page's context. A block a frame does not
 list is the host's, and an override of it is refused rather than silently
 ignored the day the frame stops rendering it.
 
-<!-- sdk_contract: shared UI contract -->
+A data table is declared through the table tags, so its shape is in the HTML on
+first paint. `{% table_region "Label" mid=1 narrow=3 %}…{% endtable_region %}`
+wraps it in its labeled scroll region, saying how many columns, by rank,
+leave in a box under 1000px and under 640px; each column heading is
+`{% table_heading "Name" "identifier" %}`, with its kind (`prose`,
+`identifier`, `numeric`, `status` or `control`, following from `num-col`,
+`date-col` or `actions-col` when left out), `drop=` the order a narrow table
+lets it go in (never on the column that names the row or a `key-col`), and
+`sort=` for a list sorted on the server or `local_sort=True` for one sorted on
+the page. A row that holds more than it shows ends its naming cell with
+`{% row_toggle %}`; that cell in every row, and its heading (`gutter=True`),
+carry `row-gutter`; the stylesheet shows the toggle only where the row holds
+something back. A `TableListMixin` list declares the same through
+`TableColumn(kind=)`, its ranks derived from the columns unless one says
+`drop=`, its counts as `table_drop_mid` and `table_drop_narrow`, and its region's
+`room=` as `table_room`.
+
+<!-- sdk_contract: shared UI contract, written by `mise run regen` from hq_sdk/template_contract.py -->
 
 | Frame | Blocks a page fills | What it is |
 | --- | --- | --- |
 | `confirm_page.html` | `consequences` | A destructive action's confirmation: `consequences` says what will happen. |
-| `list_page.html` | `foot`, `row` (given `forloop`, `row`), `summary` | A `TableListMixin` list: toolbar, table, empty state and pagination. `row` is one row's cells, `summary` sits above the table, `foot` is its `<tfoot>`. |
+| `list_page.html` | `foot`, `row` (given `forloop`, `row`), `summary` | A `TableListMixin` list: toolbar, table, empty state and pagination. `row` is one row's cells, `summary` sits above the table and is redrawn with it when a search or filter changes, `foot` is its `<tfoot>`. |
 | `page.html` | `page` | Any page: the head, actions, dialogs and section navigation, drawn from `page`. |
 
 | Partial | Required | Optional | What it is |
@@ -486,9 +516,9 @@ ignored the day the frame stops rendering it.
 | `partials/_timeline.html` | nothing | `plain`, `timeline` | Chronological linked events, from `hq_sdk.ui.Timeline`. |
 | `partials/_week_plan.html` | `plan` | nothing | Which days of the week a thing is scheduled for, from `hq_sdk.ui.WeekPlan`. |
 
-Host tags: `{% empty_value %}`, `{% entity %}`, `{% post_button %}`, `{% reference %}`, `{% referenced_by %}`. Host filters: `|ago`, `|counted:arg`, `|money[:arg]`, `|or_empty`, `|span`, `|web_url`, `|when[:arg]`. Django's own tags and filters, and `{% load %}` of `humanize`, `static` or the extension's own libraries.
+Host tags: `{% empty_value %}`, `{% entity %}`, `{% post_button %}`, `{% reference %}`, `{% referenced_by %}`, `{% row_toggle %}`, `{% table_heading %}`, `{% table_region %}`. Host filters: `|ago`, `|counted:arg`, `|money[:arg]`, `|or_empty`, `|sortable`, `|span`, `|web_url`, `|when[:arg]`. Django's own tags and filters, and `{% load %}` of `humanize`, `static` or the extension's own libraries.
 
-Classes: `allocation`, `allocation-legend`, `btn`, `card`, `card-columns`, `chart-axis`, `chart-card`, `chart-data`, `chart-legend`, `compact`, `compact-table`, `count`, `danger`, `data-table`, `date-col`, `domain-charts`, `domain-head`, `domain-head-copy`, `domain-stack`, `errors`, `eyebrow`, `field`, `field-row`, `figure-hero`, `figure-hero-note`, `figure-stats`, `finding`, `finding-evidence`, `form`, `form-actions`, `ghost`, `help`, `inline`, `kv`, `list-rows`, `msg`, `msg-error`, `msg-warning`, `muted`, `notice`, `notice-attention`, `num-col`, `optional-col`, `page-lede`, `pie-chart`, `pie-row`, `pill`, `pill-attention`, `pill-good`, `pill-neutral`, `pill-serious`, `primary`, `print-footer`, `print-only`, `prose-list`, `route-frame`, `route-line`, `route-map`, `route-marker`, `route-scale`, `route-swatch`, `row-actions`, `row-empty`, `row-group`, `row-less`, `row-main`, `row-meta`, `row-more`, `save-bar`, `section-foot`, `section-head`, `section-period`, `split`, `stacked`, `status-tabs`, `subtle-link`, `table-scroll`, `tight-col`, `two-col`, `visually-hidden`, `worth`, `worth-attention`, `worth-good`, `worth-neutral`.
+Classes: `actions-col`, `allocation`, `allocation-legend`, `btn`, `card`, `card-columns`, `cell-data`, `chart-axis`, `chart-card`, `chart-data`, `chart-legend`, `compact`, `compact-table`, `count`, `danger`, `data-table`, `date-col`, `domain-charts`, `domain-head`, `domain-head-copy`, `domain-stack`, `errors`, `eyebrow`, `field`, `field-row`, `figure-hero`, `figure-hero-note`, `figure-stats`, `finding`, `finding-evidence`, `form`, `form-actions`, `ghost`, `help`, `inline`, `key-col`, `kv`, `list-rows`, `msg`, `msg-error`, `msg-warning`, `muted`, `narrow-more`, `notice`, `notice-attention`, `num-col`, `optional-col`, `page-lede`, `pie-chart`, `pie-row`, `pill`, `pill-attention`, `pill-good`, `pill-neutral`, `pill-serious`, `primary`, `print-footer`, `print-only`, `prose-list`, `route-band-1`, `route-band-2`, `route-band-3`, `route-band-4`, `route-band-5`, `route-frame`, `route-line`, `route-map`, `route-marker`, `route-scale`, `route-swatch`, `row-actions`, `row-below`, `row-empty`, `row-group`, `row-gutter`, `row-less`, `row-main`, `row-meta`, `row-more`, `save-bar`, `section-foot`, `section-head`, `section-period`, `split`, `stacked`, `status-tabs`, `subtle-link`, `table-scroll`, `tight-col`, `two-col`, `visually-hidden`, `worth`, `worth-attention`, `worth-good`, `worth-neutral`.
 
 Script hooks: `data-chart`, `data-sort`, `data-submit-busy`, `data-submit-label`, `data-submit-status`, `data-tip`.
 
@@ -574,7 +604,7 @@ the rest:
 | Derived | What it is |
 | --- | --- |
 | The job | `run` is called on a job's own thread, where reaching out is allowed. One job of a name is live at a time, held by the database, so a second press or caller starts nothing. |
-| The capability | `notes.lookup`, with the subject as its target. The API, MCP, the command centre and `hq_call` ask through it with the same authorization, approval policy and denial record as any command, and are answered at once with the job's id. A command line waits for the work, because nothing there outlives the command. |
+| The capability | `notes.lookup`, with the subject as its target. The API, MCP, the command center and `hq_call` ask through it with the same authorization, approval policy and denial record as any command, and are answered at once with the job's id. A command line waits for the work, because nothing there outlives the command. |
 | The route and status | The control posts to `jobs:ask` and follows `jobs:status`. The extension has no URL, view, template or script for either. |
 | The control | `ask("notes.lookup", note.slug)` is the shared Ask (`partials/_ask.html`), standing as the stored job does: live work is followed, failed work says why until asked for again. It may stand among a page's actions. One query. |
 | The audit entries | Who asked, how it ended, how long it took, and the `seen`, `created`, `updated` and `skipped` counts the work returns. |
@@ -676,7 +706,7 @@ from hq_sdk.reads import derivation, today
 
 @derivation("example.overview", reads=("example.Session", "example.Goal"))
 def overview():
-    return _summarise(as_of=today())
+    return _summarize(as_of=today())
 ```
 
 HQ counts writes to every model table in the writing transaction, an
@@ -776,11 +806,11 @@ A source keeps four rules:
   is a claim; a day the domain cannot speak for emits nothing.
 - **Mind the noise.** History (what happened, rather than what is coming)
   starts unchecked (`shown=False`); a dot (`mark=True`) is for what is many a
-  day and read by colour.
+  day and read by color.
 
 `ends` is exclusive, as in iCalendar: an all-day event over the 3rd to the 5th
 ends on the 6th. A timed event's `starts` is an aware datetime. `slot` keeps a
-colour the domain's charts already use; otherwise the calendar deals one.
+color the domain's charts already use; otherwise the calendar deals one.
 
 The calendar page is the host's. An extension may place a host page in its own
 navigation group by naming its route, `NavigationItem("Calendar",

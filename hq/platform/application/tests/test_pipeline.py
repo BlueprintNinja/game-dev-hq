@@ -1,16 +1,14 @@
 """What the pipeline promises: pinned actions, least privilege, sealed logs, and releases only from main."""
 
-import importlib.util
-import io
 import json
 import re
-import tempfile
+import subprocess
 import tomllib
-from contextlib import redirect_stderr, redirect_stdout
-from pathlib import Path
-from unittest.mock import patch
+from pathlib import Path, PurePosixPath
 
 from django.test import SimpleTestCase, tag
+
+from tests.mise_tasks import body, mise_tasks
 
 ROOT = Path(__file__).resolve().parents[4]
 
@@ -130,6 +128,97 @@ class ActionPinTests(SimpleTestCase):
         self.assertGreater(len(pins), 5)
         self.assertEqual({action: shas for action, shas in pins.items() if len(shas) > 1}, {})
 
+    def test_every_pinned_commit_carries_its_version_beside_it(self):
+        """The comment is what Renovate rewrites with the commit, and what a reader checks."""
+        pinned = [
+            (path.name, line.strip())
+            for path in [*workflows(), *composite_actions()]
+            for line in path.read_text().splitlines()
+            if re.search(r"uses:\s*[\w.-]+/\S*@[0-9a-f]{40}", line)
+        ]
+        self.assertGreater(len(pinned), 10)
+        for name, line in pinned:
+            with self.subTest(file=name, line=line):
+                self.assertRegex(line, r"@[0-9a-f]{40} # v\d+(\.\d+){0,2}$")
+
+
+def toolchain() -> dict[str, str]:
+    """``tools/pipeline/toolchain.env``, read as the shell reads it."""
+    text = (ROOT / "tools" / "pipeline" / "toolchain.env").read_text()
+    return {key: value.strip('"') for key, value in re.findall(r"(?m)^([A-Z_]+)=(.*)$", text)}
+
+
+def all_jobs() -> list[tuple[str, str, str]]:
+    """Every job of every workflow, as (workflow, job id, job text)."""
+    return [(path.name, name, job) for path in workflows() for name, job in jobs(path.read_text()).items()]
+
+
+@tag("source")
+class JobLimitTests(SimpleTestCase):
+    def test_every_hosted_job_runs_on_the_declared_runner_image(self):
+        """``ubuntu-latest`` moves to a new OS on GitHub's schedule."""
+        image = toolchain()["RUNNER_IMAGE"]
+        hosted = 0
+        for path, name, job in all_jobs():
+            runner = block(job, "runs-on", 4)
+            if not runner or "self-hosted" in " ".join(runner):
+                continue
+            hosted += 1
+            with self.subTest(workflow=path, job=name):
+                self.assertEqual(runner, [image])
+        self.assertGreater(hosted, 3)
+
+    def test_every_job_has_a_timeout(self):
+        """Without one a hung job holds its runner for GitHub's six-hour default. A job
+        that calls a reusable workflow cannot take one; the workflow it calls is checked."""
+        timed = 0
+        for path, name, job in all_jobs():
+            if block(job, "uses", 4):
+                continue
+            timed += 1
+            with self.subTest(workflow=path, job=name):
+                self.assertTrue(block(job, "timeout-minutes", 4))
+        self.assertGreater(timed, 3)
+
+
+@tag("source")
+class PythonVersionTests(SimpleTestCase):
+    """What cannot read ``PYTHON_VERSIONS`` is held to it. Its first, oldest, version is
+    the one the images run and the floor of requires-python, where ruff and mypy take
+    their target."""
+
+    def setUp(self):
+        self.versions = toolchain()["PYTHON_VERSIONS"].split()
+        self.oldest = self.versions[0]
+        self.readme = (ROOT / "README.md").read_text()
+
+    def test_the_readme_badge_names_every_version(self):
+        badge = re.search(r"badge/python-(.*?)-blue", self.readme)
+        self.assertIsNotNone(badge)
+        self.assertEqual(badge.group(1).split("%20%7C%20"), self.versions)
+
+    def test_every_workflow_matrix_runs_every_version(self):
+        matrix = block(jobs(workflow("ci.yml"))["tests"], "python", 8)
+        self.assertEqual(json.loads(matrix[0]), self.versions)
+        (default,) = [
+            line for line in block(workflow("plugin-checks.yml"), "python-versions", 6) if line.startswith("default:")
+        ]
+        self.assertEqual(json.loads(default.removeprefix("default:").strip().strip("'")), self.versions)
+
+    def test_the_images_and_requires_python_take_the_oldest(self):
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+        self.assertRegex(project["requires-python"], rf"^>={re.escape(self.oldest)}(,|$)")
+        named = [
+            *(
+                re.findall(r"(?m)^FROM python:(\d+\.\d+)-", (ROOT / path).read_text())
+                for path in ("Dockerfile", "composition/Dockerfile")
+            ),
+            re.findall(r"on Python (\d+\.\d+)", self.readme),
+        ]
+        for found in named:
+            self.assertTrue(found)
+            self.assertEqual(set(found), {self.oldest})
+
 
 @tag("source")
 class JobConditionTests(SimpleTestCase):
@@ -210,6 +299,41 @@ class RenovateTests(SimpleTestCase):
             with self.subTest(command=command):
                 self.assertTrue(any(re.search(pattern, command) for pattern in allowed))
 
+    def test_every_custom_manager_finds_its_pin(self):
+        """A file that moves without its pattern, or a line reworded under its
+        match string, leaves the pin unwatched and Renovate says nothing."""
+        tracked = subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split("\0")
+        managers = json.loads((ROOT / ".github" / "renovate.json").read_text())["customManagers"]
+        self.assertTrue(managers)
+        for manager in managers:
+            with self.subTest(manager=manager["description"]):
+                patterns = manager.get("managerFilePatterns", manager.get("fileMatch", []))
+                self.assertTrue(patterns)
+                named: set[str] = set()
+                for pattern in patterns:
+                    files = {name for name in tracked if name and renovate_file_pattern_matches(pattern, name)}
+                    self.assertTrue(files, f"{pattern} matches no tracked file")
+                    named |= files
+                for match_string in manager["matchStrings"]:
+                    expression = re.compile(match_string.replace("(?<", "(?P<"))
+                    self.assertTrue(
+                        any(expression.search((ROOT / name).read_text()) for name in named),
+                        f"{match_string} matches nothing in {sorted(named)}",
+                    )
+
+
+def renovate_file_pattern_matches(pattern: str, name: str) -> bool:
+    """Renovate reads ``/…/`` as a regular expression and anything else as a glob."""
+    if len(pattern) > 1 and pattern.startswith("/") and pattern.endswith("/"):
+        return re.search(pattern[1:-1], name) is not None
+    return PurePosixPath(name).full_match(pattern)
+
 
 @tag("source")
 class ReleaseTests(SimpleTestCase):
@@ -236,15 +360,19 @@ class ReleaseTests(SimpleTestCase):
                 self.assertNotIn("candidate", step)
 
     def test_branch_code_builds_without_the_jobs_credentials(self):
-        clones = [step for step in steps(jobs(self.compose)["compose"]) if "gh repo clone" in step]
-        self.assertTrue(clones)
-        for step in clones:
-            run = step.split("run: |", 1)[1]
-            with self.subTest(step=step.splitlines()[0]):
-                self.assertIn('rm -rf "$dir/.git"', run)
-                self.assertIn('"$WITHHELD_DIR/', run)
-                for absent in ("--env GH_TOKEN", "docker.sock", "pip wheel"):
-                    self.assertNotIn(absent, run)
+        """tests/shell/test-extension-branches.sh holds the behavior; this holds the workflow to it."""
+        branches = {
+            match.group(1): step
+            for step in steps(jobs(self.compose)["compose"])
+            if (match := re.search(r"tools/pipeline/extension-branches\.sh (\w+)", code(step)))
+        }
+        self.assertEqual(set(branches), {"checkout", "build"})
+        script = code((ROOT / "tools" / "pipeline" / "extension-branches.sh").read_text())
+        self.assertIn('rm -rf "$dir/.git"', script)
+        for absent in ("GH_TOKEN", "docker.sock", "pip wheel"):
+            with self.subTest(absent=absent):
+                self.assertNotIn(absent, script)
+                self.assertNotIn(absent, branches["build"])
 
 
 @tag("source")
@@ -254,31 +382,24 @@ class ExtensionsAgainstHostTests(SimpleTestCase):
     def setUp(self):
         self.steps = steps(jobs(workflow("compose.yml"))["compose"])
 
+    def index(self, command: str) -> int:
+        (found,) = [index for index, step in enumerate(self.steps) if command in code(step)]
+        return found
+
     def test_every_listed_extension_runs_this_hosts_checks_before_the_composition_passes(self):
-        checks = [step for step in self.steps if "check-plugin.sh" in code(step)]
-        self.assertEqual(len(checks), 1)
-        (check,) = checks
-        run = code(check)
+        """tests/shell/test-check-extensions.sh holds what the check runs; this holds where it runs."""
+        check = self.steps[self.index("tools/pipeline/check-extensions.sh composition-set.json")]
         self.assertEqual(condition(check), "github.event_name == 'pull_request'")
         self.assertNotIn("continue-on-error", check)
-        self.assertIn("composition-set.json", run)
-        self.assertIn(".extensions[]", run)
-        self.assertIn("git archive HEAD", run)
-        self.assertIn("/host/scripts/check-plugin.sh --plugin-root", run)
-        self.assertIn('"$WITHHELD_DIR/', run)
-        self.assertIn("exit 1", run)
         self.assertNotIn("GH_TOKEN", check)
-        verify = next(index for index, step in enumerate(self.steps) if "scripts/composed-suite.sh" in step)
-        self.assertLess(self.steps.index(check), verify)
+        self.assertLess(self.steps.index(check), self.index("tools/pipeline/composed-suite.sh"))
 
     def test_an_extension_is_checked_from_its_coordinated_branch_or_its_default_branch(self):
-        (clone,) = [step for step in self.steps if "gh repo clone" in step]
+        clone = self.steps[self.index("tools/pipeline/extension-branches.sh checkout")]
         self.assertEqual(condition(clone), "github.event_name == 'pull_request'")
-        run = code(clone)
-        self.assertIn("coordinated.txt", run)
-        self.assertIn(".extensions[].repository", run)
-        check = next(index for index, step in enumerate(self.steps) if "check-plugin.sh" in code(step))
-        self.assertLess(self.steps.index(clone), check)
+        self.assertIn("coordinated.txt", code(clone))
+        self.assertLess(self.index("tools/pipeline/coordinated-branches.sh"), self.steps.index(clone))
+        self.assertLess(self.steps.index(clone), self.index("tools/pipeline/check-extensions.sh"))
 
 
 @tag("source")
@@ -331,7 +452,7 @@ class PublicLogTests(SimpleTestCase):
 
     def test_the_composed_suite_prints_through_the_filter(self):
         self.assertNotIn("manage.py test", code(self.compose))
-        self.assertIn("scripts/composed-suite.sh", code(self.compose))
+        self.assertIn("tools/pipeline/composed-suite.sh", code(self.compose))
 
     def test_a_scan_writes_a_file_not_the_package_table(self):
         scans = [step for step in self.steps if "aquasecurity/trivy-action@" in step]
@@ -345,11 +466,11 @@ class PublicLogTests(SimpleTestCase):
         for upload in uploads:
             with self.subTest(step=upload.splitlines()[0]):
                 self.assertRegex(block(upload, "path", 10)[0], r"\.age$")
-        self.assertIn("scripts/seal-failure-logs.sh", code(self.compose))
-        self.assertTrue((ROOT / "scripts" / "seal-failure-logs.sh").is_file())
+        self.assertIn("tools/pipeline/seal-failure-logs.sh", code(self.compose))
+        self.assertTrue((ROOT / "tools" / "pipeline" / "seal-failure-logs.sh").is_file())
 
     def test_sealed_logs_are_encrypted_to_a_post_quantum_key(self):
-        pins = (ROOT / "scripts" / "toolchain.env").read_text()
+        pins = (ROOT / "tools" / "pipeline" / "toolchain.env").read_text()
         self.assertRegex(pins, r"(?m)^FAILURE_LOG_RECIPIENT=age1pq1[0-9a-z]+$")
 
     def test_wheel_digests_reach_the_build_as_a_file_not_an_argument(self):
@@ -364,18 +485,26 @@ class PublicLogTests(SimpleTestCase):
                 for name in ("DIGESTS", "REFERENCES", "ARGS"):
                     self.assertNotRegex(step, rf"\n\s+\w*{name}: \$\{{\{{")
 
-    def test_every_spelling_of_an_extension_is_masked_in_every_case(self):
-        masks = [step for step in self.steps if "::add-mask::" in step]
-        self.assertTrue(masks)
-        for spelling in ("${spelling}", "${spelling^}", "${spelling^^}"):
-            with self.subTest(spelling=spelling):
-                self.assertTrue(any(f"::add-mask::{spelling}" in step for step in masks))
+    def test_the_extensions_are_masked_before_any_step_can_name_one(self):
+        """tools/pipeline/tests/test_composition_set.py holds every spelling; this holds when they are masked."""
+        (mask,) = [
+            index
+            for index, step in enumerate(self.steps)
+            if "tools.pipeline.composition_set mask composition-set.json" in code(step)
+        ]
+        speaking = [
+            index
+            for index, step in enumerate(self.steps)
+            if re.search(r"\bgh\b|\buv\b|GH_TOKEN|docker|manage\.py", code(step))
+        ]
+        self.assertTrue(speaking)
+        self.assertLess(mask, min(speaking))
 
 
 @tag("source")
 class GateReferenceTests(SimpleTestCase):
     def test_every_task_a_workflow_runs_exists(self):
-        tasks = set(tomllib.loads((ROOT / "mise.toml").read_text())["tasks"])
+        tasks = set(mise_tasks())
         named = [
             (path.name, task.strip("'\""))
             for path in [*workflows(), *composite_actions()]
@@ -387,21 +516,34 @@ class GateReferenceTests(SimpleTestCase):
             with self.subTest(workflow=name, task=task):
                 self.assertIn(task, tasks)
 
+    def test_every_browser_gate_has_a_leg_and_every_leg_a_gate(self):
+        """The Browser job runs one ``browser:*`` gate per leg; a gate with no leg never runs in CI."""
+        (legs,) = block(jobs(workflow("ci.yml"))["browser"], "gate", 8)
+        named = {f"browser:{leg.strip()}" for leg in legs.strip("[]").split(",")}
+        self.assertEqual(named, {name for name in mise_tasks() if name.startswith("browser:")})
+
     # Tasks that hand whatever follows them to manage.py, whose command line no
     # usage spec can declare: mise appends the words as they were typed.
-    PASSTHROUGH = frozenset({"manage", "suite:as-image"})
+    PASSTHROUGH = frozenset({"manage"})
 
     def test_a_task_that_takes_arguments_says_what_they_are(self):
         """``mise run <task> --help`` prints a task's ``usage``. Once one is
         declared mise stops appending arguments to ``run``, so each name it
         declares must reach the task or its script; and a script that reads its
         own arguments needs a usage, or --help describes nothing."""
-        tasks = tomllib.loads((ROOT / "mise.toml").read_text())["tasks"]
-        reads_arguments = re.compile(r'"\$@"|\$\{?[1-9#]|sys\.argv')
+        shell_reads = r'"\$@"|\$\{?[1-9]|\$\{?#(?=[\s"\')}]|$)'
+        reads_arguments = re.compile(rf"{shell_reads}|sys\.argv", re.MULTILINE)
         checked = 0
-        for name, task in tasks.items():
-            run = task.get("run", "")
-            run = " ".join(run) if isinstance(run, list) else run
+        for name, task in mise_tasks().items():
+            if task["file"]:
+                # A file task declares its usage in its own header, which the list does not carry.
+                # A shell task's sys.argv is a Python program's it runs, not its own.
+                reads = re.compile(shell_reads, re.MULTILINE) if body(task).startswith("#!/bin/sh") else reads_arguments
+                with self.subTest(task=name):
+                    if reads.search(body(task)):
+                        self.assertRegex(body(task), r"(?m)^#USAGE ", "takes arguments; declare usage")
+                continue
+            run = " ".join(task["run"])
             scripts = [ROOT / path for path in re.findall(r"[\w/.-]+\.(?:sh|py)\b", run) if (ROOT / path).is_file()]
             # A test module named the dotted way (`manage.py test a.b.c.Case`).
             for dotted in re.findall(r"\b[a-z_]+(?:\.\w+)+", run):
@@ -416,7 +558,7 @@ class GateReferenceTests(SimpleTestCase):
                 )
                 if found and found not in scripts:
                     scripts.append(found)
-            declared = re.findall(r'(?:arg|flag)\s+"[<\[]?(?:--)?([\w-]+)', task.get("usage", ""))
+            declared = re.findall(r'(?:arg|flag)\s+"[<\[]?(?:--)?([\w-]+)', task["usage"] or "")
             with self.subTest(task=name):
                 if declared:
                     checked += 1
@@ -430,185 +572,18 @@ class GateReferenceTests(SimpleTestCase):
                         )
         self.assertGreater(checked, 3)
 
-
-def compose_plugins():
-    spec = importlib.util.spec_from_file_location("compose_plugins", ROOT / "scripts" / "compose-plugins.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-@tag("source")
-class ComposeCandidateTests(SimpleTestCase):
-    def setUp(self):
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.root = Path(directory.name)
-        self.module = compose_plugins()
-
-    def wheel(self, name: str) -> Path:
-        path = self.root / "in" / name
-        path.parent.mkdir(exist_ok=True)
-        path.write_bytes(name.encode())
-        return path
-
-    def run_main(self, *argv: str) -> tuple[int, dict[str, str]]:
-        """The exit code and the build arguments written beside the wheels."""
-        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            code = self.module.main(list(argv))
-        out = Path(argv[argv.index("--out") + 1])
-        written = {
-            name: (out / name).read_text()
-            for name in ("references", "digests", "policy-sha256")
-            if (out / name).exists()
-        }
-        return code, written
-
-    def cordon(self, plugins: list[dict]) -> None:
-        """A stand-in for Cordon's lock tool that merges into ``plugins``."""
-        tool = self.root / "cordon-lock"
-        tool.write_text(f"#!/bin/sh\ncat <<'EOF'\n{json.dumps({'plugins': plugins})}\nEOF\n")
-        tool.chmod(0o755)
-        patcher = patch.object(self.module, "CORDON_LOCK", str(tool))
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def admitted(self, wheel: Path, policy: str = "a" * 64, digest: str | None = None) -> dict:
-        return {
-            "distribution": self.module.distribution_of(wheel),
-            "artifact_sha256": digest or self.module.sha256(wheel),
-            "policy_sha256": policy,
-        }
-
-    def entry(self) -> str:
-        path = self.root / "entry.json"
-        path.write_text("{}")
-        return str(path)
-
-    def test_an_admitted_composition_writes_its_lock_and_references(self):
-        alpha = self.wheel("example_alpha-2.0-py3-none-any.whl")
-        self.cordon([self.admitted(alpha)])
-        out = self.root / "out"
-        code, output = self.run_main("--entry", self.entry(), "--wheel", str(alpha), "--out", str(out))
-        self.assertEqual(code, 0)
-        self.assertEqual(
-            json.loads((out / "plugin-lock.json").read_text())["plugins"][0]["distribution"], "example-alpha"
-        )
-        self.assertEqual(output["references"], "example_alpha.plugin:plugin\n")
-        self.assertEqual(output["policy-sha256"], f"{'a' * 64}\n")
-
-    def test_an_admitted_composition_refuses_what_its_lock_does_not_approve(self):
-        alpha = self.wheel("example_alpha-2.0-py3-none-any.whl")
-        beta = self.wheel("example_beta-1.0-py3-none-any.whl")
-        cases = {
-            "a wheel with no entry": [self.admitted(beta)],
-            "a wheel that is not the admitted artifact": [self.admitted(alpha, digest="0" * 64)],
-        }
-        for why, plugins in cases.items():
-            with self.subTest(why=why):
-                self.cordon(plugins)
-                code, output = self.run_main(
-                    "--entry", self.entry(), "--wheel", str(alpha), "--out", str(self.root / "out")
-                )
-                self.assertEqual(code, 1)
-                self.assertEqual(output, {})
-        self.cordon([self.admitted(alpha), self.admitted(beta, policy="b" * 64)])
-        code, _ = self.run_main(
-            "--entry",
-            self.entry(),
-            "--wheel",
-            str(alpha),
-            "--entry",
-            self.entry(),
-            "--wheel",
-            str(beta),
-            "--out",
-            str(self.root / "out"),
-        )
-        self.assertEqual(code, 1, "two admission policies cannot satisfy one runtime")
-
-    def test_a_refused_merge_stops_the_composition(self):
-        tool = self.root / "cordon-refuses"
-        tool.write_text("#!/bin/sh\necho 'duplicate plugin id' >&2\nexit 1\n")
-        tool.chmod(0o755)
-        alpha = self.wheel("example_alpha-2.0-py3-none-any.whl")
-        with patch.object(self.module, "CORDON_LOCK", str(tool)):
-            code, output = self.run_main(
-                "--entry", self.entry(), "--wheel", str(alpha), "--out", str(self.root / "out")
-            )
-        self.assertEqual(code, 1)
-        self.assertEqual(output, {})
-
-    def test_a_composition_of_no_extensions_is_the_host_alone(self):
-        out = self.root / "out"
-        code, output = self.run_main("--policy-sha256", "a" * 64, "--out", str(out))
-        self.assertEqual(code, 0)
-        self.assertEqual(
-            json.loads((out / "plugin-lock.json").read_text()),
-            {"schema_version": 1, "host": "severino-hq", "plugins": []},
-        )
-        self.assertEqual(output["references"], "\n")
-        self.assertEqual(output["policy-sha256"], f"{'a' * 64}\n")
-        self.assertEqual(list(out.glob("*.whl")), [])
-
-    def test_a_composition_of_no_extensions_must_state_its_policy(self):
-        for argv in ((), ("--policy-sha256", "not-a-digest")):
-            with self.subTest(argv=argv):
-                code, output = self.run_main(*argv, "--out", str(self.root / "out"))
-                self.assertEqual(code, 1)
-                self.assertEqual(output, {})
-
-    def test_an_admission_under_another_policy_than_the_compositions_is_refused(self):
-        alpha = self.wheel("example_alpha-2.0-py3-none-any.whl")
-        self.cordon([self.admitted(alpha, policy="b" * 64)])
-        code, output = self.run_main(
-            "--policy-sha256", "a" * 64, "--entry", self.entry(), "--wheel", str(alpha), "--out", str(self.root / "out")
-        )
-        self.assertEqual(code, 1)
-        self.assertEqual(output, {})
-
-    def test_a_candidate_stages_wheels_with_no_lock(self):
-        out = self.root / "out"
-        out.mkdir()
-        (out / "plugin-lock.json").write_text("{}")
-        beta = self.wheel("example_beta-1.0-py3-none-any.whl")
-        alpha = self.wheel("example_alpha-2.0-py3-none-any.whl")
-        code, output = self.run_main("--candidate", "--wheel", str(beta), "--wheel", str(alpha), "--out", str(out))
-        self.assertEqual(code, 0)
-        self.assertFalse((out / "plugin-lock.json").exists())
-        self.assertEqual(sorted(path.name for path in out.glob("*.whl")), [alpha.name, beta.name])
-        self.assertIn("example_alpha.plugin:plugin,example_beta.plugin:plugin\n", output["references"])
-        self.assertIn(f"{self.module.sha256(alpha)}  {alpha.name}", output["digests"])
-        self.assertNotIn("policy-sha256", output)
-
-    def test_a_distribution_twice_is_refused(self):
-        first = self.wheel("example_alpha-1.0-py3-none-any.whl")
-        second = self.wheel("example_alpha-2.0-py3-none-any.whl")
-        code, _ = self.run_main(
-            "--candidate",
-            "--wheel",
-            str(first),
-            "--wheel",
-            str(second),
-            "--out",
-            str(self.root / "out"),
-        )
-        self.assertEqual(code, 1)
-
-    def test_a_candidate_takes_no_admission_entries(self):
-        wheel = self.wheel("example_alpha-1.0-py3-none-any.whl")
-        with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
-            self.module.main(
-                [
-                    "--candidate",
-                    "--entry",
-                    str(self.root / "entry.json"),
-                    "--wheel",
-                    str(wheel),
-                    "--out",
-                    str(self.root / "out"),
-                ]
-            )
+    def test_a_task_that_runs_the_suite_takes_the_heavy_turn(self):
+        """Two suites at once exhaust a small machine's memory; tools/lib/heavy.sh makes them take turns.
+        A TOML task takes it as its shell, a file task by sourcing tools/lib/heavy-turn.sh."""
+        suites = {name: task for name, task in mise_tasks().items() if "manage.py test" in body(task)}
+        self.assertGreater(len(suites), 3)
+        for name, task in suites.items():
+            with self.subTest(task=name):
+                if task["file"]:
+                    self.assertRegex(body(task), r"(?m)^\. .*tools/lib/heavy-turn\.sh\"?$")
+                else:
+                    self.assertTrue((task["shell"] or "").startswith("tools/lib/heavy.sh "))
+                self.assertTrue(task["timeout"], "a hung suite would hold the turn forever")
 
 
 @tag("source")
@@ -648,81 +623,6 @@ class ScriptInputTests(SimpleTestCase):
                         f"{name} interpolates {expression} into a script; pass it through env",
                     )
 
-    def test_an_extension_artifact_must_be_named_like_a_wheel_before_it_is_used(self):
-        compose = workflow("compose.yml")
-        collect = compose.index('wheel=$(find "$dir" -name')
-        check = compose.index("ships a wheel whose name is not a wheel's")
-        use = compose.index('--artifact "$wheel"')
-        self.assertLess(collect, check)
-        self.assertLess(check, use)
-
-
-def plugin_identity():
-    spec = importlib.util.spec_from_file_location("plugin_identity", ROOT / "scripts" / "plugin-identity.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-@tag("source")
-class PluginIdentityTests(SimpleTestCase):
-    """An extension's identity is read from its package, and only from there."""
-
-    def package(self, manifest: str, name: str = "example-alpha") -> Path:
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        root = Path(directory.name)
-        (root / "pyproject.toml").write_text(f'[project]\nname = "{name}"\nversion = "1.0"\n')
-        source = root / "src" / "example_alpha"
-        source.mkdir(parents=True)
-        (source / "plugin.py").write_text(manifest)
-        return root
-
-    def manifest(self, **fields: str) -> str:
-        declared = {
-            "id": '"example.alpha"',
-            "distribution": '"example-alpha"',
-            "django_apps": '("example_alpha",)',
-        } | fields
-        body = ", ".join(f"{key}={value}" for key, value in declared.items())
-        return f"from hq_sdk.plugin import PluginManifest\nplugin = PluginManifest({body})\n"
-
-    def test_the_package_declares_everything_admission_needs(self):
-        found = plugin_identity().identity(self.package(self.manifest()))
-        self.assertEqual(
-            found,
-            {
-                "distribution": "example-alpha",
-                "plugin-id": "example.alpha",
-                "plugin-reference": "example_alpha.plugin:plugin",
-                "django-app": "example_alpha",
-            },
-        )
-
-    def test_a_package_that_disagrees_with_itself_is_refused(self):
-        cases = {
-            "distribution": self.manifest(distribution='"example-beta"'),
-            "django_apps": self.manifest(django_apps='("other",)'),
-            "a literal": self.manifest(id="IDENTIFIER"),
-            "no module-level": "plugin = make()\n",
-        }
-        for reason, manifest in cases.items():
-            with self.subTest(reason=reason), self.assertRaises(SystemExit) as refused:
-                plugin_identity().identity(self.package(manifest))
-            self.assertIn(reason, str(refused.exception))
-
-    def test_a_manifest_naming_another_repository_is_refused_where_it_is_admitted(self):
-        package = self.package(self.manifest(source_repository='"owner/example-alpha"'))
-        self.assertEqual(plugin_identity().identity(package, "owner/example-alpha")["plugin-id"], "example.alpha")
-        with self.assertRaises(SystemExit) as refused:
-            plugin_identity().identity(package, "owner/example-extensions")
-        self.assertIn("owner/example-extensions", str(refused.exception))
-
-    def test_a_manifest_away_from_its_package_is_refused(self):
-        with self.assertRaises(SystemExit) as refused:
-            plugin_identity().identity(self.package(self.manifest(), name="example-gamma"))
-        self.assertIn("src/example_gamma/plugin.py", str(refused.exception))
-
 
 @tag("source")
 class ExtensionCallerTests(SimpleTestCase):
@@ -736,7 +636,7 @@ class ExtensionCallerTests(SimpleTestCase):
                 self.assertNotIn(f"\n  {name}", admit.split("\nruns:")[0])
                 self.assertNotIn(f"\n      {name}", checks.split("\npermissions:")[0])
         self.assertIn('check-plugin.sh --plugin-root "$PACKAGE_DIR"', checks)
-        self.assertIn("scripts/plugin-identity.py", admit)
+        self.assertIn("tools.pipeline.plugin_identity", admit)
 
 
 def action_steps(text: str) -> list[str]:
@@ -754,9 +654,9 @@ class OneRepositoryManyExtensionsTests(SimpleTestCase):
     def test_each_package_retains_the_artifact_compose_reads_by_its_id(self):
         uploaded = re.search(r"(?m)^\s+name: (\S+)\$\{\{ steps\.identity\.outputs\.plugin-id \}\}$", self.admit)
         self.assertIsNotNone(uploaded, "the admission artifact is not named by plugin id")
-        fetched = (ROOT / "scripts" / "admissions.sh").read_text()
+        fetched = (ROOT / "tools" / "pipeline" / "admissions.sh").read_text()
         self.assertIn(f'--name "{uploaded.group(1)}$id"', fetched)
-        self.assertIn("scripts/admissions.sh fetch", workflow("compose.yml"))
+        self.assertIn("tools/pipeline/admissions.sh fetch", workflow("compose.yml"))
 
     def test_a_run_starts_the_composition_and_reports_on_its_commit_only_where_it_dispatches(self):
         reaching = [

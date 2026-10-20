@@ -16,11 +16,11 @@ repository must change. Three kinds exist:
 | :--- | :--- | :--- |
 | The repository `hq-host deploy` accepts: its composition `ghcr.io/<owner>/<repo>/composition`, signed by its Compose workflow on `main` | nowhere by hand: CI builds `hq-host` with `HQ_SOURCE` from `github.repository` (`BuildSource` in [`controller/host/deploy.go`](../controller/host/deploy.go)) | `hq-host deploy`, which refuses any other image; a build without a source deploys nothing |
 | The Go module path, `github.com/<owner>/<repo>/controller` | [`controller/go.mod`](../controller/go.mod) and every import under `controller/` | the Go build |
-| The Cordon repository and commit | `repository:` in `.github/actions/admit-plugin/action.yml` and `.github/workflows/compose.yml`; `CORDON_COMMIT` in [`scripts/toolchain.env`](../scripts/toolchain.env) | extension admission and Compose |
+| The Cordon repository and commit | `repository:` in `.github/actions/admit-plugin/action.yml` and `.github/workflows/compose.yml`; `CORDON_COMMIT` in [`tools/pipeline/toolchain.env`](../tools/pipeline/toolchain.env) | extension admission and Compose |
 | The host repository extensions are checked against | `HOST_REPOSITORY` in `.github/workflows/plugin-checks.yml` | an extension's checks |
-| The failure-log recipient (an age public key) | `FAILURE_LOG_RECIPIENT` in [`scripts/toolchain.env`](../scripts/toolchain.env) | `scripts/seal-failure-logs.sh` ([Deployment](Deployment.md#when-a-run-fails)) |
+| The failure-log recipient (an age public key) | `FAILURE_LOG_RECIPIENT` in [`tools/pipeline/toolchain.env`](../tools/pipeline/toolchain.env) | `tools/pipeline/seal-failure-logs.sh` ([Deployment](Deployment.md#when-a-run-fails)) |
 | The runner label, `severino-hq` | `runs-on` of the Deploy job in `.github/workflows/deploy.yml` | Deploy |
-| The check names, **Severino HQ · Review** and **Severino HQ · Production** | the `scripts/hq-check.sh` calls in the workflows and the admission action | the ruleset's required check |
+| The check names, **Severino HQ · Review** and **Severino HQ · Production** | the `ci_report check` calls in the workflows and the admission action | the ruleset's required check |
 | The site name | `SEVERINO_SITE_NAME` (default in `hq/config/settings.py`) | page titles and the header |
 
 ### Host paths
@@ -32,8 +32,8 @@ fork changes them in every place listed.
 | :--- | :--- |
 | `/usr/local/lib/severino-hq`, `/var/lib/severino-hq`, `/run/severino-hq-secrets`, `/run/severino-hq`, `/var/log/severino-hq` | [`controller/host/layout.go`](../controller/host/layout.go), `controller/cmd/hq-host/main.go`, `deploy/systemd/` |
 | `/opt/apps/severino-hq/secrets` (renderer lock, ACME state) | `ACMEDir` in `layout.go`; `SEVERINO_HQ_SECRET_DIR` default in `controller/cmd/hq-secrets/main.go`; `severino-hq-secrets.service`, `severino-hq-controller.service` |
-| `/opt/apps` (the stacks container upgrades may touch) | `STACKS_ROOT` in `scripts/upgrade-container.sh` and `hq/platform/application/upgrades.py` |
-| `/srv/severino-hq/backups` (backup archives) | `scripts/backup.sh` default, `severino-hq-backup.service`, `deploy/tmpfiles/severino-hq.conf` |
+| `/opt/apps` (the stacks container upgrades may touch) | `StacksRoot` in `controller/host/upgrade/upgrade.go`, `STACKS_ROOT` in `hq/platform/application/upgrades.py` |
+| `/srv/severino-hq/backups` (backup archives) | `BackupDir` in `controller/host/backup.go`, `severino-hq-backup.service`, `deploy/tmpfiles/severino-hq.conf` |
 | The web account, UID/GID `10001` | `WebUID` in `layout.go`, the `Dockerfile`, `deploy/tmpfiles/severino-hq.conf` |
 
 ## 2. Outside the repository
@@ -42,10 +42,10 @@ fork changes them in every place listed.
 
 | Value | Where | Read by |
 | :--- | :--- | :--- |
-| `HQ_APP_KEY`, `HQ_APP_CLIENT_ID` | repository secrets, set by `scripts/wire-github-app.py` | CI, Compose, Deploy: HQ's checks and reading admissions |
+| `HQ_APP_KEY`, `HQ_APP_CLIENT_ID` | repository secrets, set by `mise run wire-github-app` | CI, Compose, Deploy: HQ's checks and reading admissions |
 | `COMPOSITION_EXTENSIONS` | repository secret: JSON in the shape of [`composition/extensions.json`](../composition/extensions.json) | Compose: which extensions to compose, and whose signatures to trust |
 | The `production` environment, with required reviewers | repository environments | Deploy's approval |
-| The `admission` environment on each extension, `main` only, holding `HQ_APP_KEY` and `HQ_APP_CLIENT_ID` | each extension's settings, set by `scripts/wire-github-app.py` | an admission starting Compose |
+| The `admission` environment on each extension, `main` only, holding `HQ_APP_KEY` and `HQ_APP_CLIENT_ID` | each extension's settings, set by `mise run wire-github-app` | an admission starting Compose |
 | HQ's GitHub App: no webhook, the permissions in [`deploy/github-apps.json`](../deploy/github-apps.json), installed on the host and every extension | the account's app settings | everything above, and the controller |
 | A `main` ruleset requiring **Severino HQ · Review**, with code scanning holding a merge on a CodeQL alert | repository rules | merges |
 | A self-hosted runner with the `severino-hq` label | the host ([Install](Install.md#6-install-the-runner-and-write-hostjson)) | Deploy |
@@ -83,7 +83,7 @@ the connections can see.
 | :--- | :--- |
 | `/etc/severino-hq/backup.env`: `SEVERINO_BACKUP_AGE_RECIPIENTS` | the host ([Backup](Backup.md)) |
 | `SEVERINO_HQ_DEPLOY_HOST`, an SSH destination | the shell running `mise run preflight` |
-| `HQ_LOCAL_PYTHONPATH`, `HQ_LOCAL_PLUGINS` | `mise.local.toml` ([AGENTS.md](../AGENTS.md#start-here)) |
+| `HQ_LOCAL_PYTHONPATH`, `HQ_LOCAL_PLUGINS` | `mise.local.toml` ([Development](Development.md#the-extension-set)) |
 | `SEVERINO_FAILURE_LOG_IDENTITY` | the operator's shell, for `mise run failure-logs` |
 | Internal CA roots | `/usr/local/share/ca-certificates` on the host |
 

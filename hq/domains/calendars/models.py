@@ -17,6 +17,8 @@ from django.urls import reverse
 from hq.platform.application.references import ReferenceField
 from hq.platform.core.models import TimestampedModel
 from hq.platform.core.rules import Rule
+lazy from hq.platform.application.calendar_entries import repeat_label
+lazy from hq.platform.application.moments import when_day
 
 
 class Entry(TimestampedModel):
@@ -35,7 +37,7 @@ class Entry(TimestampedModel):
         YEARLY = "yearly", "Every year"
 
     # The iCalendar UID: stable for the entry's life, so a feed or a synced
-    # calendar recognises an edit as the same event.
+    # calendar recognizes an edit as the same event.
     uid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     title = models.CharField(max_length=160)
     starts_on = models.DateField()
@@ -130,9 +132,6 @@ class Entry(TimestampedModel):
     @property
     def when_note(self) -> str:
         """Its day, or how it repeats, beside its title where something else lists it."""
-
-        from hq.platform.application.calendar_entries import repeat_label
-        from hq.platform.application.moments import when_day
 
         return repeat_label(self) or when_day(self.starts_on)
 

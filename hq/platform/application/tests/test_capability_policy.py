@@ -135,10 +135,10 @@ class DestructiveDefaultTests(PolicyTestCase):
 
         from unittest import mock
 
-        from ..resources import ResourceNotFound
+        from ..record_errors import RecordNotFound
 
         project = Project.objects.create(name="Unseen")
-        with mock.patch("hq.platform.application.resources.get_resource", side_effect=ResourceNotFound("x")):
+        with mock.patch("hq.platform.application.resources.get_resource", side_effect=RecordNotFound("x")):
             result = self.delete(agent(capabilities=DELETES), project.slug)
 
         self.assertEqual(result["error"]["code"], "approval_subject_unreadable")
@@ -270,7 +270,7 @@ class OutOfScopeTests(PolicyTestCase):
 
         self.assertEqual(decide(spec("project.create"), self.operator, {}, None).rule, Rule.ALLOW)
 
-    def test_the_cli_keeps_todays_behaviour(self):
+    def test_the_cli_keeps_todays_behavior(self):
         self.rule(Scope.SURFACE, "mcp", "project.create", Rule.DENY)
 
         self.assertEqual(decide(spec("project.create"), cli_principal(), {}, None).rule, Rule.ALLOW)
@@ -436,7 +436,7 @@ class PageTests(PolicyTestCase):
             {row.default for row in rows.values()} - {rows["infrastructure.resource.update"].default}, choices
         )
 
-    def test_only_acronyms_are_capitalised(self):
+    def test_only_acronyms_are_capitalized(self):
         self.assertEqual(human_label("example.pace.set"), "Example Pace Set")
         self.assertEqual(human_label("tls.certificate"), "TLS Certificate")
 

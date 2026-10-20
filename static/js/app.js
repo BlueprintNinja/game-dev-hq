@@ -1,17 +1,5 @@
 "use strict";
 
-// Moving between pages fades (`@view-transition` in the stylesheet). A
-// transition the browser gives up on, because the window changed size or the
-// page was hidden, is not an error: the page is simply shown.
-["pagereveal", "pageswap"].forEach((type) =>
-  window.addEventListener(type, (event) => {
-    const transition = event.viewTransition;
-    [transition?.ready, transition?.finished, transition?.updateCallbackDone].forEach((step) =>
-      step?.catch(() => {}),
-    );
-  }),
-);
-
 // Disclosure menus that dismiss on an outside click or Escape. One selector
 // covers every such menu, so adding another is handled by construction rather
 // than by remembering to extend a hardcoded query: a menu says for itself
@@ -109,73 +97,9 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-// The queue spans every installed domain and may include remote reads. Asking
-// for its count in the base context would make every page pay that cost before
-// first paint. The dashboard and queue already know it; everywhere else loads
-// it only when the operator opens the menu that displays it.
-// The unread count on the header's action items button. Fetched after the page
-// so no page pays for it while rendering, and remembered for a minute so
-// moving between pages does not ask again. The action items page renders the
-// count itself and hands it over, which is what makes marking read show at once.
-const actionMenu = document.querySelector("[data-action-count-url]");
-if (actionMenu) {
-  const STORE_KEY = "hq.actionCount";
-  const TTL_MS = 60_000;
-  const paint = (count) => {
-    document.querySelectorAll("[data-action-count]").forEach((badge) => {
-      badge.textContent = String(count);
-      badge.hidden = count === 0;
-    });
-  };
-  const remember = (count, etag = "") => {
-    try {
-      sessionStorage.setItem(STORE_KEY, JSON.stringify({ count, etag, at: Date.now() }));
-    } catch (_error) {
-      // Storage refused: the next page asks again.
-    }
-  };
-  const stored = () => {
-    try {
-      return JSON.parse(sessionStorage.getItem(STORE_KEY) || "null");
-    } catch (_error) {
-      return null;
-    }
-  };
-  const recalled = () => {
-    const last = stored();
-    return last && Date.now() - last.at < TTL_MS ? last.count : null;
-  };
-
-  if (actionMenu.dataset.actionCountFresh !== undefined) {
-    remember(Number(actionMenu.dataset.actionCountFresh));
-  } else if (recalled() !== null) {
-    paint(recalled());
-  } else {
-    // The last answer's validator goes with the question: an unchanged queue
-    // is answered 304 and the count already held is kept.
-    const last = stored();
-    const headers = { Accept: "application/json" };
-    if (last && last.etag) headers["If-None-Match"] = last.etag;
-    hqFetch(actionMenu.dataset.actionCountUrl, { headers, renewSession: false })
-      .then((response) => {
-        if (response.status === 304 && last) return { count: last.count, etag: last.etag };
-        if (!response.ok) return null;
-        const etag = response.headers.get("ETag") || "";
-        return response.json().then((payload) => ({ count: payload.count, etag }));
-      })
-      .then((answer) => {
-        if (answer) {
-          paint(answer.count);
-          remember(answer.count, answer.etag);
-        }
-      })
-      .catch(() => {});
-  }
-}
-
 // Hover-to-open, for pointers only. On touch there is no hover: the first tap
 // would open a menu and the second would be needed to follow a link, so those
-// devices keep plain click behaviour.
+// devices keep plain click behavior.
 if (window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
   // Small delays absorb the pointer crossing a menu on its way somewhere else,
   // and the gap between the summary and its panel.
@@ -336,7 +260,6 @@ document.addEventListener("click", (event) => {
           badge.textContent = String(next);
           badge.hidden = next === 0;
         });
-        try { sessionStorage.removeItem("hq.actionCount"); } catch (_error) { /* asked again next page */ }
       }
       // The button becomes its opposite, posting to the other route.
       if (dismissing) row.dataset.dismissed = `Dismissed: ${row.querySelector(".attention-title")?.textContent.trim() || ""}`;
@@ -644,7 +567,7 @@ document.querySelectorAll("[data-dropzone]").forEach((zone) => {
   });
 })();
 
-// Asked-for work: one behaviour for every "do this now".
+// Asked-for work: one behavior for every "do this now".
 //
 // A request never does the work. It stores the ask and answers at once with
 // how the work stands and the address of a status resource (202 while it is
@@ -921,25 +844,6 @@ document.querySelectorAll("[data-dropzone]").forEach((zone) => {
   // A part of the page drawn again may hold work already under way.
   document.addEventListener("hq:fragment", () => resume(document));
 })();
-
-// A field shown only when another field's value calls for it:
-// data-when="repeat" for any value, data-when="repeat=weekly|daily" for those.
-// Without this script every field shows, which is still a working form.
-const hqBindWhen = (root) => {
-  root.querySelectorAll("[data-when]").forEach((field) => {
-    const [name, wanted] = field.dataset.when.split("=");
-    const control = field.closest("form")?.elements.namedItem(name);
-    if (!control || field.dataset.whenBound) return;
-    field.dataset.whenBound = "true";
-    const update = () => {
-      field.hidden = wanted === undefined ? !control.value : !wanted.split("|").includes(control.value);
-    };
-    control.addEventListener("change", update);
-    update();
-  });
-};
-hqBindWhen(document);
-document.addEventListener("hq:fragment", (event) => hqBindWhen(event.target));
 
 // An empty date, time or moment is marked, so the stylesheet can stop WebKit
 // drawing today's date in it as though it were a value.
@@ -1270,7 +1174,7 @@ document.addEventListener("input", (event) => {
 
 // The topology is useful HTML before this runs: every card's select control
 // is a link that focuses the node, and a focused page draws its details. This
-// enhancement filters, isolates a node's immediate neighbourhood, and loads
+// enhancement filters, isolates a node's immediate neighborhood, and loads
 // the selected node's details into the one panel beside the lanes, creating
 // no client-side topology state of its own.
 document.querySelectorAll("[data-topology]").forEach((workspace) => {
@@ -1344,7 +1248,9 @@ document.querySelectorAll("[data-topology]").forEach((workspace) => {
     }
   };
 
-  const render = () => {
+  // `said`: whether the status line speaks for the view. The server draws it
+  // for the page as it loads, so the first pass leaves it standing.
+  const render = ({ said = true } = {}) => {
     const selected = nodes.find((node) => node.dataset.topologyNode === focused);
     const related = new Set(selected?.dataset.topologyNeighbors.split(" ").filter(Boolean) || []);
     workspace.classList.toggle("has-focus", Boolean(selected));
@@ -1378,7 +1284,7 @@ document.querySelectorAll("[data-topology]").forEach((workspace) => {
       edge.classList.toggle("is-related", touchesFocus);
     });
     if (ledger) ledger.hidden = edges.length > 0 && edges.every((edge) => edge.hidden);
-    if (status) {
+    if (status && said) {
       const visible = nodes.filter((node) => !node.hidden).length;
       status.textContent = selected
         ? `${selected.querySelector("strong")?.textContent || "Selected"}: ${related.size} direct relationship${related.size === 1 ? "" : "s"}.`
@@ -1449,7 +1355,7 @@ document.querySelectorAll("[data-topology]").forEach((workspace) => {
       }
     }
   });
-  render();
+  render({ said: false });
   if (focused) {
     showDetail(Boolean(detail?.childElementCount));
     map?.scrollTo({ top: 0, behavior: "auto" });
