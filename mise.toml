@@ -22,6 +22,11 @@
 
 min_version = "2026.10.15"
 
+# Independent Windows-compatible companion; does not load Django or extensions.
+[tasks."gamedev:check"]
+description = "Test Game Dev HQ planning and private preview boundaries"
+run = "python -m unittest discover -s gamedev/tests -v"
+
 [settings.task]
 # Gates that run together print one after another, each whole and labeled,
 # never line by line into each other: an aggregate reads gate by gate, and each

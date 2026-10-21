@@ -1,0 +1,36 @@
+name: Game Dev foundation
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, feature/gamedev-foundation]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gamedev-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  foundation:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      # The upstream Linux systemd mount name contains literal backslashes.
+      # Keep it in the repository, outside this companion's sparse checkout.
+      - name: Allow upstream paths in the Windows index
+        if: runner.os == 'Windows'
+        run: git config --global core.protectNTFS false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/deploy/systemd/
+      - name: Verify companion
+        run: python -m unittest discover -s gamedev/tests -v
+      - name: Verify CLI
+        run: python -m gamedev --help

@@ -1,4 +1,16 @@
-# Severino HQ
+# Game Dev HQ
+
+This fork preserves the MIT-licensed Severino HQ host below. The reconstructed
+**Game Dev HQ v0.1 companion** adds local project/task planning, Codex-first
+delegation, an audited CLI, and a read-only Windows 11 private preview through
+Tailscale Serve. It runs independently of the Linux host and does not execute
+agents, launch UEFN, or bypass the host's authorization layer.
+
+Start with [Game Dev HQ v0.1](docs/Game-Dev-HQ.md) for setup, scope, security,
+verification, and rollback. The separate `Game Dev foundation` Actions workflow
+tests the companion on Windows and Linux; upstream gates remain in place.
+
+## Upstream: Severino HQ
 
 [![CI](https://github.com/joeseverino/severino-hq/actions/workflows/ci.yml/badge.svg)](https://github.com/joeseverino/severino-hq/actions/workflows/ci.yml)
 &nbsp;[![Scorecard](https://github.com/joeseverino/severino-hq/actions/workflows/scorecard.yml/badge.svg)](https://github.com/joeseverino/severino-hq/actions/workflows/scorecard.yml)
