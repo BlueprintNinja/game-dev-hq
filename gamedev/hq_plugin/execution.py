@@ -49,6 +49,33 @@ def queue_run(command, *, principal):
         return {"ok": True, "id": run.pk}
 
 
+def cancel_pending(run):
+    """A cancel stops work that has not reached review yet."""
+    if run.status not in ("queued", "running"):
+        raise ValueError("Only pending work can be canceled.")
+    run.cancel_requested = True
+    if run.status == "queued":
+        run.status = "canceled"
+
+
+def record_review(run, command):
+    """A review needs a finished run, a note, and passing evidence to accept."""
+    if run.status != "review" or not command.note.strip():
+        raise ValueError("Review requires a finished run and a decision note.")
+    if command.decision == "accept" and (not run.passed or run.task.children.exclude(status="done").exists()):
+        raise ValueError("Acceptance requires passing checks and completed delegations.")
+    run.status = "accepted" if command.decision == "accept" else "rejected"
+
+
+def settle_task(run, command):
+    """Acceptance closes the task; a rejection sends it back for changes."""
+    task = Task.objects.select_for_update().get(pk=run.task_id)
+    task.status = "done" if command.decision == "accept" else "blocked"
+    task.evidence = f"Run #{run.pk}: {run.decision_note}\nEvidence: {run.diff_sha256}"
+    task.version += 1
+    task.save(update_fields=("status", "evidence", "version", "updated_at"))
+
+
 def decide_run(command, *, principal):
     principal.require("gamedev.write")
     with transaction.atomic(), audit_operation(operation="gamedev.run.decide", principal=principal):
@@ -58,26 +85,14 @@ def decide_run(command, *, principal):
         if run.version != command.version:
             raise ValueError("Run changed. Reload before deciding.")
         if command.decision == "cancel":
-            if run.status not in ("queued", "running"):
-                raise ValueError("Only pending work can be canceled.")
-            run.cancel_requested = True
-            if run.status == "queued":
-                run.status = "canceled"
+            cancel_pending(run)
         else:
-            if run.status != "review" or not command.note.strip():
-                raise ValueError("Review requires a finished run and a decision note.")
-            if command.decision == "accept" and (not run.passed or run.task.children.exclude(status="done").exists()):
-                raise ValueError("Acceptance requires passing checks and completed delegations.")
-            run.status = "accepted" if command.decision == "accept" else "rejected"
+            record_review(run, command)
         run.decision_note = command.note.strip()
         run.version += 1
         run.save()
         if command.decision in ("accept", "reject"):
-            task = Task.objects.select_for_update().get(pk=run.task_id)
-            task.status = "done" if command.decision == "accept" else "blocked"
-            task.evidence = f"Run #{run.pk}: {run.decision_note}\nEvidence: {run.diff_sha256}"
-            task.version += 1
-            task.save(update_fields=("status", "evidence", "version", "updated_at"))
+            settle_task(run, command)
         record_operation(
             "gamedev.run.decide",
             f"Run #{run.pk}: {command.decision}",
