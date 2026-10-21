@@ -1,9 +1,8 @@
 import asyncio
 import os
 import tempfile
-import unittest
 from pathlib import Path
-from unittest import mock
+from unittest import mock, skipUnless
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -20,7 +19,7 @@ from ..manage import collect_static
 # settings, where the Game Dev extension is not installed and the workspace's
 # database is not there. These tests belong to the workspace composition; they
 # stand down anywhere else instead of failing a suite they cannot serve.
-workspace_only = unittest.skipUnless(
+workspace_only = skipUnless(
     "gamedev.hq_plugin" in settings.INSTALLED_APPS,
     "the Game Dev extension is not installed in this composition",
 )

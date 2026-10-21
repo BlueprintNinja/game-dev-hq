@@ -88,12 +88,14 @@ def handler(database, operators, dns_name, site=None, https_port=9443):
         def reply(self, status, content, kind="text/plain; charset=utf-8", policy=LOCKED_POLICY):
             body = content.encode("utf-8") if isinstance(content, str) else content
             self.send_response(status)
-            self.send_header("Content-Type", kind)
+            # No line break reaches a header: a served page's own policy and
+            # content type are data, and a header is one line.
+            self.send_header("Content-Type", kind.replace("\r", "").replace("\n", ""))
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Content-Security-Policy", policy)
+            self.send_header("Content-Security-Policy", policy.replace("\r", "").replace("\n", ""))
             self.send_header("X-Frame-Options", "DENY")
             self.end_headers()
             if self.command != "HEAD":

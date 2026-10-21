@@ -34,7 +34,10 @@ class ShowcaseTests(unittest.TestCase):
         self.assertIn("frame-ancestors 'none'", policy)
         font = self.root / "font.woff2"
         font.write_bytes(b"\x00\xff\x01")
-        self.assertEqual(self.site.read("/font.woff2")[0], font.read_bytes())
+        # The export is indexed when the preview starts, so a file added
+        # after that is served by a preview that starts after it.
+        site = Showcase(self.root)
+        self.assertEqual(site.read("/font.woff2")[0], font.read_bytes())
 
     def test_no_traversal_hidden_files_source_or_directory_listing(self):
         (self.root / "secrets.py").write_text("secret", encoding="utf-8")
