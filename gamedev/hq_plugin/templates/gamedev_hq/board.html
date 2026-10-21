@@ -3,7 +3,7 @@
 {% if showcase_url %}<p><a href="{{ showcase_url }}">Explore the full sample showcase</a> · Example data is separate from your saved workspace.</p>{% endif %}
 <section class="card">
   <div class="section-head"><h2>New task</h2></div>
-  <p>Changes are saved to your workspace. Agent assignments do not run commands.</p>
+  <p>Changes are saved to your workspace. Start work on a saved task when it is ready.</p>
   {% if has_projects %}
   <form method="post">{% csrf_token %}{{ form.as_p }}<button type="submit">Save task</button></form>
   {% else %}
@@ -19,6 +19,17 @@
     {% if row.task.status == 'done' %}<p>{{ row.task.evidence|linebreaksbr }}</p>
     {% else %}
     <form method="post" action="{% url 'gamedev:move' %}">{% csrf_token %}{{ row.move.as_p }}<button type="submit">Update task</button></form>
+    {% endif %}
+    {% for run in row.task.runs.all %}<p><a href="{% url 'gamedev:run' run.pk %}">Run #{{ run.pk }} · {{ run.status|title }}</a></p>{% endfor %}
+    {% if row.task.status != 'done' and row.task.agent == 'codex' %}
+    <form method="post" action="{% url 'gamedev:queue' %}">
+      {% csrf_token %}
+      <input type="hidden" name="task_id" value="{{ row.task.pk }}">
+      <input type="hidden" name="version" value="{{ row.task.version }}">
+      <p><label for="prompt_{{ row.task.pk }}">Work instructions</label><textarea id="prompt_{{ row.task.pk }}" name="prompt" required maxlength="12000" rows="4"></textarea></p>
+      <p><label for="kind_{{ row.task.pk }}">Action</label><select id="kind_{{ row.task.pk }}" name="kind"><option value="coding">Coding task</option><option value="uefn_inspect">Check open UEFN project</option><option value="uefn_build">Build Verse</option></select></p>
+      <button type="submit">Start work</button>
+    </form>
     {% endif %}
   </details>
   {% empty %}<p>No tasks yet.</p>{% endfor %}

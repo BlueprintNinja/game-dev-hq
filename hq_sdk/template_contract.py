@@ -191,6 +191,8 @@ CLASSES = (
 # ``data-`` attributes the host's scripts act on that an extension may write.
 HOOKS = (
     "data-chart",
+    "data-fragment",
+    "data-fragment-poll",
     "data-sort",
     "data-submit-busy",
     "data-submit-label",

@@ -1,14 +1,18 @@
 # Game Dev HQ
 
-This fork preserves the MIT-licensed Severino HQ host below. The reconstructed
-**Game Dev HQ v0.1 companion** adds local project/task planning, Codex-first
-delegation, an audited CLI, and a read-only Windows 11 private preview through
-Tailscale Serve. It runs independently of the Linux host and does not execute
-agents, launch UEFN, or bypass the host's authorization layer.
+This fork preserves the MIT-licensed Severino HQ host and adds a saved game
+development workspace for Windows 11, privately available through Tailscale.
+The full sample showcase remains separate from live projects and tasks.
 
-Start with [Game Dev HQ v0.1](docs/Game-Dev-HQ.md) for setup, scope, security,
-verification, and rollback. The separate `Game Dev foundation` Actions workflow
-tests the companion on Windows and Linux; upstream gates remain in place.
+The Game Dev extension now supports supervised Codex execution, explicit
+OpenCode delegation, retained diffs and verification evidence, operator review,
+and restricted UEFN project inspection and Verse builds. Runs use isolated Git
+worktrees; approval does not automatically merge or publish changes.
+
+Start with [workspace setup](docs/Game-Dev-HQ.md) and
+[supervised execution](docs/Game-Dev-Execution.md). The separate `Game Dev
+foundation` Actions workflow tests the companion and workspace on Windows and
+Linux; the upstream gates remain in place.
 
 ## Upstream: Severino HQ
 

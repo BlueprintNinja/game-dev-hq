@@ -2646,6 +2646,8 @@
     },
     "hooks": [
       "data-chart",
+      "data-fragment",
+      "data-fragment-poll",
       "data-sort",
       "data-submit-busy",
       "data-submit-label",
