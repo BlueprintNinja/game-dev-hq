@@ -33,7 +33,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # -trimpath, so the runtime image carries no Go toolchain and the binaries no
 # build paths. Their Go is go.mod's go directive; the build fails if this
 # pinned image drifts from it.
-FROM golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e AS controller
+FROM golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4 AS controller
 ENV CGO_ENABLED=0 \
     GOTOOLCHAIN=local \
     GOFLAGS=-mod=readonly

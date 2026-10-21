@@ -19,7 +19,11 @@ fingerprint=$(printf '%s\n%s\n%s\n' \
   "$(sha256sum "$admissions" | cut -d' ' -f1)" \
   "$(openssl dgst -sha256 "$policy" | awk '{print $NF}')" |
   sha256sum | cut -c1-32)
-tag="ghcr.io/$GITHUB_REPOSITORY/composition:fp-$fingerprint"
+# The tag is named after the repository in lowercase: an image reference's
+# repository name must be, and the controller reads that name from the image.
+# shellcheck source=tools/lib/image-repository.sh
+. ./tools/lib/image-repository.sh
+tag="ghcr.io/$(image_repository "$GITHUB_REPOSITORY")/composition:fp-$fingerprint"
 
 # A tag rather than a file or a variable: the registry already holds the only
 # copy of the truth that matters, and a tag that exists is proof the exact same

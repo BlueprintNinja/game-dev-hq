@@ -62,7 +62,11 @@ jobs:
             echo "::error title=Not a commit::Give the full 40-character commit to deploy."
             exit 1
           fi
-          tag="ghcr.io/${GITHUB_REPOSITORY}/composition:${commit}"
+          # The image is named after the repository in lowercase: an image
+          # reference's repository name must be, and the controller reads that
+          # name from the image. No checkout here, so the rule is spelled out
+          # rather than read from tools/lib/image-repository.sh.
+          tag="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')/composition:${commit}"
           if ! digest=$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"') \
              || [ -z "$digest" ]; then
             echo "::error title=Never composed::No image of HQ was published for ${commit:0:12}. Run Compose for it first."

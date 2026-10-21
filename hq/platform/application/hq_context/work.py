@@ -232,9 +232,10 @@ RECENT = Dots.LIMIT
 
 def _run_dot(job: Any) -> Dot:
     result, _tone = _ENDED.get(job.state, ("Did not finish", ATTENTION))
+    local = timezone.localtime(job.created_at)
     return Dot(
         filled=job.state == "succeeded",
-        tip=f"{result}, {timezone.localtime(job.created_at):%b %-d %H:%M}",
+        tip=f"{result}, {local:%b} {local.day} {local:%H:%M}",
         url=reverse("jobs:status", args=[job.pk]),
     )
 

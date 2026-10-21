@@ -623,8 +623,8 @@ def line_chart(
                 x=place_x(day),
                 y=place_y(value),
                 value=value,
-                label=f"{day:%b %-d, %Y}",
-                tooltip=f"{day:%b %-d, %Y} · {label}: {_format_reading(value, unit)}",
+                label=f"{day:%b} {day.day}, {day:%Y}",
+                tooltip=f"{day:%b} {day.day}, {day:%Y} · {label}: {_format_reading(value, unit)}",
             )
             for day, value in points
         )
@@ -661,8 +661,9 @@ def line_chart(
     # where it covers more. "Sep 15" across six years of history reads as a
     # single year, which hides the thing the chart is for.
     span_days = (last_day - first_day).days
-    stamp = "%b %Y" if span_days > 400 else "%b %-d"
-    categories = tuple(ChartCategory(place_x(day), f"{day:{stamp}}") for day in stamps)
+    categories = tuple(
+        ChartCategory(place_x(day), f"{day:%b %Y}" if span_days > 400 else f"{day:%b} {day.day}") for day in stamps
+    )
 
     dated: dict = {}
     for label, points, _ in cleaned:
@@ -670,7 +671,7 @@ def line_chart(
             dated.setdefault(day, {})[label] = value
     rows = tuple(
         ChartRow(
-            f"{day:%b %-d, %Y}",
+            f"{day:%b} {day.day}, {day:%Y}",
             tuple(dated[day].get(label, 0.0) for label, _, _ in cleaned),
         )
         for day in sorted(dated)

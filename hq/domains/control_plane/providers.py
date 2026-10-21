@@ -1,6 +1,7 @@
 """Typed provider declarations: emit once, derive every adapter contract."""
 
 import os
+import platform
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -192,7 +193,7 @@ def controller_id() -> str:
     them.
     """
 
-    return os.environ.get("HQ_CONTROLLER_ID", "").strip() or os.uname().nodename
+    return os.environ.get("HQ_CONTROLLER_ID", "").strip() or platform.node()
 
 
 def controller_capabilities() -> dict[str, Any]:
