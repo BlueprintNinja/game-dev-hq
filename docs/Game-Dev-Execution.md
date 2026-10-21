@@ -32,7 +32,8 @@ Use absolute executable and repository paths. Example (replace the paths):
 The project key must match a saved HQ project slug. Coding requires a Git
 repository and runs from its current committed HEAD. Uncommitted changes are
 not copied. A UEFN project can be inspected or built without being in Git;
-its repository/check settings are unused for those two fixed actions.
+its repository/check settings are unused for those two fixed actions. Set
+`coding_enabled` to `false` for an editor-only project.
 
 Initialize/migrate the workspace, then start the worker using
 `deploy/windows/Start-GameDevWorker.ps1 -PolicyPath <absolute-policy-path>`.
@@ -42,7 +43,8 @@ No API key is stored by HQ. For one queued job, the equivalent Python entry
 point is `python -m gamedev.worker --policy <path> --once` with the workspace
 environment configured. Only one worker may hold the workspace lock.
 
-For startup at logon, register this script as `GameDevHQ-Worker`, using a
+For startup at logon, use `deploy/windows/Install-GameDevWorker.ps1` with the
+same policy/data/log/runtime arguments. It registers `GameDevHQ-Worker`, using a
 limited interactive principal, hidden PowerShell, explicit absolute paths,
 one instance, and restart on failure. Start it after the workspace migration
 has completed. Do not create a public listener or a Tailscale Funnel route.
@@ -56,7 +58,7 @@ has completed. Do not create a public listener or a Tailscale Funnel route.
 3. Review the captured diff and every independent check. Accept requires
    passing checks, completed delegated tasks and a review note. A failed
    check cannot be accepted. Decisions reject stale versions and are audited.
-4. Move the task through review to done after acceptance. Acceptance records
+4. Acceptance marks the task done; rejection sends it back for changes. It records
    approval of captured evidence; it does not apply, commit, push, merge or
    publish changes. Retained worktrees remain available for local inspection.
 

@@ -6,7 +6,7 @@ from django.db import transaction
 
 from hq_sdk.audit import audit_operation, record_operation
 
-from .models import Run
+from .models import Run, Task
 
 
 def claim(principal):
@@ -24,6 +24,7 @@ def claim(principal):
 
 
 def update(run_id, token, principal, **values):
+    principal.require("gamedev.write")
     with transaction.atomic(), audit_operation(operation="gamedev.run.progress", principal=principal):
         run = Run.objects.select_for_update().get(pk=run_id)
         if run.status != "running" or not secrets.compare_digest(run.worker_token, token):
@@ -35,6 +36,11 @@ def update(run_id, token, principal, **values):
             run.passed = False
         run.version += 1
         run.save()
+        if run.status in ("review", "failed", "canceled"):
+            task = Task.objects.select_for_update().get(pk=run.task_id)
+            task.status = "review" if run.status == "review" else "blocked"
+            task.version += 1
+            task.save(update_fields=("status", "version", "updated_at"))
         record_operation(
             "gamedev.run.progress",
             f"Run #{run.pk}: {run.status}",

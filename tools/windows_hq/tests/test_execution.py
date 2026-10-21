@@ -130,9 +130,35 @@ class ExecutionTests(WorkspaceTests):
         response = self.client.get(f"/game-dev/runs/{run.pk}/")
         self.assertContains(response, "&lt;script&gt;evil&lt;/script&gt;")
         self.assertTrue(self.decision(run, "accept")["ok"])
+        run.task.refresh_from_db()
+        self.assertEqual(run.task.status, "done")
+
+    def test_cancellation_racing_with_completion_cannot_be_accepted(self):
+        self.queued()
+        owned = claim(self.principal)
+        self.assertTrue(self.decision(owned, "cancel")["ok"])
+        update(owned.pk, owned.worker_token, self.principal, status="review", passed=True)
+        owned.refresh_from_db()
+        self.assertEqual(owned.status, "canceled")
+        self.assertFalse(owned.passed)
+        self.assertFalse(self.decision(owned, "accept")["ok"])
 
 
 class SupervisorTests(SimpleTestCase):
+    def test_editor_refuses_wrong_project_before_requesting_a_build(self):
+        from gamedev.uefn import inspect_or_build
+
+        with tempfile.TemporaryDirectory() as root:
+            project = Path(root) / "Example.uefnproject"
+            project.touch()
+            with mock.patch(
+                "gamedev.uefn.post",
+                return_value=({"ok": True, "result": {"mount": "/wrong", "world": "/Example/Example"}}, None),
+            ) as posted:
+                with self.assertRaises(ValueError):
+                    inspect_or_build(project, "uefn_build")
+                self.assertEqual(posted.call_count, 1)
+
     def test_process_output_and_timeout(self):
         with tempfile.TemporaryDirectory() as root:
             code, output = run_process([sys.executable, "-c", "print('supervised')"], cwd=root, timeout=10)

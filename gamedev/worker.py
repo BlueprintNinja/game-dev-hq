@@ -26,8 +26,10 @@ def git(repository, *args):
     executable = shutil.which("git")
     if not executable:
         raise ProcessFailure("Git is not installed.")
-    result = subprocess.run([executable, "-C", str(repository), *args], capture_output=True, timeout=30, check=True)
-    return result.stdout.decode("utf-8", errors="replace").strip()
+    status, output = run_process([executable, "-C", str(repository), *args], cwd=repository, timeout=30)
+    if status:
+        raise ProcessFailure(f"Git exited with status {status}: {output[:2000]}")
+    return output
 
 
 def codex_command(policy, worktree):
@@ -79,7 +81,7 @@ def execute(run, policy, principal):
         raise ProcessFailure("Coding is disabled by the local policy for this project.")
     if run.task.agent == "opencode" and (not run.delegated_by_id or run.delegated_by.task_id != run.task.parent_id):
         raise ProcessFailure("OpenCode dispatch requires verified Codex delegation provenance.")
-    revision = git(project.repository, "rev-parse", "HEAD")
+    revision = git(project.repository, "rev-parse", "HEAD").strip()
     worktree = policy.artifacts / f"run-{run.pk}"
     policy.artifacts.mkdir(parents=True, exist_ok=True)
     git(project.repository, "worktree", "add", "--detach", str(worktree), revision)

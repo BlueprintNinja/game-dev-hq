@@ -112,14 +112,19 @@ class WorkerLock:
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.stream = self.path.open("a+b")
-        self.stream.seek(0)
-        self.stream.write(b"0")
-        self.stream.flush()
-        self.stream.seek(0)
-        if os.name == "nt":
-            msvcrt.locking(self.stream.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            fcntl.flock(self.stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            self.stream.seek(0, 2)
+            if self.stream.tell() == 0:
+                self.stream.write(b"0")
+                self.stream.flush()
+            self.stream.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(self.stream.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                fcntl.flock(self.stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            self.stream.close()
+            raise
         return self
 
     def __exit__(self, *args):

@@ -72,6 +72,12 @@ def decide_run(command, *, principal):
         run.decision_note = command.note.strip()
         run.version += 1
         run.save()
+        if command.decision in ("accept", "reject"):
+            task = Task.objects.select_for_update().get(pk=run.task_id)
+            task.status = "done" if command.decision == "accept" else "blocked"
+            task.evidence = f"Run #{run.pk}: {run.decision_note}\nEvidence: {run.diff_sha256}"
+            task.version += 1
+            task.save(update_fields=("status", "evidence", "version", "updated_at"))
         record_operation(
             "gamedev.run.decide",
             f"Run #{run.pk}: {command.decision}",
