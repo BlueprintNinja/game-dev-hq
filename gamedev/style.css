@@ -1,5 +1,6 @@
 :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #10151d; color: #edf2f8; }
 body { margin: 0; }
+a { color: #93e5bd; }
 header, main { max-width: 1500px; margin: auto; padding: 1.5rem; }
 header { border-block-end: 1px solid #364457; }
 header > p:first-child { color: #93e5bd; letter-spacing: .12em; font-size: .75rem; }

@@ -14,8 +14,12 @@ delegated tasks. Its implementation attachment was unavailable.
   recovery, evidence required at completion, and child completion before parent
   completion. Review may return to active; any unfinished state may be blocked.
 - SQLite persistence and an audit event committed atomically with every write.
-- A responsive, server-rendered read-only board and JSON snapshot, with escaped
-  user content, no external assets or scripts, and restrictive browser headers.
+- The board is a Game Dev extension inside the upstream HQ application: it uses
+  HQ's own database, permissions, capability gates and audit trail, and its
+  projects are native HQ projects. It lives at `/game-dev/` of the live
+  workspace.
+- A read-only loopback preview of the same data, with escaped user content, no
+  external assets or scripts, and restrictive browser headers.
 - A loopback-only listener with an explicit host allowlist and operator login
   allowlist, using the identity supplied by Tailscale Serve.
 - Windows/Linux tests on GitHub-hosted runners. No workflow reaches the UEFN
@@ -53,58 +57,189 @@ The audit log is operational history, not tamper-proof against that account.
 
 ## Windows checkout
 
-Upstream contains a systemd mount filename with literal backslashes, which
-Windows cannot materialize. Preserve it with a sparse checkout rather than
-renaming or deleting Linux deployment files:
+Upstream contains one systemd mount filename with literal backslashes, which
+Windows cannot materialize. Exclude that one file with a sparse checkout
+rather than renaming or deleting Linux deployment files:
 
 ```powershell
 git clone --no-checkout https://github.com/BlueprintNinja/game-dev-hq.git
 Set-Location game-dev-hq
 git config core.protectNTFS false
 git sparse-checkout init --no-cone
-@('/*', '!/deploy/systemd/') | git sparse-checkout set --no-cone --stdin
+@('/*', '!/deploy/systemd/run-severino*') | git sparse-checkout set --no-cone --stdin
 git checkout feature/gamedev-foundation
 ```
 
-The setting allows the upstream filename in the index; the excluded systemd
-directory is never checked out. Keep this exception scoped to this checkout.
+The setting allows the upstream filename in the index; the excluded file is
+never checked out. Keep this exception scoped to this checkout.
+
+Every other file under `deploy/systemd` must stay in the checkout: the
+application reads the renderer's timer while it starts, and a checkout without
+it cannot start at all.
+
+## What runs on the workstation
+
+Two services, both on loopback, both reachable only through Tailscale Serve:
+
+| Service | Listener | Private URL | Holds |
+| --- | --- | --- | --- |
+| Live workspace | `127.0.0.1:18767` | `https://YOUR-MACHINE.YOUR-TAILNET.ts.net:9443/` | Real data: projects, tasks, audit history, the Game Dev board at `/game-dev/` |
+| Sample showcase | `127.0.0.1:18766` | `https://YOUR-MACHINE.YOUR-TAILNET.ts.net:9444/` | The upstream demo export with its example data, built from source |
+
+The showcase is a complete upstream build, so it can be explored without
+touching the workspace. The workspace is the one that persists changes: a task
+saved in the browser is a row in the workspace database and survives a restart.
+
+Both are started by Task Scheduler tasks under the operator account:
+
+| Task | Script | Runs |
+| --- | --- | --- |
+| `GameDevHQ-Workspace` | `deploy/windows/Start-GameDevWorkspace.ps1` | At logon, restarted on failure |
+| `GameDevHQ-Showcase` | `deploy/windows/Start-GameDevShowcase.ps1` | At logon, restarted on failure |
+
+Files the services own, all outside the repository:
+
+| Path | Holds |
+| --- | --- |
+| `%LOCALAPPDATA%\GameDevHQ\workspace\hq.sqlite3` | The workspace database |
+| `%LOCALAPPDATA%\GameDevHQ\workspace\secret.key` | The workspace's Django secret |
+| `%LOCALAPPDATA%\GameDevHQ\workspace\static`, `media` | Collected assets and uploads |
+| `%LOCALAPPDATA%\GameDevHQ\logs\workspace.log` | Workspace start and request log |
+| `%LOCALAPPDATA%\GameDevHQ\logs\showcase.log` | Showcase start log |
+
+Nothing else is written outside the repository: the showcase is served from the
+build under `var/demo`, and the companion's own database stays in `var/gamedev`.
+
+## Runbook
+
+### First install
+
+1. Sign in to Tailscale on the workstation and on every device that should
+   reach the workspace. Keep MagicDNS and HTTPS enabled for the tailnet; HTTPS
+   setup may need tailnet-admin approval.
+2. Install the pinned dependencies and build the sample showcase:
+
+   ```powershell
+   ./deploy/windows/Build-GameDevShowcase.ps1
+   ```
+
+   The script installs the pinned Python environment, exports the upstream demo
+   and leaves it under `var/demo`. Add `-Check` to also verify the exported
+   site in a browser.
+
+3. Register the two startup tasks:
+
+   ```powershell
+   ./deploy/windows/Install-GameDevStartup.ps1
+   ```
+
+   The script resolves PowerShell, `uv`, the data directory and the log
+   directory once, and pins them into the task actions. It prints both paths.
+   **Install the tasks from a normal PowerShell window, not from a packaged
+   application**: a packaged host (the Codex desktop app, for one) redirects
+   `LOCALAPPDATA` into its own cache, and the workspace would then start
+   against a different, empty directory on the next logon.
+
+4. Start both tasks and check them:
+
+   ```powershell
+   Start-ScheduledTask -TaskName 'GameDevHQ-Workspace'
+   Start-ScheduledTask -TaskName 'GameDevHQ-Showcase'
+   ./deploy/windows/Get-GameDevStatus.ps1
+   ```
+
+5. Point the tailnet at the two listeners:
+
+   ```powershell
+   ./deploy/windows/Enable-GameDevWorkspace.ps1
+   ```
+
+   The script refuses to replace a 9443 or 9444 route it does not recognise,
+   refuses to run while Funnel is enabled, and checks that both listeners
+   answer before it changes anything. Existing routes on other ports stay
+   untouched.
+
+6. Open `https://YOUR-MACHINE.YOUR-TAILNET.ts.net:9443/` from another signed-in
+   device. The board must load for the configured user and return 403 for a
+   different user. Confirm access fails from a device outside the tailnet.
+
+### Daily operation
+
+- **Start after a reboot or a sign-out**: the tasks start at logon. If they
+  did not run, `Start-ScheduledTask -TaskName 'GameDevHQ-Workspace'` and
+  `Start-ScheduledTask -TaskName 'GameDevHQ-Showcase'` start them by hand.
+- **Restart one service**: stop the task, then start it again:
+
+  ```powershell
+  Stop-ScheduledTask -TaskName 'GameDevHQ-Workspace'
+  Start-ScheduledTask -TaskName 'GameDevHQ-Workspace'
+  ```
+
+  The workspace re-collects its static assets and re-runs its migrations on
+  every start, so a restart is always a full, clean start.
+- **Stop everything**: `./deploy/windows/Stop-GameDevServices.ps1`. It stops
+  the two tasks and the loopback listeners they own, and leaves every other
+  process and every tailnet route alone.
+- **Check what is running**: `./deploy/windows/Get-GameDevStatus.ps1` prints the
+  task states, the listeners, both health checks, the private URLs and the last
+  lines of each log.
+
+### When something is wrong
+
+1. Read the log for the service that is wrong:
+   `%LOCALAPPDATA%\GameDevHQ\logs\workspace.log` or `showcase.log`. Every start
+   records what it did, and every failure records the reason.
+2. `Get-GameDevStatus.ps1` shows whether the listener is up at all. A listener
+   that is up but a page that fails points at the data or the database; no
+   listener at all points at the start script.
+3. The workspace waits for Tailscale to sign in (up to two minutes) before it
+   gives up, so a logon during a Tailscale reconnect is not a fault.
+4. The workspace collects its static assets into a clean tree on every start.
+   The upstream storage deletes the hashed copies it finds, so collecting twice
+   over the same tree would empty it; the start script therefore clears the
+   tree first. If a start fails with a missing file under `static`, check that
+   the tree was collected rather than reused.
+5. The showcase serves the export under `var/demo`. If it refuses to start with
+   "the sample showcase is not built", run `Build-GameDevShowcase.ps1` again.
+
+### Updating to a newer commit
+
+```powershell
+git fetch origin
+git checkout feature/gamedev-foundation
+git pull
+./deploy/windows/Stop-GameDevServices.ps1
+Start-ScheduledTask -TaskName 'GameDevHQ-Workspace'
+Start-ScheduledTask -TaskName 'GameDevHQ-Showcase'
+```
+
+Stop the services before switching commits: the workspace holds a SQLite file
+that a schema change may migrate. Back up the workspace database first
+(`Copy-Item %LOCALAPPDATA%\GameDevHQ\workspace\hq.sqlite3 <backup>`); the
+v0.1 schema is additive and initialization is idempotent, but a future schema
+change needs an explicit migration.
+
+### Removing the workstation deployment
+
+```powershell
+./deploy/windows/Stop-GameDevServices.ps1
+tailscale serve --https=9443 off
+tailscale serve --https=9444 off
+Unregister-ScheduledTask -TaskName 'GameDevHQ-Workspace' -Confirm:$false
+Unregister-ScheduledTask -TaskName 'GameDevHQ-Showcase' -Confirm:$false
+```
+
+Disable only these two endpoints; never `tailscale serve reset`, which would
+remove the other routes on this machine. The workspace data directory is left
+in place so it can be restored.
 
 ## Private preview
 
-1. Install Python 3.11+, sign in to Tailscale on the Windows workstation and
-   the viewing device, and enable MagicDNS/HTTPS for the tailnet. Keep the
-   workstation awake. HTTPS setup may require tailnet-admin approval.
-2. Obtain `Self.DNSName` and your login from `tailscale status --json`. These
-   are runtime values; do not commit them. In an ordinary PowerShell window:
-
-   ```powershell
-   .\deploy\windows\Start-GameDevPreview.ps1 `
-     -OperatorLogin 'YOUR-TAILSCALE-LOGIN' `
-     -DnsName 'YOUR-MACHINE.YOUR-TAILNET.ts.net'
-   ```
-
-   The script uses `%LOCALAPPDATA%\GameDevHQ\hq.sqlite3`. To use the same data
-   from the CLI, pass that path with `--database`. It stays in the foreground;
-   Ctrl+C stops it. Pin the repository revision you reviewed before starting.
-3. In an administrator PowerShell window, run:
-
-   ```powershell
-   .\deploy\windows\Enable-GameDevTailnet.ps1
-   ```
-
-   This refuses an existing 9443 Serve route or enabled Funnel. It configures
-   **only** HTTPS 9443 → `http://127.0.0.1:18765`. Existing routes remain intact.
-   The script prints `https://YOUR-MACHINE.YOUR-TAILNET.ts.net:9443/`.
-   Serve's background configuration persists across reboots; the Python
-   process must also be restarted. For unattended use, create a Task Scheduler
-   task under the dedicated operator account, triggered at logon, to run the
-   start script with absolute paths, with restart-on-failure enabled. Do not
-   run it as SYSTEM or use a repository Actions runner on the workstation.
-4. Restrict tailnet ACLs/grants to the operator devices and TCP 9443. Open the
-   printed URL from another signed-in device. The board must load for the
-   configured user and return 403 for a different user. Confirm access fails
-   from a device outside the tailnet. Do not enable Funnel, router forwarding,
-   a public tunnel, or a listener on `0.0.0.0`.
+The standalone read-only preview of the companion's own database
+(`deploy/windows/Start-GameDevPreview.ps1`, port 18765) remains available for
+use without the full workspace. It is not part of the installed deployment:
+the live workspace replaces it, and the tailnet route on 9443 points at the
+workspace.
 
 The URL remains stable while the machine's MagicDNS name and port remain the
 same. Renaming/removing the node changes it. No public DNS or public hosting is
@@ -113,7 +248,8 @@ require an allowed `Tailscale-User-Login`. Serve supplies that identity and
 removes spoofed identity headers. Tagged devices without a user identity are
 denied. Local processes can supply proxy headers, so the workstation and its
 local accounts are inside the trust boundary. Do not put another proxy in
-front of the listener or expose port 18765 on the LAN.
+front of the listener or expose ports 18766 or 18767 on the LAN. UEFN uses
+local port 8765; nothing in this deployment may take it.
 
 References: [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve),
 [Serve examples](https://tailscale.com/docs/reference/examples/serve),
@@ -124,9 +260,13 @@ References: [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli
 ```powershell
 python -m unittest discover -s gamedev/tests -v
 python -m gamedev --help
+uv run --locked --no-default-groups python -m tools.windows_hq.check
 ```
 
-`mise run gamedev:check` runs the same companion suite. Existing host checks
+`mise run gamedev:check` runs the companion suite and `mise run
+gamedev:workspace-check` the workspace suite in a throwaway composition that
+never opens the operator's data. `./deploy/windows/Build-GameDevShowcase.ps1
+-Check` builds the showcase and verifies it in a browser. Existing host checks
 remain `mise run fast`, `mise run check`, and `mise run preflight`; they require
 the upstream pinned toolchain, Linux/container support and configured host.
 Passing companion tests does not establish that the inherited host deploys.
@@ -134,20 +274,7 @@ Passing companion tests does not establish that the inherited host deploys.
 CI uses only GitHub-hosted Windows/Linux machines with a read-only token and
 no persisted checkout credentials. Workstation deployment is a local pull of
 a reviewed commit after CI; it is deliberately not a PR-triggered self-hosted
-runner. Stop the preview, back up the database, switch to the reviewed commit,
-run the suite, then restart the start script. The v0.1 schema is additive and
-initialization is idempotent; future schema changes need explicit migrations.
-
-To roll back the route, disable only this endpoint (not `serve reset`):
-
-```powershell
-tailscale serve --https=9443 off
-```
-
-Stop the preview with Ctrl+C (or stop its specific scheduled task). Preserve
-the database, switch to the previous reviewed commit, and restart. This
-companion does not install a service, modify Windows Firewall, or schedule
-itself automatically.
+runner.
 
 ## Deliberate v0.1 limits
 

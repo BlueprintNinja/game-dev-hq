@@ -5,13 +5,7 @@ import sqlite3
 from contextlib import closing, contextmanager
 from pathlib import Path
 
-TRANSITIONS = {
-    "queued": {"active", "blocked"},
-    "active": {"review", "blocked"},
-    "blocked": {"queued"},
-    "review": {"active", "done", "blocked"},
-    "done": set(),
-}
+from gamedev.hq_plugin.contracts import TRANSITIONS
 
 
 def bounded(value, name, limit=500):

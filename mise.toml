@@ -27,6 +27,10 @@ min_version = "2026.10.15"
 description = "Test Game Dev HQ planning and private preview boundaries"
 run = "python -m unittest discover -s gamedev/tests -v"
 
+[tasks."gamedev:workspace-check"]
+description = "Test the persistent HQ workspace, operator boundary and task capabilities"
+run = "uv run --locked --no-default-groups python -m tools.windows_hq.check"
+
 [settings.task]
 # Gates that run together print one after another, each whole and labeled,
 # never line by line into each other: an aggregate reads gate by gate, and each

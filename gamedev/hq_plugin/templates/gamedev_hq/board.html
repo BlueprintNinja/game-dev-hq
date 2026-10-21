@@ -1,0 +1,26 @@
+{% extends "page.html" %}
+{% block page %}
+{% if showcase_url %}<p><a href="{{ showcase_url }}">Explore the full sample showcase</a> · Example data is separate from your saved workspace.</p>{% endif %}
+<section class="card">
+  <div class="section-head"><h2>New task</h2></div>
+  <p>Changes are saved to your workspace. Agent assignments do not run commands.</p>
+  {% if has_projects %}
+  <form method="post">{% csrf_token %}{{ form.as_p }}<button type="submit">Save task</button></form>
+  {% else %}
+  <p><a href="{% url 'projects:list' %}">Create a project</a> first, then add its tasks here.</p>
+  {% endif %}
+</section>
+<section class="card">
+  <div class="section-head"><h2>Tasks</h2></div>
+  {% for row in rows %}
+  <details>
+    <summary>#{{ row.task.pk }} · {{ row.task.title }} · {{ row.task.status|title }}</summary>
+    <p>{{ row.project }} · {{ row.task.agent }}{% if row.task.parent_id %} · delegated by #{{ row.task.parent_id }}{% endif %}</p>
+    {% if row.task.status == 'done' %}<p>{{ row.task.evidence|linebreaksbr }}</p>
+    {% else %}
+    <form method="post" action="{% url 'gamedev:move' %}">{% csrf_token %}{{ row.move.as_p }}<button type="submit">Update task</button></form>
+    {% endif %}
+  </details>
+  {% empty %}<p>No tasks yet.</p>{% endfor %}
+</section>
+{% endblock %}

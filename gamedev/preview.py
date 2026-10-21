@@ -8,6 +8,7 @@ from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from gamedev.showcase import LOCKED_POLICY, Showcase
 from gamedev.store import snapshot
 
 
@@ -26,7 +27,7 @@ def hostname(value):
     return value
 
 
-def render(data):
+def render(data, prefix=""):
     projects = {p["id"]: p["name"] for p in data["projects"]}
     columns = []
     for status in ("queued", "active", "blocked", "review", "done"):
@@ -46,9 +47,10 @@ def render(data):
                      for e in data["events"][-10:][::-1])
     return ("<!doctype html><html lang=en><meta charset=utf-8>"
             "<meta name=viewport content='width=device-width, initial-scale=1'>"
-            "<title>Game Dev HQ</title><link rel=stylesheet href=/style.css>"
+            f"<title>Game Dev HQ</title><link rel=stylesheet href={prefix}/style.css>"
             "<body><header><p>PRIVATE WORKSPACE / v0.1</p><h1>Game Dev HQ</h1>"
-            "<p>Codex leads. OpenCode handles explicitly delegated tasks.</p></header>"
+            "<p>Codex leads. OpenCode handles explicitly delegated tasks.</p>"
+            + ('<p><a href="/">Back to full HQ demo</a></p>' if prefix else "") + "</header>"
             "<main><p class=notice>Read-only preview · Update plans through the local CLI. "
             "Agent execution and workstation control are not enabled.</p>"
             f"<div class=board>{''.join(columns)}</div><aside><section><h2>Projects</h2>"
@@ -57,8 +59,10 @@ def render(data):
             "</section></aside></main></body></html>")
 
 
-def handler(database, operators, dns_name):
-    allowed_hosts = {"127.0.0.1", "localhost", hostname(dns_name), f"{dns_name}:9443"}
+def handler(database, operators, dns_name, site=None, https_port=9443):
+    showcase = Showcase(site, f"https://{hostname(dns_name)}:9443/game-dev/") if site is not None else None
+    prefix = "/game-dev" if showcase else ""
+    allowed_hosts = {"127.0.0.1", "localhost", hostname(dns_name), f"{dns_name}:{https_port}"}
     operators = frozenset(operators)
     if not operators or any(not value.strip() for value in operators):
         raise ValueError("at least one explicit Tailscale operator login is required")
@@ -71,18 +75,22 @@ def handler(database, operators, dns_name):
             # Do not log identities, request headers or untrusted request targets.
             return
 
-        def reply(self, status, content, kind="text/plain; charset=utf-8"):
-            body = content.encode("utf-8")
+        def reply(self, status, content, kind="text/plain; charset=utf-8", policy=LOCKED_POLICY):
+            body = content.encode("utf-8") if isinstance(content, str) else content
             self.send_response(status)
             self.send_header("Content-Type", kind)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'self'; "
-                             "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+            self.send_header("Content-Security-Policy", policy)
+            self.send_header("X-Frame-Options", "DENY")
             self.end_headers()
-            self.wfile.write(body)
+            if self.command != "HEAD":
+                self.wfile.write(body)
+
+        def do_HEAD(self):
+            self.do_GET()
 
         def do_GET(self):
             hosts = self.headers.get_all("Host", [])
@@ -97,19 +105,22 @@ def handler(database, operators, dns_name):
                 hmac.compare_digest(identities[0].encode("utf-8"), login.encode("utf-8")) for login in operators
             ):
                 return self.reply(403, "Use Tailscale Serve with an allowed user identity")
-            if self.path == "/style.css":
+            if self.path == f"{prefix}/style.css":
                 return self.reply(200, Path(__file__).with_name("style.css").read_text(encoding="utf-8"),
                                   "text/css; charset=utf-8")
-            if self.path not in {"/", "/api/snapshot"}:
+            if self.path not in {f"{prefix}/", f"{prefix}/api/snapshot"}:
+                if showcase and (found := showcase.read(self.path)):
+                    body, kind, policy = found
+                    return self.reply(200, body, kind, policy)
                 return self.reply(404, "Not found")
             data = snapshot(database)
-            if self.path == "/api/snapshot":
+            if self.path == f"{prefix}/api/snapshot":
                 return self.reply(200, json.dumps(data), "application/json; charset=utf-8")
-            return self.reply(200, render(data), "text/html; charset=utf-8")
+            return self.reply(200, render(data, prefix), "text/html; charset=utf-8")
 
     return Handler
 
 
-def server(database, operators, dns_name, port=18765):
+def server(database, operators, dns_name, port=18765, site=None, https_port=9443):
     snapshot(database)  # Refuse startup if initialization or schema validation fails.
-    return PreviewServer(("127.0.0.1", port), handler(database, operators, dns_name))
+    return PreviewServer(("127.0.0.1", port), handler(database, operators, dns_name, site, https_port))
