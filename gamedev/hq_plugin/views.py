@@ -1,6 +1,6 @@
 from django.conf import settings
 from django.contrib import messages
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST
 
@@ -11,7 +11,7 @@ from hq_sdk.web import capability_required
 
 from .contracts import TRANSITIONS
 from .forms import MoveForm, TaskForm
-from .models import Task
+from .models import Run, Task
 
 
 def dashboard_cards():
@@ -38,7 +38,7 @@ def index(request):
             messages.success(request, "Task saved.")
             return redirect("gamedev:index")
         form.add_error(None, result.get("error", {}).get("message", "Task could not be saved."))
-    tasks = list(Task.objects.all())
+    tasks = list(Task.objects.prefetch_related("runs").all())
     names = {p["slug"]: p["name"] for p in projects}
     rows = []
     for task in tasks:
@@ -74,3 +74,49 @@ def move(request):
     else:
         messages.error(request, "Check the task, status and evidence and try again.")
     return redirect("gamedev:index")
+
+
+@capability_required("gamedev.write")
+@require_POST
+def queue(request):
+    result = execute_capability(
+        "gamedev.run.queue",
+        {
+            "task_id": request.POST.get("task_id"),
+            "version": request.POST.get("version"),
+            "prompt": request.POST.get("prompt", ""),
+            "kind": request.POST.get("kind", "coding"),
+        },
+        principal=web_principal(request.user),
+    )
+    if result.get("ok"):
+        return redirect("gamedev:run", run_id=result["id"])
+    messages.error(request, result.get("error", {}).get("message", "Work could not be queued."))
+    return redirect("gamedev:index")
+
+
+@capability_required("gamedev.read")
+@require_http_methods(["GET"])
+def run_detail(request, run_id):
+
+    run = get_object_or_404(Run.objects.select_related("task"), pk=run_id)
+    template = "gamedev_hq/run.html#progress" if request.GET.get("fragment") == "1" else "gamedev_hq/run.html"
+    return render(request, template, {**page_context(f"Run #{run.pk}", run.task.title), "run": run})
+
+
+@capability_required("gamedev.write")
+@require_POST
+def decide(request, run_id):
+    result = execute_capability(
+        "gamedev.run.decide",
+        {
+            "run_id": run_id,
+            "version": request.POST.get("version"),
+            "decision": request.POST.get("decision"),
+            "note": request.POST.get("note", ""),
+        },
+        principal=web_principal(request.user),
+    )
+    if not result.get("ok"):
+        messages.error(request, result.get("error", {}).get("message", "Decision could not be saved."))
+    return redirect("gamedev:run", run_id=run_id)

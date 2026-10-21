@@ -11,7 +11,7 @@ def integration():
 plugin = PluginManifest(
     id="gamedev.tasks",
     name="Game Dev",
-    version="0.2.0",
+    version="0.3.0",
     distribution="gamedev-hq-tasks",
     source_repository="BlueprintNinja/game-dev-hq",
     source_workflow=".github/workflows/gamedev.yml",

@@ -48,6 +48,18 @@ OUTSIDE = {
 
 
 class TemplateValidationTests(SimpleTestCase):
+    def test_extension_may_refresh_a_server_rendered_partial(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            template = root / "templates" / "example" / "progress.html"
+            template.parent.mkdir(parents=True)
+            template.write_text(
+                '{% partialdef progress inline %}<section data-fragment="/example/progress/" '
+                'data-fragment-poll="3">Saved progress</section>{% endpartialdef %}',
+                encoding="utf-8",
+            )
+            self.assertEqual(template_violations(root), [])
+
     def test_the_example_extension_uses_only_public_pieces(self):
         self.assertEqual(template_violations(ROOT / "tests" / "fixtures"), [])
 

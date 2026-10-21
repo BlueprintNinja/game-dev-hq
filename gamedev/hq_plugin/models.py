@@ -33,3 +33,50 @@ class Task(models.Model):
     @override
     def __str__(self):
         return self.title
+
+
+class Run(models.Model):
+    task = models.ForeignKey(Task, on_delete=models.PROTECT, related_name="runs")
+    delegated_by = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="delegated_runs"
+    )
+    prompt = models.TextField()
+    kind = models.CharField(max_length=20, default="coding")
+    status = models.CharField(max_length=20, default="queued")
+    version = models.PositiveIntegerField(default=1)
+    cancel_requested = models.BooleanField(default=False)
+    worker_token = models.CharField(max_length=64, blank=True)
+    base_revision = models.CharField(max_length=64, blank=True)
+    worktree = models.TextField(blank=True)
+    output = models.TextField(blank=True)
+    diff = models.TextField(blank=True)
+    diff_sha256 = models.CharField(max_length=64, blank=True)
+    verification = models.JSONField(default=list)
+    passed = models.BooleanField(default=False)
+    decision_note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "gamedev_hq"
+        ordering = ("-id",)
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    status__in=("queued", "running", "review", "accepted", "rejected", "failed", "canceled")
+                ),
+                name="gamedev_run_status",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(kind__in=("coding", "uefn_inspect", "uefn_build")), name="gamedev_run_kind"
+            ),
+            models.UniqueConstraint(
+                fields=("task",),
+                condition=models.Q(status__in=("queued", "running", "review")),
+                name="gamedev_one_open_run",
+            ),
+        ]
+
+    @override
+    def __str__(self):
+        return f"Run #{self.pk}: {self.status}"

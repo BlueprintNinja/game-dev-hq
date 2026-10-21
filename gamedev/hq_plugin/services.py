@@ -8,6 +8,7 @@ from hq_sdk.capabilities import CapabilitySpec, StrictCommand
 from hq_sdk.resources import get_resource
 
 from .contracts import TRANSITIONS
+from .execution import capabilities as execution_capabilities
 from .models import Task
 
 
@@ -63,6 +64,9 @@ def move_task(command, *, principal):
         if command.status not in TRANSITIONS[task.status]:
             raise ValueError(f"Cannot move {task.status} to {command.status}.")
         if command.status == "done":
+            latest_run = task.runs.first()
+            if latest_run is not None and latest_run.status != "accepted":
+                raise ValueError("Review and accept the execution evidence before completing this task.")
             if not command.evidence.strip():
                 raise ValueError("Completion evidence is required.")
             if task.children.exclude(status="done").exists():
@@ -83,6 +87,7 @@ def move_task(command, *, principal):
 
 def capabilities():
     return (
+        *execution_capabilities(),
         CapabilitySpec(
             "gamedev.task.create",
             "Create a task or explicit delegation",
