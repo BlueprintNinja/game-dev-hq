@@ -154,7 +154,7 @@ build under `var/demo`, and the companion's own database stays in `var/gamedev`.
    ./deploy/windows/Enable-GameDevWorkspace.ps1
    ```
 
-   The script refuses to replace a 9443 or 9444 route it does not recognise,
+   The script refuses to replace a 9443 or 9444 route it does not recognize,
    refuses to run while Funnel is enabled, and checks that both listeners
    answer before it changes anything. Existing routes on other ports stay
    untouched.
