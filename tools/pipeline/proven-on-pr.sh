@@ -14,6 +14,11 @@
 set -euo pipefail
 
 repo="$GITHUB_REPOSITORY"
+# The image is named after the repository in lowercase: an image reference's
+# repository name must be, and the controller reads that name from the image.
+# shellcheck source=tools/lib/image-repository.sh
+. ./tools/lib/image-repository.sh
+image_repository="$(image_repository "$repo")"
 not_proven() { echo "checked in full: $1" >&2; exit 0; }
 
 merged="$(gh api "repos/$repo/commits/$GITHUB_SHA/pulls" \
@@ -25,10 +30,10 @@ conclusion="$(gh api "repos/$repo/actions/workflows/ci.yml/runs?event=pull_reque
   --jq '.workflow_runs[0].conclusion // ""' 2>/dev/null || true)"
 [ "$conclusion" = success ] || not_proven "#$pr's CI did not pass on its last commit"
 
-image="ghcr.io/$repo:sha-${head::12}"
+image="ghcr.io/$image_repository:sha-${head::12}"
 digest="$(docker buildx imagetools inspect "$image" --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"' || true)"
 [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || not_proven "#$pr's image is not in the registry"
-pinned="ghcr.io/$repo@$digest"
+pinned="ghcr.io/$image_repository@$digest"
 
 built="$(docker buildx imagetools inspect "$pinned" --format '{{json .Image}}' 2>/dev/null \
   | jq -r '.config.Labels["dev.severino.hq.tree"] // ""' || true)"

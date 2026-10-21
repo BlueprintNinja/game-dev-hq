@@ -365,12 +365,16 @@ jobs:
           HOST_SHA: ${{ steps.host.outputs.sha }}
         run: |
           staged=build/composition
+          # The image is named after the repository in lowercase: an image
+          # reference's repository name must be, and the controller reads that
+          # name from the image.
+          . ./tools/lib/image-repository.sh
           docker build -f composition/Dockerfile \
             --build-arg HQ_IMAGE="$HQ_IMAGE" \
             --build-arg PLUGIN_POLICY_SHA256="$(cat "$staged/policy-sha256")" \
             --build-arg SEVERINO_HQ_PLUGIN_REFERENCES="$(cat "$staged/references")" \
             --build-arg HQ_REVISION="$HOST_SHA" \
-            -t "ghcr.io/${{ github.repository }}/composition:$HOST_SHA" .
+            -t "ghcr.io/$(image_repository '${{ github.repository }}')/composition:$HOST_SHA" .
 
       - name: Build coordinated extension branches
         # Branch code is unreviewed, and this job holds a registry credential
@@ -434,8 +438,21 @@ jobs:
         if: >-
           steps.fingerprint.outputs.build == 'true'
         env:
-          IMAGE: ${{ steps.coordinated.outputs.found == 'true' && format('severino-hq-candidate:{0}', github.sha) || format('ghcr.io/{0}/composition:{1}', github.repository, steps.host.outputs.sha) }}
-        run: echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          COORDINATED: ${{ steps.coordinated.outputs.found }}
+          HOST_SHA: ${{ steps.host.outputs.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$COORDINATED" = true ]; then
+            image="severino-hq-candidate:${{ github.sha }}"
+          else
+            # The image is named after the repository in lowercase: an image
+            # reference's repository name must be, and the controller reads
+            # that name from the image.
+            . ./tools/lib/image-repository.sh
+            image="ghcr.io/$(image_repository "$REPOSITORY")/composition:$HOST_SHA"
+          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
 
       - name: Verify the composition as one application
         # Skipped only by an admission's dispatch that found nothing to do.
@@ -498,7 +515,11 @@ jobs:
           HOST_SHA: ${{ steps.host.outputs.sha }}
           FINGERPRINT_TAG: ${{ steps.fingerprint.outputs.tag }}
         run: |
-          image="ghcr.io/${{ github.repository }}/composition:$HOST_SHA"
+          # The image is named after the repository in lowercase: an image
+          # reference's repository name must be, and the controller reads that
+          # name from the image.
+          . ./tools/lib/image-repository.sh
+          image="ghcr.io/$(image_repository '${{ github.repository }}')/composition:$HOST_SHA"
           docker push "$image"
           # The fingerprint tag is what the next admission's dispatch reads to decide
           # there is nothing to do. Pushed after the image itself, so a failed

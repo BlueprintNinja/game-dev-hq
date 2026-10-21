@@ -13,6 +13,11 @@ set -euo pipefail
 
 [ "$#" -ge 2 ] && [ "$#" -le 3 ] || { echo "usage: $0 REPOSITORY REF [GIVEN]" >&2; exit 2; }
 repository=$1 ref=$2 given=${3:-}
+# The image is named after the repository in lowercase: an image reference's
+# repository name must be, and the controller reads that name from the image.
+# shellcheck source=tools/lib/image-repository.sh
+. ./tools/lib/image-repository.sh
+image_repository="$(image_repository "$repository")"
 # 240 polls 5 seconds apart, the Image job asked after every sixth: 20
 # minutes is well past a host build and well short of the job's timeout.
 polls=${HOST_IMAGE_POLLS:-240}
@@ -29,7 +34,7 @@ found() {
 }
 
 if [ -n "$given" ]; then
-  if [[ ! "$given" =~ ^ghcr\.io/${repository}@sha256:[0-9a-f]{64}$ ]]; then
+  if [[ ! "$given" =~ ^ghcr\.io/${image_repository}@sha256:[0-9a-f]{64}$ ]]; then
     echo "::error title=Invalid host image::The host image is not this repository's, by digest."
     exit 1
   fi
@@ -48,7 +53,7 @@ image_job() {
     2>/dev/null | head -n 1 || true
 }
 
-image="ghcr.io/$repository:sha-${ref:0:12}"
+image="ghcr.io/$image_repository:sha-${ref:0:12}"
 for attempt in $(seq 1 "$polls"); do
   if digest=$(docker buildx imagetools inspect "$image" --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"') &&
      [ -n "$digest" ]; then

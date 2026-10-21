@@ -1,6 +1,7 @@
 import asyncio
 import os
 import tempfile
+import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -15,7 +16,17 @@ from hq_sdk.capabilities import Principal, execute_capability, web_principal
 from ..asgi import TailnetBoundary
 from ..manage import collect_static
 
+# The upstream suite discovers this module and imports it with the host's own
+# settings, where the Game Dev extension is not installed and the workspace's
+# database is not there. These tests belong to the workspace composition; they
+# stand down anywhere else instead of failing a suite they cannot serve.
+workspace_only = unittest.skipUnless(
+    "gamedev.hq_plugin" in settings.INSTALLED_APPS,
+    "the Game Dev extension is not installed in this composition",
+)
 
+
+@workspace_only
 @override_settings(ALLOWED_HOSTS=["testserver"], SEVERINO_SITE_HOST="testserver", SECURE_SSL_HOST="testserver")
 class WorkspaceTests(TestCase):
     def setUp(self):
@@ -114,6 +125,7 @@ class WorkspaceTests(TestCase):
         self.assertEqual(asyncio.run(run([identity])), 200)
 
 
+@workspace_only
 class StaticCollectionTests(TestCase):
     """The workspace collects its assets on every start; collecting twice must not empty the tree."""
 

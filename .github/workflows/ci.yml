@@ -270,7 +270,11 @@ jobs:
           IMAGE_BUILD_CACHE: --cache-from type=gha,scope=host-image --cache-to type=gha,scope=host-image,mode=max
         run: |
           set -euo pipefail
-          image="ghcr.io/${{ github.repository }}:sha-${HEAD_SHA::12}"
+          # The image is named after the repository in lowercase: an image
+          # reference's repository name must be, and the controller reads that
+          # name from the image.
+          . ./tools/lib/image-repository.sh
+          image="ghcr.io/$(image_repository '${{ github.repository }}'):sha-${HEAD_SHA::12}"
           mise run image:build --tag "$image" --revision "$HEAD_SHA"
           echo "image=$image" >> "$GITHUB_OUTPUT"
       # On main only: a pull request's image is checked by Image checks,

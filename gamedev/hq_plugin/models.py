@@ -15,6 +15,10 @@ class Task(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        # Named, so the model can be read by a composition that does not
+        # install the extension: the upstream suite imports this module, and
+        # a model without an app label cannot be defined outside INSTALLED_APPS.
+        app_label = "gamedev_hq"
         ordering = ("id",)
         constraints = [
             models.CheckConstraint(condition=models.Q(agent__in=("codex", "opencode")), name="gamedev_agent"),

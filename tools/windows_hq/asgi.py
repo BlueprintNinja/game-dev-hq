@@ -5,8 +5,6 @@ import os
 
 lazy from hq.config.asgi import application as host
 
-os.environ["DJANGO_SETTINGS_MODULE"] = "tools.windows_hq.settings"
-
 
 class TailnetBoundary:
     def __init__(self, app, operator):
@@ -28,4 +26,7 @@ class TailnetBoundary:
 
 
 def create_app():
+    # Set here, not at import: importing this module must not change the
+    # settings another composition is running with.
+    os.environ["DJANGO_SETTINGS_MODULE"] = "tools.windows_hq.settings"
     return TailnetBoundary(host, os.environ["GAMEDEV_OPERATOR_LOGIN"])
