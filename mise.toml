@@ -45,7 +45,7 @@ actionlint = "1.7.12"
 yq = "4.54.1"
 jq = "1.8.2"
 # The images copy uv from its own image at this version (checks:toolchain).
-uv = "0.13.1"
+uv = "0.13.4"
 # The Scorecard the pinned ossf/scorecard-action builds against (its go.mod).
 scorecard = "5.6.0"
 # Seals a failed Compose run's output (tools/pipeline/seal-failure-logs.sh). Lazy:
@@ -205,7 +205,7 @@ extends = "django-heavy"
 depends = ["setup:webkit"]
 description = "Screenshot HQ pages as the browser gates draw them at a few widths, and run one of their rules there"
 usage = '''
-arg "<pages>" help="Comma-separated pages: the gate's estate (connections,dense/services), the API reference (api/docs), the example estate's navigation (estate, estate/infrastructure, or estate/all for every page of it), or all"
+arg "<pages>" help="Comma-separated pages: the gate's estate (connections,dense/services,derived/assets/list), the API reference (api/docs), the example estate's navigation (estate, estate/infrastructure, or estate/all for every page of it), or all"
 flag "--widths <widths>" help="Comma-separated widths in CSS pixels; default the phone, 820 and 1360"
 flag "--rule <rule>" help="A rule method of LayoutBrowserTests to run on each page"
 flag "--css <css>" help="A stylesheet added first: the defect a new rule must catch"
@@ -486,3 +486,8 @@ run = 'tools/pipeline/image-health.sh "${IMAGE:-severino-hq:ci-local}"'
 description = "It boots under its unit: waits for its environment, survives a crash and a reboot"
 depends = ["image:build"]
 run = 'tools/pipeline/host-boot-drill.sh "${IMAGE:-severino-hq:ci-local}"'
+
+[tasks."plugin:check"]
+description = "One extension package's contract check against this host, as its CI runs it"
+dir = "{{cwd}}"
+run = "{{config_root}}/tools/pipeline/check-plugin.sh"

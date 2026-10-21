@@ -187,6 +187,12 @@ It runs those checks on two estates.
 The stress estate (`build_estate()` in
 `hq/platform/core/tests/test_browser_fixtures.py`) breaks things on purpose:
 long names, many rows, every state at once, on the pages it was built for.
+Every list page is also filled from its own model
+(`hq/platform/core/tests/test_browser_derived_fixtures.py`): each view drawn
+through `TableListMixin` is found in the URLconf, and its rows carry every
+field at its length, money at the largest a household records, and the
+longest label of every choice, so a new list or field is measured at its
+worst the day it exists (`dev:look derived/<app>/<name>` shows one).
 The example estate (`hq/platform/core/example_estate/`, the homelab the demo
 and `seed_demo` show) is read by `hq.platform.core.estate_browser_tests` on
 every page the navigation declares, with script on and deferred parts loaded,
@@ -253,7 +259,7 @@ composition/              the composed image
 policy/                   the extension admission policy
 demo/                     the static demo site built from HQ's own pages
 tools/                    development and CI programs, never in the image (tools/README.md)
-scripts/                  what an outside contract calls by path: the deploy host's shims, the extension check
+scripts/                  the deploy host's shim, called by path by its sudo rule
 mise-tasks/               tasks whose body is a script, declared in its own #MISE header
 tests/                    synthetic extension fixtures, the SDK consumer, property and shell suites
 var/                      ignored local runtime state

@@ -25,7 +25,11 @@
       {% for agent in agents %}
         <li>
           <span class="policy-agent-name">{{ agent.label }}</span>
-          <span class="muted">Uses {{ agent.detail }} · {{ agent.identity.granted|length|counted:"permission from your sign-in,permissions from your sign-in" }} · last seen {{ agent.identity.last_seen|ago }}</span>
+          <ul class="dot-list muted">
+            <li>Uses {{ agent.detail }}</li>
+            <li>{{ agent.identity.granted|length|counted:"permission from your sign-in,permissions from your sign-in" }}</li>
+            <li>Last seen {{ agent.identity.last_seen|ago }}</li>
+          </ul>
         </li>
       {% endfor %}
     </ul>
@@ -45,7 +49,7 @@ its own heading. Each row is in one table only, so the form posts each rule once
     {% include "core/_policy_table.html" with groups=changed_groups %}
   {% endif %}
   {% if default_groups %}
-    <details class="section-fold">
+    <details class="section-fold" open>
       <summary><h2>{% if changed_groups %}Every other action{% else %}Every action{% endif %} <span class="heading-aside">{{ default_count }}</span></h2></summary>
       {% include "core/_policy_table.html" with groups=default_groups %}
     </details>

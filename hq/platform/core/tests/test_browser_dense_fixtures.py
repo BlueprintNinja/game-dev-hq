@@ -663,7 +663,6 @@ DENSE_PAGES = {
     "dense/services": (lambda: reverse("control_plane:services"), ExitStack),
     "dense/findings": (lambda: reverse("control_plane:findings"), ExitStack),
     "dense/action-items": (lambda: reverse("action_items"), ExitStack),
-    "dense/projects": (lambda: reverse("projects:list"), ExitStack),
     "dense/connections": (
         lambda: reverse("control_plane:connections"),
         _asked_through_the_proxy,

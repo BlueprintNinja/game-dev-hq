@@ -135,16 +135,17 @@ underscores. It fails when the two disagree, before anything is built or
 signed.
 
 The same checks run from an extension's checkout with nothing to pass:
-`../severino-hq/scripts/check-plugin.sh`. It syncs and lints the package,
-enforces SDK-only imports, runs Django checks, migration drift checks and the
-plugin's tests, then builds the wheel and installs it with `--no-deps` into a
-clean host environment. That last step reproduces production's dependency
-boundary and catches a missing host pin before composition. A package that
-declares `[tool.mypy]` in its `pyproject.toml` has its own mypy (from its dev
-group) run against the host's typed `hq_sdk`, with django-stubs pointed at
+`../severino-hq/tools/pipeline/check-plugin.sh`, or `mise run plugin:check -- --plugin-root PATH`
+from the host checkout. It syncs the package against its lock and lints it,
+enforces SDK-only imports, type checks it, runs Django checks, migration drift
+checks and the plugin's tests, then installs the package (built as a wheel)
+with `--no-deps` into a clean host environment. That last step reproduces
+production's dependency boundary and catches a missing host pin before
+composition. Every package declares `[tool.mypy]` in its `pyproject.toml`, and
+the check refuses one that does not: its own mypy (from its dev group) runs
+against the host's typed `hq_sdk`, with django-stubs pointed at
 `hq.config.settings_typecheck`, the host's settings with that package
-installed; one without the table is
-told so and not type checked. In CI it runs
+installed. In CI it runs
 against host `main`, or the host branch named like the extension's branch when
 one exists ([Coordinated changes](#coordinated-changes)).
 
@@ -297,7 +298,7 @@ before either merges:
   published, signed or deployed. Extensions without such a branch are reused
   from their verified admissions; the app's Contents read covers reading the
   branches.
-- Before composing, the host pull request runs its own `check-plugin.sh`
+- Before composing, the host pull request runs its own `plugin:check`
   against every extension in the set, from its same-named branch or else its
   default branch, so a host change that breaks an extension fails the pull
   request rather than the next admission. Which extension failed is only in
@@ -455,7 +456,7 @@ topology template, route, callback or host edit.
 
 An extension renders HQ's design system and ships no stylesheet or script of
 its own. Its templates use only the public pieces below, and
-`python -m hq_sdk.validation src` (part of `scripts/check-plugin.sh`) reads
+`python -m hq_sdk.validation src` (part of `plugin:check`) reads
 every file under a `templates` directory and refuses anything else: a frame or
 block not listed, a private partial, an include named at render time, a
 parameter a partial does not read, a required one left to whatever the page has
