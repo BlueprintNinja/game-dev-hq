@@ -153,10 +153,26 @@ def all_jobs() -> list[tuple[str, str, str]]:
     return [(path.name, name, job) for path in workflows() for name, job in jobs(path.read_text()).items()]
 
 
+def matrix_images(job: str, key: str) -> list[str]:
+    """The images a job's matrix names for ``key``: the list under the matrix, read as YAML."""
+    images: list[str] = []
+    for value in block(job, key, 8):
+        match = re.match(r"\[(.*)\]", value.strip())
+        if match:
+            images = [item.strip().strip("'\"") for item in match.group(1).split(",") if item.strip()]
+    return images
+
+
 @tag("source")
 class JobLimitTests(SimpleTestCase):
     def test_every_hosted_job_runs_on_the_declared_runner_image(self):
-        """``ubuntu-latest`` moves to a new OS on GitHub's schedule."""
+        """``ubuntu-latest`` moves to a new OS on GitHub's schedule.
+
+        A job may also name a matrix of pinned images: the companion workflow
+        runs on Windows as well as on the declared one, and every image in the
+        matrix is named exactly, so none of them can move under the job
+        either. The declared image is still one of them.
+        """
         image = toolchain()["RUNNER_IMAGE"]
         hosted = 0
         for path, name, job in all_jobs():
@@ -165,7 +181,13 @@ class JobLimitTests(SimpleTestCase):
                 continue
             hosted += 1
             with self.subTest(workflow=path, job=name):
-                self.assertEqual(runner, [image])
+                if runner == ["${{ matrix.os }}"]:
+                    images = matrix_images(job, "os")
+                    self.assertIn(image, images)
+                    for candidate in images:
+                        self.assertFalse(candidate.endswith("-latest"))
+                else:
+                    self.assertEqual(runner, [image])
         self.assertGreater(hosted, 3)
 
     def test_every_job_has_a_timeout(self):
