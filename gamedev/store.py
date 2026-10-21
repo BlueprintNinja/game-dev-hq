@@ -48,8 +48,10 @@ def initialize(path):
 
 
 def audit(db, actor, action, details):
-    db.execute("INSERT INTO events(actor,action,details) VALUES(?,?,?)",
-               (bounded(actor, "actor", 200), action, json.dumps(details, sort_keys=True)))
+    db.execute(
+        "INSERT INTO events(actor,action,details) VALUES(?,?,?)",
+        (bounded(actor, "actor", 200), action, json.dumps(details, sort_keys=True)),
+    )
 
 
 def add_project(path, name, repository, engine, actor):
@@ -57,8 +59,7 @@ def add_project(path, name, repository, engine, actor):
     repository = bounded(repository, "repository")
     engine = bounded(engine, "engine", 100)
     with connection(path) as db:
-        row = db.execute("INSERT INTO projects(name,repository,engine) VALUES(?,?,?)",
-                         (name, repository, engine))
+        row = db.execute("INSERT INTO projects(name,repository,engine) VALUES(?,?,?)", (name, repository, engine))
         audit(db, actor, "project.created", {"id": row.lastrowid, "name": name})
         return row.lastrowid
 
@@ -77,8 +78,9 @@ def add_task(path, project_id, title, actor, agent="codex", parent_id=None):
                 raise ValueError("cannot delegate from a completed task")
         if agent == "opencode" and parent_id is None:
             raise ValueError("OpenCode requires explicit delegation from Codex")
-        row = db.execute("INSERT INTO tasks(project_id,title,agent,parent_id) VALUES(?,?,?,?)",
-                         (project_id, title, agent, parent_id))
+        row = db.execute(
+            "INSERT INTO tasks(project_id,title,agent,parent_id) VALUES(?,?,?,?)", (project_id, title, agent, parent_id)
+        )
         audit(db, actor, "task.created", {"id": row.lastrowid, "agent": agent, "parent": parent_id})
         return row.lastrowid
 
@@ -97,17 +99,19 @@ def transition(path, task_id, status, actor, evidence=""):
             raise ValueError(f"cannot move {task['status']} to {status}")
         if status == "done":
             bounded(evidence, "completion evidence", 4000)
-            pending = db.execute("SELECT 1 FROM tasks WHERE parent_id=? AND status!='done'",
-                                 (task_id,)).fetchone()
+            pending = db.execute("SELECT 1 FROM tasks WHERE parent_id=? AND status!='done'", (task_id,)).fetchone()
             if pending:
                 raise ValueError("complete delegated tasks before their parent")
         db.execute("UPDATE tasks SET status=?,evidence=? WHERE id=?", (status, evidence, task_id))
-        audit(db, actor, "task.transitioned", {"id": task_id, "from": task["status"],
-                                              "to": status, "evidence": evidence})
+        audit(
+            db, actor, "task.transitioned", {"id": task_id, "from": task["status"], "to": status, "evidence": evidence}
+        )
 
 
 def snapshot(path):
     with connection(path, read_only=True) as db:
         db.execute("BEGIN")
-        return {table: [dict(row) for row in db.execute(f"SELECT * FROM {table} ORDER BY id")]
-                for table in ("projects", "tasks", "events")}
+        return {
+            table: [dict(row) for row in db.execute(f"SELECT * FROM {table} ORDER BY id")]
+            for table in ("projects", "tasks", "events")
+        }

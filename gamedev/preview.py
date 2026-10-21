@@ -36,27 +36,37 @@ def render(data, prefix=""):
             if task["status"] != status:
                 continue
             delegation = f" · delegated by #{task['parent_id']}" if task["parent_id"] else " · primary"
-            cards.append(f"<article><small>{escape(projects[task['project_id']])} · #{task['id']}</small>"
-                         f"<h3>{escape(task['title'])}</h3><p>{escape(task['agent'] + delegation)}</p>"
-                         f"<p>{escape(task['evidence'])}</p></article>")
-        columns.append(f"<section><h2>{status.title()} <span>{len(cards)}</span></h2>"
-                       f"{''.join(cards) or '<p class=empty>No tasks yet</p>'}</section>")
-    project_list = "".join(f"<li>{escape(p['name'])} · {escape(p['engine'])}"
-                           f"<small>{escape(p['repository'])}</small></li>" for p in data["projects"])
-    events = "".join(f"<li>{escape(e['at'])} · {escape(e['actor'])} · {escape(e['action'])}</li>"
-                     for e in data["events"][-10:][::-1])
-    return ("<!doctype html><html lang=en><meta charset=utf-8>"
-            "<meta name=viewport content='width=device-width, initial-scale=1'>"
-            f"<title>Game Dev HQ</title><link rel=stylesheet href={prefix}/style.css>"
-            "<body><header><p>PRIVATE WORKSPACE / v0.1</p><h1>Game Dev HQ</h1>"
-            "<p>Codex leads. OpenCode handles explicitly delegated tasks.</p>"
-            + ('<p><a href="/">Back to full HQ demo</a></p>' if prefix else "") + "</header>"
-            "<main><p class=notice>Read-only preview · Update plans through the local CLI. "
-            "Agent execution and workstation control are not enabled.</p>"
-            f"<div class=board>{''.join(columns)}</div><aside><section><h2>Projects</h2>"
-            f"<ul>{project_list or '<li>No projects yet</li>'}</ul></section>"
-            f"<section><h2>Recent activity</h2><ul>{events or '<li>No activity yet</li>'}</ul>"
-            "</section></aside></main></body></html>")
+            cards.append(
+                f"<article><small>{escape(projects[task['project_id']])} · #{task['id']}</small>"
+                f"<h3>{escape(task['title'])}</h3><p>{escape(task['agent'] + delegation)}</p>"
+                f"<p>{escape(task['evidence'])}</p></article>"
+            )
+        columns.append(
+            f"<section><h2>{status.title()} <span>{len(cards)}</span></h2>"
+            f"{''.join(cards) or '<p class=empty>No tasks yet</p>'}</section>"
+        )
+    project_list = "".join(
+        f"<li>{escape(p['name'])} · {escape(p['engine'])}<small>{escape(p['repository'])}</small></li>"
+        for p in data["projects"]
+    )
+    events = "".join(
+        f"<li>{escape(e['at'])} · {escape(e['actor'])} · {escape(e['action'])}</li>" for e in data["events"][-10:][::-1]
+    )
+    return (
+        "<!doctype html><html lang=en><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width, initial-scale=1'>"
+        f"<title>Game Dev HQ</title><link rel=stylesheet href={prefix}/style.css>"
+        "<body><header><p>PRIVATE WORKSPACE / v0.1</p><h1>Game Dev HQ</h1>"
+        "<p>Codex leads. OpenCode handles explicitly delegated tasks.</p>"
+        + ('<p><a href="/">Back to full HQ demo</a></p>' if prefix else "")
+        + "</header>"
+        "<main><p class=notice>Read-only preview · Update plans through the local CLI. "
+        "Agent execution and workstation control are not enabled.</p>"
+        f"<div class=board>{''.join(columns)}</div><aside><section><h2>Projects</h2>"
+        f"<ul>{project_list or '<li>No projects yet</li>'}</ul></section>"
+        f"<section><h2>Recent activity</h2><ul>{events or '<li>No activity yet</li>'}</ul>"
+        "</section></aside></main></body></html>"
+    )
 
 
 def handler(database, operators, dns_name, site=None, https_port=9443):
@@ -95,7 +105,8 @@ def handler(database, operators, dns_name, site=None, https_port=9443):
         def do_GET(self):
             hosts = self.headers.get_all("Host", [])
             if len(hosts) != 1 or hosts[0] not in allowed_hosts | {
-                f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"
+                f"127.0.0.1:{self.server.server_port}",
+                f"localhost:{self.server.server_port}",
             }:
                 return self.reply(400, "Invalid host")
             if self.path == "/healthz":
@@ -106,8 +117,9 @@ def handler(database, operators, dns_name, site=None, https_port=9443):
             ):
                 return self.reply(403, "Use Tailscale Serve with an allowed user identity")
             if self.path == f"{prefix}/style.css":
-                return self.reply(200, Path(__file__).with_name("style.css").read_text(encoding="utf-8"),
-                                  "text/css; charset=utf-8")
+                return self.reply(
+                    200, Path(__file__).with_name("style.css").read_text(encoding="utf-8"), "text/css; charset=utf-8"
+                )
             if self.path not in {f"{prefix}/", f"{prefix}/api/snapshot"}:
                 if showcase and (found := showcase.read(self.path)):
                     body, kind, policy = found

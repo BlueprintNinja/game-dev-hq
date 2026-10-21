@@ -14,5 +14,6 @@ class MoveForm(forms.Form):
     task_id = forms.IntegerField(min_value=1, widget=forms.HiddenInput)
     version = forms.IntegerField(min_value=1, widget=forms.HiddenInput)
     status = forms.ChoiceField(choices=[(name, name.title()) for name in TRANSITIONS])
-    evidence = forms.CharField(max_length=4000, required=False,
-                               widget=forms.Textarea(attrs={"rows": 2}), label="Evidence / notes")
+    evidence = forms.CharField(
+        max_length=4000, required=False, widget=forms.Textarea(attrs={"rows": 2}), label="Evidence / notes"
+    )

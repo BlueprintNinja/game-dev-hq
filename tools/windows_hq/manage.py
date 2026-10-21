@@ -55,11 +55,19 @@ def main():
             user.save(update_fields=("password",))
             record_operation("workspace.initialize", "Provisioned the configured Tailscale operator", required=True)
     if not list_resource("projects", principal=principal)["items"]:
-        result = execute_capability("project.create", {
-            "name": "Game Dev HQ", "slug": "game-dev-hq", "status": "active", "category": "other",
-            "repository_url": "https://github.com/BlueprintNinja/game-dev-hq", "technologies_used": "UEFN, Verse, Codex",
-            "description": "Game development workspace and HQ integration.",
-        }, principal=principal)
+        result = execute_capability(
+            "project.create",
+            {
+                "name": "Game Dev HQ",
+                "slug": "game-dev-hq",
+                "status": "active",
+                "category": "other",
+                "repository_url": "https://github.com/BlueprintNinja/game-dev-hq",
+                "technologies_used": "UEFN, Verse, Codex",
+                "description": "Game development workspace and HQ integration.",
+            },
+            principal=principal,
+        )
         if not result.get("ok"):
             raise RuntimeError(result)
     print("Workspace initialized. Sample estate data was not imported.")

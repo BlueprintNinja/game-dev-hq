@@ -33,7 +33,9 @@ def main():
     serve.add_argument("--hostname", required=True)
     serve.add_argument("--operator", action="append", required=True)
     serve.add_argument("--port", type=int, default=18765)
-    serve.add_argument("--site", type=Path, help="Complete upstream demo export to serve at /; board moves to /game-dev/")
+    serve.add_argument(
+        "--site", type=Path, help="Complete upstream demo export to serve at /; board moves to /game-dev/"
+    )
     serve.add_argument("--https-port", type=int, default=9443)
     args = parser.parse_args()
     try:
@@ -55,7 +57,9 @@ def run(args):
     elif args.command == "snapshot":
         print(json.dumps(store.snapshot(args.database), indent=2))
     elif args.command == "serve":
-        with preview.server(args.database, args.operator, args.hostname, args.port, args.site, args.https_port) as httpd:
+        with preview.server(
+            args.database, args.operator, args.hostname, args.port, args.site, args.https_port
+        ) as httpd:
             print(f"Loopback preview listening on 127.0.0.1:{httpd.server_port}", flush=True)
             with contextlib.suppress(KeyboardInterrupt):
                 httpd.serve_forever()

@@ -40,10 +40,15 @@ def create_task(command, *, principal):
                 raise ValueError("Delegation requires an unfinished Codex parent in the same project.")
         if command.agent == "opencode" and parent is None:
             raise ValueError("OpenCode requires explicit delegation from Codex.")
-        task = Task.objects.create(project_slug=command.project_slug, title=command.title.strip(),
-                                   agent=command.agent, parent=parent)
-        record_operation("gamedev.task.create", f"Created task #{task.pk}: {task.title}",
-                         metadata={"task_id": task.pk, "agent": task.agent, "parent_id": task.parent_id}, required=True)
+        task = Task.objects.create(
+            project_slug=command.project_slug, title=command.title.strip(), agent=command.agent, parent=parent
+        )
+        record_operation(
+            "gamedev.task.create",
+            f"Created task #{task.pk}: {task.title}",
+            metadata={"task_id": task.pk, "agent": task.agent, "parent_id": task.parent_id},
+            required=True,
+        )
         return {"ok": True, "id": task.pk}
 
 
@@ -67,15 +72,33 @@ def move_task(command, *, principal):
         task.evidence = command.evidence.strip()
         task.version += 1
         task.save(update_fields=("status", "evidence", "version", "updated_at"))
-        record_operation("gamedev.task.move", f"Moved task #{task.pk} from {before} to {task.status}",
-                         metadata={"task_id": task.pk, "evidence": task.evidence}, required=True)
+        record_operation(
+            "gamedev.task.move",
+            f"Moved task #{task.pk} from {before} to {task.status}",
+            metadata={"task_id": task.pk, "evidence": task.evidence},
+            required=True,
+        )
         return {"ok": True, "id": task.pk, "version": task.version}
 
 
 def capabilities():
     return (
-        CapabilitySpec("gamedev.task.create", "Create a task or explicit delegation", "remote_write", "gamedev.write",
-                       CreateTask, create_task, label="Create game development task"),
-        CapabilitySpec("gamedev.task.move", "Move a task with review and completion evidence", "remote_write", "gamedev.write",
-                       MoveTask, move_task, label="Move game development task"),
+        CapabilitySpec(
+            "gamedev.task.create",
+            "Create a task or explicit delegation",
+            "remote_write",
+            "gamedev.write",
+            CreateTask,
+            create_task,
+            label="Create game development task",
+        ),
+        CapabilitySpec(
+            "gamedev.task.move",
+            "Move a task with review and completion evidence",
+            "remote_write",
+            "gamedev.write",
+            MoveTask,
+            move_task,
+            label="Move game development task",
+        ),
     )

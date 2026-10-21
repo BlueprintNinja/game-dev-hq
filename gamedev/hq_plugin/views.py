@@ -15,8 +15,14 @@ from .models import Task
 
 
 def dashboard_cards():
-    return ({"id": "gamedev-tasks", "label": "Game development tasks", "value": str(Task.objects.exclude(status="done").count()),
-             "url": reverse("gamedev:index")},)
+    return (
+        {
+            "id": "gamedev-tasks",
+            "label": "Game development tasks",
+            "value": str(Task.objects.exclude(status="done").count()),
+            "url": reverse("gamedev:index"),
+        },
+    )
 
 
 @capability_required("gamedev.read")
@@ -36,15 +42,23 @@ def index(request):
     names = {p["slug"]: p["name"] for p in projects}
     rows = []
     for task in tasks:
-        move = MoveForm(initial={"task_id": task.pk, "version": task.version, "evidence": task.evidence},
-                        auto_id=f"id_task_{task.pk}_%s")
+        move = MoveForm(
+            initial={"task_id": task.pk, "version": task.version, "evidence": task.evidence},
+            auto_id=f"id_task_{task.pk}_%s",
+        )
         move.fields["status"].choices = [(value, value.title()) for value in TRANSITIONS[task.status]]
         rows.append({"task": task, "project": names.get(task.project_slug, task.project_slug), "move": move})
-    return render(request, "gamedev_hq/board.html", {
-        **page_context("Game Dev", "Plan real work. Codex leads; OpenCode receives explicit delegations."),
-        "form": form, "rows": rows, "has_projects": bool(projects),
-        "showcase_url": getattr(settings, "GAMEDEV_SHOWCASE_URL", ""),
-    })
+    return render(
+        request,
+        "gamedev_hq/board.html",
+        {
+            **page_context("Game Dev", "Plan real work. Codex leads; OpenCode receives explicit delegations."),
+            "form": form,
+            "rows": rows,
+            "has_projects": bool(projects),
+            "showcase_url": getattr(settings, "GAMEDEV_SHOWCASE_URL", ""),
+        },
+    )
 
 
 @capability_required("gamedev.write")

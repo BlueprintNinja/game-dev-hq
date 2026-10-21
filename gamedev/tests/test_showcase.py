@@ -22,8 +22,10 @@ class ShowcaseTests(unittest.TestCase):
             Showcase(self.root)
 
     def test_policy_and_assets_survive_and_game_dev_navigation_is_added(self):
-        page = ('<meta http-equiv="Content-Security-Policy" content="script-src &#x27;self&#x27;; '
-                'object-src &#x27;none&#x27;"><nav class="primary-nav" id="primary-navigation"></nav>')
+        page = (
+            '<meta http-equiv="Content-Security-Policy" content="script-src &#x27;self&#x27;; '
+            'object-src &#x27;none&#x27;"><nav class="primary-nav" id="primary-navigation"></nav>'
+        )
         (self.root / "index.html").write_text(page, encoding="utf-8")
         body, kind, policy = self.site.read("/?filter=example")
         self.assertIn(b'href="/game-dev/"', body)
@@ -37,7 +39,16 @@ class ShowcaseTests(unittest.TestCase):
     def test_no_traversal_hidden_files_source_or_directory_listing(self):
         (self.root / "secrets.py").write_text("secret", encoding="utf-8")
         (self.root / "empty").mkdir()
-        for path in ("/../secret.txt", "/%2e%2e/secret.txt", "/..%5csecret.txt", "/C:/secret.txt",
-                     "/.git/config", "/secrets.py", "/empty/", "//evil.test/index.html", "/missing.css"):
+        for path in (
+            "/../secret.txt",
+            "/%2e%2e/secret.txt",
+            "/..%5csecret.txt",
+            "/C:/secret.txt",
+            "/.git/config",
+            "/secrets.py",
+            "/empty/",
+            "//evil.test/index.html",
+            "/missing.css",
+        ):
             with self.subTest(path=path):
                 self.assertIsNone(self.site.read(path))

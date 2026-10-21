@@ -22,10 +22,12 @@ class Task(models.Model):
         ordering = ("id",)
         constraints = [
             models.CheckConstraint(condition=models.Q(agent__in=("codex", "opencode")), name="gamedev_agent"),
-            models.CheckConstraint(condition=models.Q(status__in=("queued", "active", "blocked", "review", "done")),
-                                   name="gamedev_status"),
-            models.CheckConstraint(condition=models.Q(agent="codex") | models.Q(parent__isnull=False),
-                                   name="gamedev_delegation"),
+            models.CheckConstraint(
+                condition=models.Q(status__in=("queued", "active", "blocked", "review", "done")), name="gamedev_status"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(agent="codex") | models.Q(parent__isnull=False), name="gamedev_delegation"
+            ),
         ]
 
     @override
