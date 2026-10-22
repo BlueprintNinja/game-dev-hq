@@ -1,8 +1,10 @@
 import http.server
 import threading
 import unittest
+import urllib.request
 
 from gamedev.readiness import probe, wait_until_ready
+from gamedev.tests import forbids_connection
 
 
 class HealthyHandler(http.server.BaseHTTPRequestHandler):
@@ -31,6 +33,7 @@ class ReadinessTests(unittest.TestCase):
         self.addCleanup(self.thread.join)
         self.addCleanup(self.server.shutdown)
         self.url = f"http://127.0.0.1:{self.server.server_port}/health/live/"
+        forbids_connection(self, lambda: urllib.request.urlopen(self.url, timeout=5).close())
 
     def test_it_answers_when_the_workspace_is_up(self):
         self.assertTrue(wait_until_ready(self.url, timeout=10, interval=0.1))

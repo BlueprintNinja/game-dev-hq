@@ -137,12 +137,32 @@ def run_agent(run, policy, project, worktree, base, canceled, save):
     return code, output, fallback
 
 
+def check_environment(worktree):
+    """The checks write files, so their temporary directory is inside the worktree.
+
+    The sandbox refuses writes to the temporary directory it would otherwise
+    use, and a check that cannot write cannot run the code it checks. The
+    directory is under `var/`, which the repository ignores, so it never
+    reaches the diff.
+    """
+    scratch = worktree / "var" / "hq-check-temp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    environment = dict(os.environ)
+    environment.update({"TEMP": str(scratch), "TMP": str(scratch), "TMPDIR": str(scratch)})
+    return environment
+
+
 def collect_evidence(policy, project, worktree, canceled):
     """The checks the policy names, and the diff of what the run changed."""
+    environment = check_environment(worktree)
     checks = []
     for command in project.checks:
         status, log = run_process(
-            sandbox_command(policy, worktree, command), cwd=worktree, timeout=project.timeout_seconds, canceled=canceled
+            sandbox_command(policy, worktree, command),
+            cwd=worktree,
+            timeout=project.timeout_seconds,
+            canceled=canceled,
+            env=environment,
         )
         checks.append({"command": command, "exit_code": status, "output": log[:64000]})
     # Include new files in evidence without creating a commit. Retain worktree for review.

@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from gamedev import preview, store
+from gamedev.tests import forbids_connection
 
 
 class FoundationTests(unittest.TestCase):
@@ -104,6 +105,7 @@ class FoundationTests(unittest.TestCase):
             client.close()
             return result
 
+        forbids_connection(self, lambda: request())
         self.assertEqual(request()[0], 403)
         self.assertEqual(request(identity="other@example.test")[0], 403)
         self.assertEqual(request("/healthz")[0], 200)
