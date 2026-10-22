@@ -40,6 +40,7 @@ class Run(models.Model):
     delegated_by = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.PROTECT, related_name="delegated_runs"
     )
+    retried_from = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="retries")
     prompt = models.TextField()
     kind = models.CharField(max_length=20, default="coding")
     status = models.CharField(max_length=20, default="queued")
@@ -58,6 +59,10 @@ class Run(models.Model):
     fallback_reason = models.TextField(blank=True)
     passed = models.BooleanField(default=False)
     decision_note = models.TextField(blank=True)
+    # What an approval was given, and when it was given.
+    approved_diff_sha256 = models.CharField(max_length=64, blank=True)
+    approved_evidence_sha256 = models.CharField(max_length=64, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

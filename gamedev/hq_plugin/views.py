@@ -114,9 +114,28 @@ def decide(request, run_id):
             "version": request.POST.get("version"),
             "decision": request.POST.get("decision"),
             "note": request.POST.get("note", ""),
+            "diff_sha256": request.POST.get("diff_sha256", ""),
         },
         principal=web_principal(request.user),
     )
     if not result.get("ok"):
         messages.error(request, result.get("error", {}).get("message", "Decision could not be saved."))
+    return redirect("gamedev:run", run_id=run_id)
+
+
+@capability_required("gamedev.write")
+@require_POST
+def retry(request, run_id):
+    result = execute_capability(
+        "gamedev.run.retry",
+        {
+            "run_id": run_id,
+            "version": request.POST.get("version"),
+            "note": request.POST.get("note", ""),
+        },
+        principal=web_principal(request.user),
+    )
+    if result.get("ok"):
+        return redirect("gamedev:run", run_id=result["id"])
+    messages.error(request, result.get("error", {}).get("message", "The work could not be retried."))
     return redirect("gamedev:run", run_id=run_id)

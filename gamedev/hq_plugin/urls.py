@@ -8,4 +8,5 @@ urlpatterns += [
     path("queue/", views.queue, name="queue"),
     path("runs/<int:run_id>/", views.run_detail, name="run"),
     path("runs/<int:run_id>/decide/", views.decide, name="decide"),
+    path("runs/<int:run_id>/retry/", views.retry, name="retry"),
 ]

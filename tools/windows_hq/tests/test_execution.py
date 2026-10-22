@@ -32,10 +32,23 @@ class ExecutionTests(WorkspaceTests):
         self.assertTrue(result["ok"], result)
         return Run.objects.get(pk=result["id"])
 
-    def decision(self, run, decision, note="Reviewed the exact changes"):
+    def decision(self, run, decision, note="Reviewed the exact changes", diff_sha256=""):
         return execute_capability(
             "gamedev.run.decide",
-            {"run_id": run.pk, "version": run.version, "decision": decision, "note": note},
+            {
+                "run_id": run.pk,
+                "version": run.version,
+                "decision": decision,
+                "note": note,
+                "diff_sha256": diff_sha256,
+            },
+            principal=self.principal,
+        )
+
+    def retry(self, run, note=""):
+        return execute_capability(
+            "gamedev.run.retry",
+            {"run_id": run.pk, "version": run.version, "note": note},
             principal=self.principal,
         )
 
@@ -142,6 +155,85 @@ class ExecutionTests(WorkspaceTests):
         self.assertEqual(owned.status, "canceled")
         self.assertFalse(owned.passed)
         self.assertFalse(self.decision(owned, "accept")["ok"])
+
+    def test_an_approval_is_bound_to_the_captured_changes(self):
+        run = self.queued()
+        owned = claim(self.principal)
+        update(
+            owned.pk,
+            owned.worker_token,
+            self.principal,
+            status="review",
+            passed=True,
+            diff_sha256="a" * 64,
+            evidence_sha256="c" * 64,
+        )
+        run.refresh_from_db()
+        self.assertFalse(self.decision(run, "accept", diff_sha256="b" * 64)["ok"])
+        run.refresh_from_db()
+        self.assertEqual(run.status, "review")
+        self.assertTrue(self.decision(run, "accept", diff_sha256="a" * 64)["ok"])
+        run.refresh_from_db()
+        self.assertEqual(run.approved_diff_sha256, "a" * 64)
+        self.assertEqual(run.approved_evidence_sha256, "c" * 64)
+        self.assertIsNotNone(run.approved_at)
+
+    def test_a_retry_is_a_new_run_and_never_a_replay(self):
+        run = self.queued()
+        owned = claim(self.principal)
+        update(owned.pk, owned.worker_token, self.principal, status="failed")
+        run.refresh_from_db()
+        result = self.retry(run)
+        self.assertTrue(result["ok"], result)
+        retried = Run.objects.get(pk=result["id"])
+        self.assertEqual(retried.retried_from_id, run.pk)
+        self.assertEqual(retried.prompt, run.prompt)
+        self.assertEqual(retried.kind, run.kind)
+        run.refresh_from_db()
+        self.assertEqual(run.status, "failed")
+        self.assertFalse(self.retry(retried)["ok"])
+
+    def test_a_run_that_is_still_open_cannot_be_retried(self):
+        run = self.queued()
+        self.assertFalse(self.retry(run)["ok"])
+        claim(self.principal)
+        run.refresh_from_db()
+        self.assertFalse(self.retry(run)["ok"])
+
+    def test_a_rejected_delegated_job_can_be_revised_and_unblocks_its_parent(self):
+        parent = self.queued()
+        owned = claim(self.principal)
+        dispatch(
+            owned,
+            CodexResult.model_validate(
+                {"summary": "delegate", "delegations": [{"title": "Child", "prompt": "Write a small note"}]}
+            ),
+            self.principal,
+        )
+        child = owned.delegated_runs.get()
+        update(owned.pk, owned.worker_token, self.principal, status="review", passed=True)
+        child_owned = claim(self.principal)
+        self.assertEqual(child_owned.pk, child.pk)
+        update(child.pk, child_owned.worker_token, self.principal, status="failed")
+        child.refresh_from_db()
+        self.assertEqual(child.task.status, "blocked")
+        parent.refresh_from_db()
+        self.assertFalse(self.decision(parent, "accept")["ok"])
+
+        retried = self.retry(child)
+        self.assertTrue(retried["ok"], retried)
+        revision = Run.objects.get(pk=retried["id"])
+        self.assertEqual(revision.delegated_by_id, owned.pk)
+        self.assertEqual(revision.task.parent_id, parent.task_id)
+
+        revision_owned = claim(self.principal)
+        update(revision.pk, revision_owned.worker_token, self.principal, status="review", passed=True)
+        revision.refresh_from_db()
+        self.assertTrue(self.decision(revision, "accept")["ok"])
+        parent.refresh_from_db()
+        self.assertTrue(self.decision(parent, "accept")["ok"])
+        parent.task.refresh_from_db()
+        self.assertEqual(parent.task.status, "done")
 
 
 class SupervisorTests(SimpleTestCase):
