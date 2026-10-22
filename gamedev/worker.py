@@ -16,6 +16,7 @@ lazy import django
 lazy from hq_sdk.capabilities import cli_principal
 
 from .delegation import CodexResult, dispatch, opencode_command, opencode_environment, read_result
+from .quota import quota_reason
 from .readiness import wait_until_ready
 from .supervisor import ProcessFailure, WorkerLock, run_process
 from .worker_config import load_policy
@@ -71,6 +72,87 @@ def sandbox_command(policy, worktree, argv):
     ]
 
 
+def run_fallback(policy, project, worktree, prompt, canceled, save, reason, output):
+    """Finish the work with the other engine, and say that it did.
+
+    The fallback runs in the same worktree, under the same sandbox and the
+    same checks, so the evidence the operator reviews is the same either way.
+    """
+    agent = policy.quota_fallback.agent
+    with tempfile.TemporaryDirectory(prefix="hq-fallback-") as runtime:
+        code, result = run_process(
+            opencode_command(policy, worktree),
+            cwd=worktree,
+            timeout=project.timeout_seconds,
+            canceled=canceled,
+            input_text=prompt,
+            env=opencode_environment(policy, runtime),
+            progress=lambda text: save(output=text),
+        )
+    marker = (
+        f"\n=== fallback to {agent}: the requested agent reported no allowance ===\n{reason}\n=== {agent} output ===\n"
+    )
+    return code, f"{output}{marker}{result}", agent
+
+
+def run_agent(run, policy, project, worktree, base, canceled, save):
+    """Run the agent the task names, and the fallback engine when it has no allowance."""
+    if run.task.agent == "opencode":
+        command = opencode_command(policy, worktree)
+        prompt = base
+    else:
+        schema = policy.artifacts / f"run-{run.pk}-schema.json"
+        schema.write_text(json.dumps(CodexResult.model_json_schema()), encoding="utf-8")
+        command = [*codex_command(policy, worktree)[:-1], "--output-schema", str(schema), "-"]
+        prompt = (
+            base
+            + "\nReturn the required JSON. You may delegate at most two isolated coding jobs to OpenCode; leave delegations empty when unnecessary. Delegated changes are separate worktrees and need independent review."
+        )
+    with tempfile.TemporaryDirectory(prefix="hq-agent-") as runtime:
+        environment = opencode_environment(policy, runtime) if run.task.agent == "opencode" else None
+        code, output = run_process(
+            command,
+            cwd=worktree,
+            timeout=project.timeout_seconds,
+            canceled=canceled,
+            input_text=prompt,
+            env=environment,
+            progress=lambda text: save(output=text),
+        )
+    fallback = None
+    if code and run.task.agent == "codex" and policy.quota_fallback is not None:
+        reason = quota_reason(policy.quota_fallback.matches, output)
+        if reason:
+            code, output, fallback = run_fallback(
+                policy,
+                project,
+                worktree,
+                base
+                + "\nThe agent that was asked for this work reported no allowance. Finish the same task with the engine you are.",
+                canceled,
+                save,
+                reason,
+                output,
+            )
+    return code, output, fallback
+
+
+def collect_evidence(policy, project, worktree, canceled):
+    """The checks the policy names, and the diff of what the run changed."""
+    checks = []
+    for command in project.checks:
+        status, log = run_process(
+            sandbox_command(policy, worktree, command), cwd=worktree, timeout=project.timeout_seconds, canceled=canceled
+        )
+        checks.append({"command": command, "exit_code": status, "output": log[:64000]})
+    # Include new files in evidence without creating a commit. Retain worktree for review.
+    git(worktree, "add", "--intent-to-add", "--all")
+    diff = git(worktree, "diff", "--no-ext-diff", "--binary", "HEAD")
+    if len(diff.encode()) > 1024 * 1024:
+        raise ProcessFailure("Diff exceeds the review limit. Inspect the retained worktree locally.")
+    return checks, diff
+
+
 def execute(run, policy, principal):
 
     project = policy.projects.get(run.task.project_slug)
@@ -90,51 +172,20 @@ def execute(run, policy, principal):
     def save(**values):
         update(run.pk, run.worker_token, principal, **values)
 
-    save(base_revision=revision, worktree=str(worktree))
-
     def canceled():
         return Run.objects.filter(pk=run.pk, cancel_requested=True).exists()
 
-    prompt = (
+    save(base_revision=revision, worktree=str(worktree))
+    base = (
         "Work only on this task. Do not commit, push, merge, publish, access credentials, or change other repositories. Return a summary and verification evidence.\n\n"
         + run.prompt
     )
-    schema = policy.artifacts / f"run-{run.pk}-schema.json"
-    schema.write_text(json.dumps(CodexResult.model_json_schema()), encoding="utf-8")
-    command = [*codex_command(policy, worktree)[:-1], "--output-schema", str(schema), "-"]
-    environment = None
-    if run.task.agent == "opencode":
-        command = opencode_command(policy, worktree)
-        environment = opencode_environment(policy)
-    else:
-        prompt += "\nReturn the required JSON. You may delegate at most two isolated coding jobs to OpenCode; leave delegations empty when unnecessary. Delegated changes are separate worktrees and need independent review."
-    with tempfile.TemporaryDirectory(prefix="hq-agent-") as runtime:
-        if run.task.agent == "opencode":
-            environment = opencode_environment(policy, runtime)
-        code, output = run_process(
-            command,
-            cwd=worktree,
-            timeout=project.timeout_seconds,
-            canceled=canceled,
-            input_text=prompt,
-            env=environment,
-            progress=lambda text: save(output=text),
-        )
+    code, output, fallback = run_agent(run, policy, project, worktree, base, canceled, save)
     if code:
         save(output=output)
         raise ProcessFailure(f"Agent exited with status {code}.")
-    checks = []
-    for command in project.checks:
-        status, log = run_process(
-            sandbox_command(policy, worktree, command), cwd=worktree, timeout=project.timeout_seconds, canceled=canceled
-        )
-        checks.append({"command": command, "exit_code": status, "output": log[:64000]})
-    # Include new files in evidence without creating a commit. Retain worktree for review.
-    git(worktree, "add", "--intent-to-add", "--all")
-    diff = git(worktree, "diff", "--no-ext-diff", "--binary", "HEAD")
-    if len(diff.encode()) > 1024 * 1024:
-        raise ProcessFailure("Diff exceeds the review limit. Inspect the retained worktree locally.")
-    if run.task.agent == "codex":
+    checks, diff = collect_evidence(policy, project, worktree, canceled)
+    if run.task.agent == "codex" and fallback is None:
         dispatch(run, read_result(output), principal)
     save(
         status="review",

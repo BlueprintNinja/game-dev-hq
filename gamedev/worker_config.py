@@ -32,6 +32,14 @@ class ProjectPolicy(BaseModel):
         return value
 
 
+class QuotaFallback(BaseModel):
+    """The engine that finishes the work when the one asked for is out of allowance."""
+
+    model_config = ConfigDict(extra="forbid")
+    agent: Literal["opencode"]
+    matches: list[str] = Field(min_length=1, max_length=8)
+
+
 class WorkerPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
     codex: Path
@@ -39,6 +47,7 @@ class WorkerPolicy(BaseModel):
     opencode: Path | None = None
     opencode_model: str = ""
     opencode_domains: list[str] = Field(default_factory=list, max_length=8)
+    quota_fallback: QuotaFallback | None = None
     artifacts: Path
     projects: dict[str, ProjectPolicy]
 

@@ -18,6 +18,10 @@ Use absolute executable and repository paths. Example (replace the paths):
   "opencode_model": "opencode/minimax-m3.1-flash-free",
   "opencode_domains": ["opencode.ai", "api.opencode.ai", "models.opencode.ai"],
   "artifacts": "C:/GameDevHQ/runs",
+  "quota_fallback": {
+    "agent": "opencode",
+    "matches": ["You've hit your usage limit"]
+  },
   "projects": {
     "my-project": {
       "repository": "C:/Projects/MyProject",
@@ -34,6 +38,30 @@ repository and runs from its current committed HEAD. Uncommitted changes are
 not copied. A UEFN project can be inspected or built without being in Git;
 its repository/check settings are unused for those two fixed actions. Set
 `coding_enabled` to `false` for an editor-only project.
+
+## When the agent is out of allowance
+
+A coding run needs the Codex CLI. When that account has no allowance left, the
+run fails, and the operator is left with a board that cannot do its work.
+
+`quota_fallback` says what to do about it. The worker reads the agent's output
+for the phrases in `matches`. When one of them appears, the work is finished by
+`opencode` instead, with the model and the provider domain policy the file
+already names. The fallback runs in the same worktree, under the same sandbox
+and the same checks, so the evidence the operator reviews is the same either
+way.
+
+Only those phrases count. Any other failure is a failure, and the run says so.
+Without `quota_fallback` nothing changes: the run fails as it did.
+
+The fallback is recorded in the run's execution log, above the output of the
+engine that did the work, and the run's own result is not read as a Codex
+result. A fallback cannot delegate, and it is not a delegation: the run keeps
+the agent the operator chose, and the task keeps its place on the board.
+
+The fallback engine runs under the Codex sandbox helper, so it needs that
+helper to work. An account refused the CLI outright is refused there too, and
+the run fails with both messages visible.
 
 Initialize/migrate the workspace, then start the worker using
 `deploy/windows/Start-GameDevWorker.ps1 -PolicyPath <absolute-policy-path>`.
