@@ -1,16 +1,19 @@
 """The local policy, and what a run's evidence has to show."""
 
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 from gamedev import evidence
 from gamedev.worker_config import ProjectPolicy, WorkerPolicy, load_policy
 
-CHECK = ["C:/Tools/python.exe", "-m", "unittest", "discover"]
-OTHER = ["C:/Tools/python.exe", "tools/verse_source_check.py"]
+CHECK = [sys.executable, "-m", "unittest", "discover"]
+OTHER = [sys.executable, "tools/verse_source_check.py"]
 
 
 def policy(**values):
-    base = {"repository": "C:/Projects/Island", "checks": [CHECK]}
+    base = {"repository": str(Path(tempfile.gettempdir()) / "Island"), "checks": [CHECK]}
     base.update(values)
     return ProjectPolicy.model_validate(base)
 
@@ -50,9 +53,9 @@ class PolicyTests(unittest.TestCase):
     def test_a_policy_file_holds_no_command_from_a_web_request(self):
         source = WorkerPolicy.model_validate(
             {
-                "codex": "C:/Tools/codex.exe",
-                "artifacts": "C:/Runs",
-                "projects": {"island": {"repository": "C:/Projects/Island", "checks": [CHECK]}},
+                "codex": sys.executable,
+                "artifacts": str(Path(tempfile.gettempdir()) / "Runs"),
+                "projects": {"island": {"repository": str(Path(tempfile.gettempdir()) / "Island"), "checks": [CHECK]}},
             }
         )
         self.assertEqual(source.projects["island"].checks[0].command, CHECK)
@@ -67,9 +70,11 @@ class PolicyTests(unittest.TestCase):
             path.write_text(
                 json.dumps(
                     {
-                        "codex": "C:/Tools/codex.exe",
-                        "artifacts": "C:/Runs",
-                        "projects": {"island": {"repository": "C:/Projects/Island", "checks": [CHECK]}},
+                        "codex": sys.executable,
+                        "artifacts": str(Path(tempfile.gettempdir()) / "Runs"),
+                        "projects": {
+                            "island": {"repository": str(Path(tempfile.gettempdir()) / "Island"), "checks": [CHECK]}
+                        },
                     }
                 ),
                 encoding="utf-8",

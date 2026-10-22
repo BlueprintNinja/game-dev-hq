@@ -106,7 +106,8 @@ def move(request):
 @capability_required("gamedev.write")
 @require_POST
 def queue(request):
-    result = execute_capability(
+    return submit_run(
+        request,
         "gamedev.run.queue",
         {
             "task_id": request.POST.get("task_id"),
@@ -114,12 +115,8 @@ def queue(request):
             "prompt": request.POST.get("prompt", ""),
             "kind": request.POST.get("kind", "coding"),
         },
-        principal=web_principal(request.user),
+        reverse("gamedev:index"),
     )
-    if result.get("ok"):
-        return redirect("gamedev:run", run_id=result["id"])
-    messages.error(request, result.get("error", {}).get("message", "Work could not be queued."))
-    return redirect("gamedev:index")
 
 
 @capability_required("gamedev.read")
@@ -169,55 +166,21 @@ def decide(request, run_id):
     return redirect("gamedev:run", run_id=run_id)
 
 
-@capability_required("gamedev.write")
-@require_POST
-def retry(request, run_id):
-    result = execute_capability(
-        "gamedev.run.retry",
-        {
-            "run_id": run_id,
-            "version": request.POST.get("version"),
-            "note": request.POST.get("note", ""),
-        },
-        principal=web_principal(request.user),
-    )
+def submit_run(request, capability, payload, failure_url):
+    result = execute_capability(capability, payload, principal=web_principal(request.user))
     if result.get("ok"):
         return redirect("gamedev:run", run_id=result["id"])
-    messages.error(request, result.get("error", {}).get("message", "The work could not be retried."))
-    return redirect("gamedev:run", run_id=run_id)
+    messages.error(request, result.get("error", {}).get("message", "The work could not be queued."))
+    return redirect(failure_url)
 
 
 @capability_required("gamedev.write")
 @require_POST
-def apply(request, run_id):
-    result = execute_capability(
-        "gamedev.run.apply",
-        {
-            "run_id": run_id,
-            "version": request.POST.get("version"),
-            "note": request.POST.get("note", ""),
-        },
-        principal=web_principal(request.user),
+def submit_action(request, run_id, action):
+    capabilities = {"retry": "gamedev.run.retry", "apply": "gamedev.run.apply", "rollback": "gamedev.run.rollback"}
+    return submit_run(
+        request,
+        capabilities[action],
+        {"run_id": run_id, "version": request.POST.get("version"), "note": request.POST.get("note", "")},
+        reverse("gamedev:run", kwargs={"run_id": run_id}),
     )
-    if result.get("ok"):
-        return redirect("gamedev:run", run_id=result["id"])
-    messages.error(request, result.get("error", {}).get("message", "The changes could not be queued for apply."))
-    return redirect("gamedev:run", run_id=run_id)
-
-
-@capability_required("gamedev.write")
-@require_POST
-def rollback(request, run_id):
-    result = execute_capability(
-        "gamedev.run.rollback",
-        {
-            "run_id": run_id,
-            "version": request.POST.get("version"),
-            "note": request.POST.get("note", ""),
-        },
-        principal=web_principal(request.user),
-    )
-    if result.get("ok"):
-        return redirect("gamedev:run", run_id=result["id"])
-    messages.error(request, result.get("error", {}).get("message", "The rollback could not be queued."))
-    return redirect("gamedev:run", run_id=run_id)
