@@ -96,6 +96,11 @@ Both are started by Task Scheduler tasks under the operator account:
 | --- | --- | --- |
 | `GameDevHQ-Workspace` | `deploy/windows/Start-GameDevWorkspace.ps1` | At logon, restarted on failure |
 | `GameDevHQ-Showcase` | `deploy/windows/Start-GameDevShowcase.ps1` | At logon, restarted on failure |
+| `GameDevHQ-Worker` | `deploy/windows/Start-GameDevWorker.ps1` | At logon, once the workspace answers; claims queued work |
+| `GameDevHQ-Backup` | `deploy/windows/Backup-GameDevWorkspace.ps1` | Daily; one consistent copy of the workspace database |
+
+The worker and the backup belong to supervised work; `docs/Game-Dev-Execution.md`
+says how to install them and what they refuse to do.
 
 Files the services own, all outside the repository:
 
@@ -104,8 +109,11 @@ Files the services own, all outside the repository:
 | `%LOCALAPPDATA%\GameDevHQ\workspace\hq.sqlite3` | The workspace database |
 | `%LOCALAPPDATA%\GameDevHQ\workspace\secret.key` | The workspace's Django secret |
 | `%LOCALAPPDATA%\GameDevHQ\workspace\static`, `media` | Collected assets and uploads |
+| `%LOCALAPPDATA%\GameDevHQ\backups` | The workspace database's daily copies |
 | `%LOCALAPPDATA%\GameDevHQ\logs\workspace.log` | Workspace start and request log |
 | `%LOCALAPPDATA%\GameDevHQ\logs\showcase.log` | Showcase start log |
+| `%LOCALAPPDATA%\GameDevHQ\logs\worker.log` | Worker log |
+| `%LOCALAPPDATA%\GameDevHQ\logs\backup.log` | Backup log |
 
 Nothing else is written outside the repository: the showcase is served from the
 build under `var/demo`, and the companion's own database stays in `var/gamedev`.
@@ -180,6 +188,11 @@ build under `var/demo`, and the companion's own database stays in `var/gamedev`.
 - **Stop everything**: `./deploy/windows/Stop-GameDevServices.ps1`. It stops
   the two tasks and the loopback listeners they own, and leaves every other
   process and every tailnet route alone.
+- **Backups**: `GameDevHQ-Backup` writes one copy of the workspace database
+  into `%LOCALAPPDATA%\GameDevHQ\backups` every day and keeps the newest
+  fourteen. The copy is made after the write-ahead log is folded into the
+  database, so one file holds everything. Run
+  `./deploy/windows/Backup-GameDevWorkspace.ps1` to take one now.
 - **Check what is running**: `./deploy/windows/Get-GameDevStatus.ps1` prints the
   task states, the listeners, both health checks, the private URLs and the last
   lines of each log.
@@ -206,7 +219,7 @@ build under `var/demo`, and the companion's own database stays in `var/gamedev`.
 
 ```powershell
 git fetch origin
-git checkout feature/gamedev-foundation
+git checkout main
 git pull
 ./deploy/windows/Stop-GameDevServices.ps1
 Start-ScheduledTask -TaskName 'GameDevHQ-Workspace'
@@ -215,7 +228,7 @@ Start-ScheduledTask -TaskName 'GameDevHQ-Showcase'
 
 Stop the services before switching commits: the workspace holds a SQLite file
 that a schema change may migrate. Back up the workspace database first
-(`Copy-Item %LOCALAPPDATA%\GameDevHQ\workspace\hq.sqlite3 <backup>`); the
+(`./deploy/windows/Backup-GameDevWorkspace.ps1`); the
 v0.1 schema is additive and initialization is idempotent, but a future schema
 change needs an explicit migration.
 

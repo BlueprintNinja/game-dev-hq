@@ -16,6 +16,7 @@ lazy import django
 lazy from hq_sdk.capabilities import cli_principal
 
 from .delegation import CodexResult, dispatch, opencode_command, opencode_environment, read_result
+from .readiness import wait_until_ready
 from .supervisor import ProcessFailure, WorkerLock, run_process
 from .worker_config import load_policy
 lazy from .hq_plugin.models import Run
@@ -191,6 +192,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", required=True, type=Path)
     parser.add_argument("--once", action="store_true")
+    parser.add_argument(
+        "--workspace-url",
+        default="",
+        help="The workspace health endpoint. The worker waits for it before it opens the database.",
+    )
+    parser.add_argument("--workspace-timeout", type=float, default=600)
     args = parser.parse_args()
     policy = load_policy(args.policy)
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tools.windows_hq.settings")
@@ -198,6 +205,13 @@ def main():
     django.setup()
 
     principal = cli_principal()
+    try:
+        # The workspace migrates the database on every start; a worker that
+        # opened it beside that would read a half-migrated file.
+        if args.workspace_url:
+            wait_until_ready(args.workspace_url, timeout=args.workspace_timeout)
+    except TimeoutError as error:
+        parser.exit(1, f"Error: {error}\n")
     with WorkerLock(Path(os.environ["GAMEDEV_WORKSPACE_DATA"]) / "worker.lock"):
         recover(principal)
         while True:
