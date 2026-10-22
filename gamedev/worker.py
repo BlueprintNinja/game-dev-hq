@@ -71,6 +71,23 @@ def sandbox_command(policy, worktree, argv):
     ]
 
 
+def message_in(line):
+    """The message an agent event carries, if it carries one."""
+    try:
+        event = json.loads(line)
+    except ValueError:
+        return line.strip()
+    if not isinstance(event, dict):
+        return line.strip()
+    message = event.get("message")
+    if not isinstance(message, str):
+        error = event.get("error")
+        message = error.get("message") if isinstance(error, dict) else None
+    if isinstance(message, str):
+        return message.strip()
+    return line.strip()
+
+
 def quota_reason(policy, output):
     """The message that says the agent is out of allowance, if it said one.
 
@@ -80,24 +97,10 @@ def quota_reason(policy, output):
     fallback = policy.quota_fallback
     if fallback is None or not output:
         return None
-    for phrase in fallback.matches:
-        if not phrase or phrase not in output:
-            continue
-        for line in output.splitlines():
-            if phrase not in line:
-                continue
-            try:
-                event = json.loads(line)
-            except ValueError:
-                return line.strip()[:2000]
-            if isinstance(event, dict):
-                message = event.get("message")
-                if not isinstance(message, str):
-                    error = event.get("error")
-                    message = error.get("message") if isinstance(error, dict) else None
-                if isinstance(message, str):
-                    return message[:2000]
-            return line.strip()[:2000]
+    for line in output.splitlines():
+        for phrase in fallback.matches:
+            if phrase and phrase in line:
+                return message_in(line)[:2000]
     return None
 
 
@@ -124,47 +127,21 @@ def run_fallback(policy, project, worktree, prompt, canceled, save, reason, outp
     return code, f"{output}{marker}{result}", agent
 
 
-def execute(run, policy, principal):
-
-    project = policy.projects.get(run.task.project_slug)
-    if project is None:
-        raise ProcessFailure("This project has no local worker policy.")
-    if run.kind != "coding":
-        return execute_editor(run, project, principal)
-    if not project.coding_enabled:
-        raise ProcessFailure("Coding is disabled by the local policy for this project.")
-    if run.task.agent == "opencode" and (not run.delegated_by_id or run.delegated_by.task_id != run.task.parent_id):
-        raise ProcessFailure("OpenCode dispatch requires verified Codex delegation provenance.")
-    revision = git(project.repository, "rev-parse", "HEAD").strip()
-    worktree = policy.artifacts / f"run-{run.pk}"
-    policy.artifacts.mkdir(parents=True, exist_ok=True)
-    git(project.repository, "worktree", "add", "--detach", str(worktree), revision)
-
-    def save(**values):
-        update(run.pk, run.worker_token, principal, **values)
-
-    save(base_revision=revision, worktree=str(worktree))
-
-    def canceled():
-        return Run.objects.filter(pk=run.pk, cancel_requested=True).exists()
-
-    base = (
-        "Work only on this task. Do not commit, push, merge, publish, access credentials, or change other repositories. Return a summary and verification evidence.\n\n"
-        + run.prompt
-    )
-    prompt = base
-    schema = policy.artifacts / f"run-{run.pk}-schema.json"
-    schema.write_text(json.dumps(CodexResult.model_json_schema()), encoding="utf-8")
-    command = [*codex_command(policy, worktree)[:-1], "--output-schema", str(schema), "-"]
-    environment = None
+def run_agent(run, policy, project, worktree, base, canceled, save):
+    """Run the agent the task names, and the fallback engine when it has no allowance."""
     if run.task.agent == "opencode":
         command = opencode_command(policy, worktree)
-        environment = opencode_environment(policy)
+        prompt = base
     else:
-        prompt += "\nReturn the required JSON. You may delegate at most two isolated coding jobs to OpenCode; leave delegations empty when unnecessary. Delegated changes are separate worktrees and need independent review."
+        schema = policy.artifacts / f"run-{run.pk}-schema.json"
+        schema.write_text(json.dumps(CodexResult.model_json_schema()), encoding="utf-8")
+        command = [*codex_command(policy, worktree)[:-1], "--output-schema", str(schema), "-"]
+        prompt = (
+            base
+            + "\nReturn the required JSON. You may delegate at most two isolated coding jobs to OpenCode; leave delegations empty when unnecessary. Delegated changes are separate worktrees and need independent review."
+        )
     with tempfile.TemporaryDirectory(prefix="hq-agent-") as runtime:
-        if run.task.agent == "opencode":
-            environment = opencode_environment(policy, runtime)
+        environment = opencode_environment(policy, runtime) if run.task.agent == "opencode" else None
         code, output = run_process(
             command,
             cwd=worktree,
@@ -189,9 +166,11 @@ def execute(run, policy, principal):
                 reason,
                 output,
             )
-    if code:
-        save(output=output)
-        raise ProcessFailure(f"Agent exited with status {code}.")
+    return code, output, fallback
+
+
+def collect_evidence(policy, project, worktree, canceled):
+    """The checks the policy names, and the diff of what the run changed."""
     checks = []
     for command in project.checks:
         status, log = run_process(
@@ -203,6 +182,41 @@ def execute(run, policy, principal):
     diff = git(worktree, "diff", "--no-ext-diff", "--binary", "HEAD")
     if len(diff.encode()) > 1024 * 1024:
         raise ProcessFailure("Diff exceeds the review limit. Inspect the retained worktree locally.")
+    return checks, diff
+
+
+def execute(run, policy, principal):
+
+    project = policy.projects.get(run.task.project_slug)
+    if project is None:
+        raise ProcessFailure("This project has no local worker policy.")
+    if run.kind != "coding":
+        return execute_editor(run, project, principal)
+    if not project.coding_enabled:
+        raise ProcessFailure("Coding is disabled by the local policy for this project.")
+    if run.task.agent == "opencode" and (not run.delegated_by_id or run.delegated_by.task_id != run.task.parent_id):
+        raise ProcessFailure("OpenCode dispatch requires verified Codex delegation provenance.")
+    revision = git(project.repository, "rev-parse", "HEAD").strip()
+    worktree = policy.artifacts / f"run-{run.pk}"
+    policy.artifacts.mkdir(parents=True, exist_ok=True)
+    git(project.repository, "worktree", "add", "--detach", str(worktree), revision)
+
+    def save(**values):
+        update(run.pk, run.worker_token, principal, **values)
+
+    def canceled():
+        return Run.objects.filter(pk=run.pk, cancel_requested=True).exists()
+
+    save(base_revision=revision, worktree=str(worktree))
+    base = (
+        "Work only on this task. Do not commit, push, merge, publish, access credentials, or change other repositories. Return a summary and verification evidence.\n\n"
+        + run.prompt
+    )
+    code, output, fallback = run_agent(run, policy, project, worktree, base, canceled, save)
+    if code:
+        save(output=output)
+        raise ProcessFailure(f"Agent exited with status {code}.")
+    checks, diff = collect_evidence(policy, project, worktree, canceled)
     if run.task.agent == "codex" and fallback is None:
         dispatch(run, read_result(output), principal)
     save(
