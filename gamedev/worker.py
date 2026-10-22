@@ -197,11 +197,11 @@ def execute(run, policy, principal):
     if project is None:
         raise ProcessFailure("This project has no local worker policy.")
     if run.kind == "apply":
-        return execute_apply(run, policy, project, principal)
+        execute_apply(run, policy, project, principal)
     if run.kind == "rollback":
-        return execute_rollback(run, policy, project, principal)
+        execute_rollback(run, policy, project, principal)
     if run.kind != "coding":
-        return execute_editor(run, project, principal)
+        execute_editor(run, project, principal)
     if not project.coding_enabled:
         raise ProcessFailure("Coding is disabled by the local policy for this project.")
     if run.task.agent == "opencode" and (not run.delegated_by_id or run.delegated_by.task_id != run.task.parent_id):
