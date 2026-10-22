@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -12,27 +11,20 @@ import time
 from pathlib import Path
 
 lazy import django
+lazy from django.utils import timezone
 
 lazy from hq_sdk.capabilities import cli_principal
 
+from . import apply_runner
 from .delegation import CodexResult, dispatch, opencode_command, opencode_environment, read_result
 from .evidence import digest, passes
+from .gitcmd import git
 from .quota import quota_reason
 from .readiness import wait_until_ready
 from .supervisor import ProcessFailure, WorkerLock, run_process
 from .worker_config import load_policy
 lazy from .hq_plugin.models import Run
-lazy from .hq_plugin.worker_state import claim, recover, update
-
-
-def git(repository, *args):
-    executable = shutil.which("git")
-    if not executable:
-        raise ProcessFailure("Git is not installed.")
-    status, output = run_process([executable, "-C", str(repository), *args], cwd=repository, timeout=30)
-    if status:
-        raise ProcessFailure(f"Git exited with status {status}: {output[:2000]}")
-    return output
+lazy from .hq_plugin.worker_state import claim, note_rollback, recover, update
 
 
 def codex_command(policy, worktree):
@@ -193,6 +185,10 @@ def execute(run, policy, principal):
     project = policy.projects.get(run.task.project_slug)
     if project is None:
         raise ProcessFailure("This project has no local worker policy.")
+    if run.kind == "apply":
+        return execute_apply(run, policy, project, principal)
+    if run.kind == "rollback":
+        return execute_rollback(run, policy, project, principal)
     if run.kind != "coding":
         return execute_editor(run, project, principal)
     if not project.coding_enabled:
@@ -236,8 +232,44 @@ def execute(run, policy, principal):
     )
 
 
-def execute_editor(run, project, principal):
+def execute_apply(run, policy, project, principal):
+    """Write an accepted run's changes into the destination."""
+    report = apply_runner.execute_apply(run, policy, project)
+    written = json.loads(report)
+    update(
+        run.pk,
+        run.worker_token,
+        principal,
+        status="accepted",
+        output=report,
+        engine="worker",
+        applied_files=written["files"],
+        applied_at=timezone.now(),
+        applied_by=run.requested_by,
+        applied_revision=written["base_revision"],
+        snapshot=written["snapshot"],
+    )
 
+
+def execute_rollback(run, policy, project, principal):
+    """Put back what an apply wrote."""
+    report = apply_runner.execute_rollback(run, policy, project)
+    restored = json.loads(report)
+    note_rollback(run.applies_id, principal)
+    update(
+        run.pk,
+        run.worker_token,
+        principal,
+        status="accepted",
+        output=report,
+        engine="worker",
+        applied_files=restored["restored"],
+        applied_at=timezone.now(),
+        applied_by=run.requested_by,
+    )
+
+
+def execute_editor(run, project, principal):
     if project.uefn_project is None:
         raise ProcessFailure("Editor access is not configured for this project.")
     code, output = run_process(

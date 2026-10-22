@@ -9,6 +9,7 @@ from hq_sdk.pages import page_context
 from hq_sdk.resources import list_resource
 from hq_sdk.web import capability_required
 
+from .. import apply as apply_module
 from .contracts import TRANSITIONS
 from .forms import MoveForm, TaskForm
 from .models import Run, Task
@@ -101,7 +102,26 @@ def run_detail(request, run_id):
 
     run = get_object_or_404(Run.objects.select_related("task"), pk=run_id)
     template = "gamedev_hq/run.html#progress" if request.GET.get("fragment") == "1" else "gamedev_hq/run.html"
-    return render(request, template, {**page_context(f"Run #{run.pk}", run.task.title), "run": run})
+    return render(
+        request,
+        template,
+        {
+            **page_context(f"Run #{run.pk}", run.task.title),
+            "run": run,
+            "changed_paths": changed_paths(run),
+            "applied_run": run.applies,
+        },
+    )
+
+
+def changed_paths(run):
+    """The files a run's captured changes touch, as a preview of an apply."""
+    if not run.diff:
+        return []
+    try:
+        return [path for path, removed in apply_module.changed_paths(run.diff) if not removed]
+    except apply_module.Refusal:
+        return []
 
 
 @capability_required("gamedev.write")
@@ -138,4 +158,40 @@ def retry(request, run_id):
     if result.get("ok"):
         return redirect("gamedev:run", run_id=result["id"])
     messages.error(request, result.get("error", {}).get("message", "The work could not be retried."))
+    return redirect("gamedev:run", run_id=run_id)
+
+
+@capability_required("gamedev.write")
+@require_POST
+def apply(request, run_id):
+    result = execute_capability(
+        "gamedev.run.apply",
+        {
+            "run_id": run_id,
+            "version": request.POST.get("version"),
+            "note": request.POST.get("note", ""),
+        },
+        principal=web_principal(request.user),
+    )
+    if result.get("ok"):
+        return redirect("gamedev:run", run_id=result["id"])
+    messages.error(request, result.get("error", {}).get("message", "The changes could not be queued for apply."))
+    return redirect("gamedev:run", run_id=run_id)
+
+
+@capability_required("gamedev.write")
+@require_POST
+def rollback(request, run_id):
+    result = execute_capability(
+        "gamedev.run.rollback",
+        {
+            "run_id": run_id,
+            "version": request.POST.get("version"),
+            "note": request.POST.get("note", ""),
+        },
+        principal=web_principal(request.user),
+    )
+    if result.get("ok"):
+        return redirect("gamedev:run", run_id=result["id"])
+    messages.error(request, result.get("error", {}).get("message", "The rollback could not be queued."))
     return redirect("gamedev:run", run_id=run_id)

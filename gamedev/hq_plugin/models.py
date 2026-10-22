@@ -41,6 +41,9 @@ class Run(models.Model):
         "self", null=True, blank=True, on_delete=models.PROTECT, related_name="delegated_runs"
     )
     retried_from = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="retries")
+    # The run whose approved changes this run writes, or whose apply this
+    # run takes back.
+    applies = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="applied_runs")
     prompt = models.TextField()
     kind = models.CharField(max_length=20, default="coding")
     status = models.CharField(max_length=20, default="queued")
@@ -59,10 +62,19 @@ class Run(models.Model):
     fallback_reason = models.TextField(blank=True)
     passed = models.BooleanField(default=False)
     decision_note = models.TextField(blank=True)
+    # Who asked for this run.
+    requested_by = models.CharField(max_length=150, blank=True)
     # What an approval was given, and when it was given.
     approved_diff_sha256 = models.CharField(max_length=64, blank=True)
     approved_evidence_sha256 = models.CharField(max_length=64, blank=True)
     approved_at = models.DateTimeField(null=True, blank=True)
+    # What an apply wrote, where it wrote it, and how it is taken back.
+    applied_files = models.JSONField(default=list)
+    applied_at = models.DateTimeField(null=True, blank=True)
+    applied_by = models.CharField(max_length=150, blank=True)
+    applied_revision = models.CharField(max_length=64, blank=True)
+    snapshot = models.TextField(blank=True)
+    rolled_back_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -77,7 +89,8 @@ class Run(models.Model):
                 name="gamedev_run_status",
             ),
             models.CheckConstraint(
-                condition=models.Q(kind__in=("coding", "uefn_inspect", "uefn_build")), name="gamedev_run_kind"
+                condition=models.Q(kind__in=("coding", "uefn_inspect", "uefn_build", "apply", "rollback")),
+                name="gamedev_run_kind",
             ),
             models.UniqueConstraint(
                 fields=("task",),

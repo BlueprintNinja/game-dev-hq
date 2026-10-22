@@ -4,11 +4,15 @@
 {% partialdef progress inline %}
 <section class="card" data-fragment="{% url 'gamedev:run' run.pk %}?fragment=1"{% if run.status == 'running' or run.status == 'queued' %} data-fragment-poll="3"{% endif %}>
   <h2>{{ run.status|title }}</h2>
+  {% if run.kind == 'apply' %}<p>Apply: writing approved changes into the destination.</p>{% endif %}
+  {% if run.kind == 'rollback' %}<p>Rollback: putting back what an apply wrote.</p>{% endif %}
   <p>{{ run.prompt|linebreaksbr }}</p>
-  {% if run.engine %}<p>Worked by: <strong>{{ run.engine }}</strong>{% if run.engine != run.task.agent %} (the task asked for {{ run.task.agent }}){% endif %}</p>{% endif %}
+  {% if run.engine %}<p>Worked by: <strong>{{ run.engine }}</strong>{% if run.engine != run.task.agent and run.kind == 'coding' %} (the task asked for {{ run.task.agent }}){% endif %}</p>{% endif %}
   {% if run.fallback_reason %}<p>The requested agent reported no allowance, so another engine finished the work: {{ run.fallback_reason|linebreaksbr }}</p>{% endif %}
   {% if run.delegated_by_id %}<p>Delegated by <a href="{% url 'gamedev:run' run.delegated_by_id %}">run #{{ run.delegated_by_id }}</a>.</p>{% endif %}
   {% if run.retried_from_id %}<p>Retried <a href="{% url 'gamedev:run' run.retried_from_id %}">run #{{ run.retried_from_id }}</a>.</p>{% endif %}
+  {% if run.applies_id %}<p>Applies <a href="{% url 'gamedev:run' run.applies_id %}">run #{{ run.applies_id }}</a>.</p>{% endif %}
+  {% if run.requested_by %}<p>Asked for by {{ run.requested_by }}.</p>{% endif %}
   {% if run.cancel_requested %}<p>Cancellation requested. Waiting for the worker to stop.</p>{% endif %}
   {% if run.base_revision %}<p>Starting revision: <code>{{ run.base_revision }}</code></p>{% endif %}
   {% if run.status == 'queued' or run.status == 'running' %}
@@ -19,6 +23,12 @@
   <details><summary>Changes for review</summary><pre>{{ run.diff }}</pre></details>
   {% if run.diff_sha256 %}<p>Changes fingerprint: <code>{{ run.diff_sha256 }}</code></p>{% endif %}
   {% if run.evidence_sha256 %}<p>Checks fingerprint: <code>{{ run.evidence_sha256 }}</code></p>{% endif %}
+  {% if run.applied_files %}
+  <p>Files written:</p>
+  <ul>{% for file in run.applied_files %}<li><code>{{ file.path }}</code>{% if file.created %} (new){% else %} (replaced){% endif %}</li>{% endfor %}</ul>
+  {% if run.applied_at %}<p>Applied {{ run.applied_at }} by {{ run.applied_by|default:"the worker" }} from revision <code>{{ run.applied_revision }}</code>.</p>{% endif %}
+  {% if run.rolled_back_at %}<p>Rolled back {{ run.rolled_back_at }}.</p>{% endif %}
+  {% endif %}
   {% if run.status == 'review' %}
   <p>Review the changes and check results. Acceptance records your approval. It does not merge or publish changes.</p>
   <form method="post" action="{% url 'gamedev:decide' run.pk %}">
@@ -27,6 +37,26 @@
     <p><label for="decision_note">Review note</label><textarea id="decision_note" name="note" required maxlength="4000" rows="3"></textarea></p>
     {% if run.passed %}<button name="decision" value="accept">Accept result</button>{% endif %}
     <button name="decision" value="reject">Request changes</button>
+  </form>
+  {% endif %}
+  {% if run.status == 'accepted' and run.kind == 'coding' %}
+  <p>These changes are approved. Applying them writes them into the destination; it is a separate operation, and what it replaces is kept so it can be put back.</p>
+  {% if changed_paths %}
+  <p>Files this would write:</p>
+  <ul>{% for path in changed_paths %}<li><code>{{ path }}</code></li>{% endfor %}</ul>
+  {% endif %}
+  <form method="post" action="{% url 'gamedev:apply' run.pk %}">
+    {% csrf_token %}<input type="hidden" name="version" value="{{ run.version }}">
+    <p><label for="apply_note">Note for the apply</label><textarea id="apply_note" name="note" maxlength="4000" rows="2"></textarea></p>
+    <button type="submit">Apply approved changes</button>
+  </form>
+  {% endif %}
+  {% if run.kind == 'apply' and run.status == 'accepted' and not run.rolled_back_at %}
+  <p>The changes are in the destination. Putting them back restores the files the apply replaced.</p>
+  <form method="post" action="{% url 'gamedev:rollback' run.pk %}">
+    {% csrf_token %}<input type="hidden" name="version" value="{{ run.version }}">
+    <p><label for="rollback_note">Note for the rollback</label><textarea id="rollback_note" name="note" maxlength="4000" rows="2"></textarea></p>
+    <button type="submit">Put the changes back</button>
   </form>
   {% endif %}
   {% if run.decision_note %}<p>{{ run.decision_note|linebreaksbr }}</p>{% endif %}

@@ -9,4 +9,6 @@ urlpatterns += [
     path("runs/<int:run_id>/", views.run_detail, name="run"),
     path("runs/<int:run_id>/decide/", views.decide, name="decide"),
     path("runs/<int:run_id>/retry/", views.retry, name="retry"),
+    path("runs/<int:run_id>/apply/", views.apply, name="apply"),
+    path("runs/<int:run_id>/rollback/", views.rollback, name="rollback"),
 ]

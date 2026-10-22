@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -13,11 +14,19 @@ from gamedev.delegation import CodexResult, dispatch, opencode_environment
 from gamedev.hq_plugin.models import Run, Task
 from gamedev.hq_plugin.worker_state import claim, recover, update
 from gamedev.supervisor import ProcessFailure, run_process
-from gamedev.worker import process_next
+from gamedev.worker import execute, process_next
 from gamedev.worker_config import WorkerPolicy
 from hq_sdk.capabilities import Principal, execute_capability
 
 from .test_workspace import WorkspaceTests, workspace_only
+
+
+def git(repository, *args):
+    """Git, in a test, without a shell."""
+    completed = subprocess.run(["git", "-C", str(repository), *args], capture_output=True, text=True, check=False)
+    if completed.returncode:
+        raise AssertionError(f"git {args} failed: {completed.stderr}")
+    return completed.stdout
 
 
 @workspace_only
@@ -234,6 +243,142 @@ class ExecutionTests(WorkspaceTests):
         self.assertTrue(self.decision(parent, "accept")["ok"])
         parent.task.refresh_from_db()
         self.assertEqual(parent.task.status, "done")
+
+    def test_an_apply_writes_the_approved_changes_and_can_be_put_back(self):
+        with tempfile.TemporaryDirectory() as root:
+            source = Path(root) / "source"
+            island = Path(root) / "island"
+            (source / "Content").mkdir(parents=True)
+            (island / "Content").mkdir(parents=True)
+            (source / "Content" / "one.verse").write_bytes(b"old\n")
+            (island / "Content" / "one.verse").write_bytes(b"old\n")
+            git(source, "init")
+            git(source, "add", "-A")
+            git(source, "-c", "user.name=tests", "-c", "user.email=tests@example.test", "commit", "-m", "base")
+            revision = git(source, "rev-parse", "HEAD").strip()
+            (source / "Content" / "one.verse").write_bytes(b"new\n")
+            policy = WorkerPolicy(
+                codex=Path(sys.executable),
+                artifacts=Path(root) / "artifacts",
+                projects={
+                    "test-island": {
+                        "repository": source,
+                        "checks": [[sys.executable, "--version"]],
+                        "apply_destination": island,
+                        "apply_scope": ["Content/**/*.verse"],
+                    }
+                },
+            )
+            run = self.queued()
+            diff = git(source, "diff", "--no-ext-diff", "--binary", "HEAD")
+            fingerprint = hashlib.sha256(diff.encode()).hexdigest()
+            owned = claim(self.principal)
+            update(
+                owned.pk,
+                owned.worker_token,
+                self.principal,
+                status="review",
+                passed=True,
+                diff=diff,
+                diff_sha256=fingerprint,
+                evidence_sha256="c" * 64,
+                base_revision=revision,
+                worktree=str(source),
+            )
+            run.refresh_from_db()
+            self.assertTrue(self.decision(run, "accept", diff_sha256=fingerprint)["ok"])
+
+            run.refresh_from_db()
+
+            queued = execute_capability(
+                "gamedev.run.apply",
+                {"run_id": run.pk, "version": run.version},
+                principal=self.principal,
+            )
+            self.assertTrue(queued["ok"], queued)
+            apply = Run.objects.get(pk=queued["id"])
+            self.assertEqual(apply.kind, "apply")
+            self.assertEqual(apply.applies_id, run.pk)
+
+            applied = claim(self.principal)
+            self.assertEqual(applied.pk, apply.pk)
+            execute(applied, policy, self.principal)
+            apply.refresh_from_db()
+            self.assertEqual(apply.status, "accepted")
+            self.assertEqual((island / "Content" / "one.verse").read_bytes(), b"new\n")
+            self.assertEqual([entry["path"] for entry in apply.applied_files], ["Content/one.verse"])
+            self.assertTrue(Path(apply.snapshot).is_dir())
+
+            undone = execute_capability(
+                "gamedev.run.rollback",
+                {"run_id": apply.pk, "version": apply.version},
+                principal=self.principal,
+            )
+            self.assertTrue(undone["ok"], undone)
+            rolled = claim(self.principal)
+            execute(rolled, policy, self.principal)
+            apply.refresh_from_db()
+            self.assertIsNotNone(apply.rolled_back_at)
+            self.assertEqual((island / "Content" / "one.verse").read_bytes(), b"old\n")
+
+    def test_an_apply_refuses_a_destination_that_changed_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as root:
+            source = Path(root) / "source"
+            island = Path(root) / "island"
+            (source / "Content").mkdir(parents=True)
+            (island / "Content").mkdir(parents=True)
+            (source / "Content" / "one.verse").write_bytes(b"old\n")
+            (island / "Content" / "one.verse").write_bytes(b"old\n")
+            git(source, "init")
+            git(source, "add", "-A")
+            git(source, "-c", "user.name=tests", "-c", "user.email=tests@example.test", "commit", "-m", "base")
+            (source / "Content" / "one.verse").write_bytes(b"new\n")
+            policy = WorkerPolicy(
+                codex=Path(sys.executable),
+                artifacts=Path(root) / "artifacts",
+                projects={
+                    "test-island": {
+                        "repository": source,
+                        "checks": [[sys.executable, "--version"]],
+                        "apply_destination": island,
+                        "apply_scope": ["Content/**/*.verse"],
+                    }
+                },
+            )
+            run = self.queued()
+            diff = git(source, "diff", "--no-ext-diff", "--binary", "HEAD")
+            fingerprint = hashlib.sha256(diff.encode()).hexdigest()
+            owned = claim(self.principal)
+            update(
+                owned.pk,
+                owned.worker_token,
+                self.principal,
+                status="review",
+                passed=True,
+                diff=diff,
+                diff_sha256=fingerprint,
+                base_revision=git(source, "rev-parse", "HEAD").strip(),
+                worktree=str(source),
+            )
+            run.refresh_from_db()
+            self.assertTrue(self.decision(run, "accept", diff_sha256=fingerprint)["ok"])
+            run.refresh_from_db()
+            queued = execute_capability(
+                "gamedev.run.apply", {"run_id": run.pk, "version": run.version}, principal=self.principal
+            )
+            self.assertTrue(queued["ok"], queued)
+            (island / "Content" / "one.verse").write_bytes(b"changed in the island\n")
+            applied = claim(self.principal)
+            with self.assertRaises(ProcessFailure):
+                execute(applied, policy, self.principal)
+            self.assertEqual((island / "Content" / "one.verse").read_bytes(), b"changed in the island\n")
+
+    def test_an_apply_refuses_a_run_that_was_not_approved(self):
+        run = self.queued()
+        result = execute_capability(
+            "gamedev.run.apply", {"run_id": run.pk, "version": run.version}, principal=self.principal
+        )
+        self.assertFalse(result["ok"])
 
 
 class SupervisorTests(SimpleTestCase):

@@ -53,7 +53,9 @@ def queue_run(command, *, principal):
             raise ValueError("This task already has work running or awaiting review.")
         if task.agent == "opencode":
             raise ValueError("Only the Codex worker can dispatch an OpenCode delegation.")
-        run = Run.objects.create(task=task, prompt=command.prompt.strip(), kind=command.kind)
+        run = Run.objects.create(
+            task=task, prompt=command.prompt.strip(), kind=command.kind, requested_by=principal.actor
+        )
         task.status = "active"
         task.version += 1
         task.save(update_fields=("status", "version", "updated_at"))
@@ -157,6 +159,7 @@ def retry_run(command, *, principal):
             kind=run.kind,
             delegated_by=run.delegated_by,
             retried_from=run,
+            requested_by=principal.actor,
         )
         task.status = "active"
         task.version += 1
