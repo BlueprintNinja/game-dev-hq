@@ -16,6 +16,7 @@ lazy import django
 lazy from hq_sdk.capabilities import cli_principal
 
 from .delegation import CodexResult, dispatch, opencode_command, opencode_environment, read_result
+from .quota import quota_reason
 from .readiness import wait_until_ready
 from .supervisor import ProcessFailure, WorkerLock, run_process
 from .worker_config import load_policy
@@ -71,39 +72,6 @@ def sandbox_command(policy, worktree, argv):
     ]
 
 
-def message_in(line):
-    """The message an agent event carries, if it carries one."""
-    try:
-        event = json.loads(line)
-    except ValueError:
-        return line.strip()
-    if not isinstance(event, dict):
-        return line.strip()
-    message = event.get("message")
-    if not isinstance(message, str):
-        error = event.get("error")
-        message = error.get("message") if isinstance(error, dict) else None
-    if isinstance(message, str):
-        return message.strip()
-    return line.strip()
-
-
-def quota_reason(policy, output):
-    """The message that says the agent is out of allowance, if it said one.
-
-    Only the phrases the operator's policy names count. Any other failure is a
-    failure, and the run says so.
-    """
-    fallback = policy.quota_fallback
-    if fallback is None or not output:
-        return None
-    for line in output.splitlines():
-        for phrase in fallback.matches:
-            if phrase and phrase in line:
-                return message_in(line)[:2000]
-    return None
-
-
 def run_fallback(policy, project, worktree, prompt, canceled, save, reason, output):
     """Finish the work with the other engine, and say that it did.
 
@@ -152,8 +120,8 @@ def run_agent(run, policy, project, worktree, base, canceled, save):
             progress=lambda text: save(output=text),
         )
     fallback = None
-    if code and run.task.agent == "codex":
-        reason = quota_reason(policy, output)
+    if code and run.task.agent == "codex" and policy.quota_fallback is not None:
+        reason = quota_reason(policy.quota_fallback.matches, output)
         if reason:
             code, output, fallback = run_fallback(
                 policy,
