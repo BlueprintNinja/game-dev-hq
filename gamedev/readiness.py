@@ -14,6 +14,7 @@ def probe(url, timeout=5):
         with _OPENER.open(url, timeout=timeout) as response:
             return response.status, ""
     except urllib.error.HTTPError as error:
+        error.close()
         return error.code, f"HTTP {error.code}"
     except (urllib.error.URLError, OSError) as error:
         return None, str(error)

@@ -7,6 +7,12 @@ from gamedev.readiness import probe, wait_until_ready
 
 class HealthyHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path.startswith("/refused"):
+            self.send_response(403)
+            self.send_header("Content-Length", "6")
+            self.end_headers()
+            self.wfile.write(b"refuse")
+            return
         self.send_response(200)
         self.send_header("Content-Length", "2")
         self.end_headers()
@@ -38,6 +44,12 @@ class ReadinessTests(unittest.TestCase):
         status, reason = probe("http://127.0.0.1:1/health/live/", timeout=1)
         self.assertIsNone(status)
         self.assertTrue(reason)
+
+    def test_a_probe_reports_a_refusal(self):
+        refused = self.url.replace("/health/live/", "/refused")
+        status, reason = probe(refused, timeout=5)
+        self.assertEqual(status, 403)
+        self.assertEqual(reason, "HTTP 403")
 
 
 if __name__ == "__main__":

@@ -1,8 +1,13 @@
+import json
+import runpy
 import sqlite3
+import sys
 import tempfile
 import unittest
+import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest import mock
 
 from gamedev import backup as backup_module
 
@@ -60,6 +65,48 @@ class BackupTests(unittest.TestCase):
         empty.mkdir()
         with self.assertRaises(ValueError):
             backup_module.backup(empty, self.backups)
+
+    def test_the_command_writes_a_copy_and_says_where(self):
+        argv = [
+            "gamedev.backup",
+            "--data-directory",
+            str(self.data),
+            "--backup-directory",
+            str(self.backups),
+            "--keep",
+            "3",
+        ]
+        with mock.patch.object(sys, "argv", argv), mock.patch("sys.stdout") as printed:
+            backup_module.main()
+        written = json.loads(printed.write.call_args_list[0].args[0])
+        self.assertTrue(Path(written["backup"]).is_file())
+        self.assertEqual(written["pruned"], [])
+
+    def test_the_command_refuses_a_workspace_without_a_database(self):
+        empty = self.root / "empty"
+        empty.mkdir()
+        argv = ["gamedev.backup", "--data-directory", str(empty), "--backup-directory", str(self.backups)]
+        with (
+            mock.patch.object(sys, "argv", argv),
+            mock.patch("sys.stderr") as errors,
+            self.assertRaises(SystemExit) as raised,
+        ):
+            backup_module.main()
+        self.assertEqual(raised.exception.code, 1)
+        self.assertIn("No workspace database", "".join(call.args[0] for call in errors.write.call_args_list))
+
+    def test_the_module_runs_as_a_command(self):
+        argv = [
+            "gamedev.backup",
+            "--data-directory",
+            str(self.data),
+            "--backup-directory",
+            str(self.backups),
+        ]
+        with mock.patch.object(sys, "argv", argv), mock.patch("sys.stdout"), warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            runpy.run_module("gamedev.backup", run_name="__main__")
+        self.assertEqual(len(backup_module.backups(self.backups)), 1)
 
 
 if __name__ == "__main__":
