@@ -19,6 +19,7 @@ from . import apply_runner
 from .delegation import CodexResult, dispatch, opencode_command, opencode_environment, read_result
 from .evidence import digest, passes
 from .gitcmd import git
+from .profile import publish_profiles
 from .quota import quota_reason
 from .readiness import wait_until_ready
 from .supervisor import ProcessFailure, WorkerLock, run_process
@@ -328,6 +329,8 @@ def main():
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tools.windows_hq.settings")
 
     django.setup()
+
+    publish_profiles(policy)
 
     principal = cli_principal()
     try:

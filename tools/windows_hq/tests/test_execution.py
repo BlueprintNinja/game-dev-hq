@@ -380,6 +380,48 @@ class ExecutionTests(WorkspaceTests):
         )
         self.assertFalse(result["ok"])
 
+    def test_worker_publishes_project_profiles_from_policy(self):
+        from gamedev.hq_plugin.models import ProjectProfile
+        from gamedev.profile import publish_profiles
+
+        policy = WorkerPolicy(
+            codex=Path(sys.executable),
+            artifacts=Path(tempfile.gettempdir()),
+            projects={
+                "test-island": {
+                    "repository": tempfile.gettempdir(),
+                    "checks": [[sys.executable, "--version"]],
+                    "coding_enabled": True,
+                    "uefn_project": Path(tempfile.gettempdir()) / "Example.uefnproject",
+                    "apply_destination": tempfile.gettempdir(),
+                    "apply_scope": ["Content/**/*.verse"],
+                },
+                "editor-only": {
+                    "repository": tempfile.gettempdir(),
+                    "checks": [[sys.executable, "--version"]],
+                    "coding_enabled": False,
+                    "uefn_project": Path(tempfile.gettempdir()) / "Other.uefnproject",
+                },
+                "nothing": {
+                    "repository": tempfile.gettempdir(),
+                    "checks": [[sys.executable, "--version"]],
+                    "coding_enabled": False,
+                },
+            },
+        )
+        publish_profiles(policy)
+
+        profiles = {p.project_slug: p for p in ProjectProfile.objects.all()}
+        self.assertEqual(set(profiles), {"test-island", "editor-only", "nothing"})
+        self.assertTrue(profiles["test-island"].coding_enabled)
+        self.assertTrue(profiles["test-island"].uefn_configured)
+        self.assertEqual(profiles["test-island"].apply_scope, ["Content/**/*.verse"])
+        self.assertFalse(profiles["editor-only"].coding_enabled)
+        self.assertTrue(profiles["editor-only"].uefn_configured)
+        self.assertFalse(profiles["nothing"].coding_enabled)
+        self.assertFalse(profiles["nothing"].uefn_configured)
+        self.assertEqual(profiles["nothing"].apply_scope, [])
+
 
 class SupervisorTests(SimpleTestCase):
     def test_editor_refuses_wrong_project_before_requesting_a_build(self):

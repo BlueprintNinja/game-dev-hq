@@ -4,6 +4,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST
 
+from gamedev.profile import profiles
 from hq_sdk.capabilities import execute_capability, web_principal
 from hq_sdk.pages import page_context
 from hq_sdk.resources import list_resource
@@ -41,6 +42,7 @@ def index(request):
         form.add_error(None, result.get("error", {}).get("message", "Task could not be saved."))
     tasks = list(Task.objects.prefetch_related("runs").all())
     names = {p["slug"]: p["name"] for p in projects}
+    profiles_by_slug = profiles()
     rows = []
     for task in tasks:
         move = MoveForm(
@@ -48,7 +50,31 @@ def index(request):
             auto_id=f"id_task_{task.pk}_%s",
         )
         move.fields["status"].choices = [(value, value.title()) for value in TRANSITIONS[task.status]]
-        rows.append({"task": task, "project": names.get(task.project_slug, task.project_slug), "move": move})
+        profile = profiles_by_slug.get(task.project_slug)
+        worker_label = "no worker actions available"
+        has_worker_actions = False
+        if profile and (profile.coding_enabled or profile.uefn_configured):
+            has_worker_actions = True
+            parts = []
+            if profile.coding_enabled:
+                parts.append("coding")
+            if profile.uefn_configured:
+                parts.append("editor")
+            if profile.apply_scope:
+                parts.append(f"apply: {', '.join(profile.apply_scope)}")
+            worker_label = " · ".join(parts)
+        rows.append(
+            {
+                "task": task,
+                "project": names.get(task.project_slug, task.project_slug),
+                "move": move,
+                "coding_enabled": profile.coding_enabled if profile else False,
+                "uefn_configured": profile.uefn_configured if profile else False,
+                "apply_scope": profile.apply_scope if profile else [],
+                "worker_label": worker_label,
+                "has_worker_actions": has_worker_actions,
+            }
+        )
     return render(
         request,
         "gamedev_hq/board.html",

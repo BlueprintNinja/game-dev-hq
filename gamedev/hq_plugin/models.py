@@ -102,3 +102,26 @@ class Run(models.Model):
     @override
     def __str__(self):
         return f"Run #{self.pk}: {self.status}"
+
+
+class ProjectProfile(models.Model):
+    """What the local worker can do for a project, published at startup.
+
+    The web process reads this to show each project's actual capabilities
+    instead of guessing: whether coding is enabled, whether a UEFN project
+    is configured, and which destination paths an apply may touch.
+    """
+
+    project_slug = models.SlugField(max_length=180, primary_key=True)
+    coding_enabled = models.BooleanField(default=False)
+    uefn_configured = models.BooleanField(default=False)
+    apply_scope = models.JSONField(default=list)
+    worker_seen_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "gamedev_hq"
+        ordering = ("project_slug",)
+
+    @override
+    def __str__(self):
+        return self.project_slug
