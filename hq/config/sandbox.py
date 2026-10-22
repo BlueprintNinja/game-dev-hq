@@ -34,6 +34,12 @@ def _alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True  # it exists, under another user
+    except OSError as exc:
+        # Windows reports a PID that no longer exists as ERROR_INVALID_PARAMETER,
+        # rather than Python's ProcessLookupError. Other failures stay visible.
+        if getattr(exc, "winerror", None) == 87:
+            return False
+        raise
     return True
 
 
