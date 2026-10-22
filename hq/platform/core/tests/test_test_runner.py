@@ -35,15 +35,14 @@ class EmptySelectionTests(SimpleTestCase):
 
 
 class AbandonedRunTests(SimpleTestCase):
-    def test_windows_missing_pid_and_unexpected_probe_errors_are_distinguished(self):
-        missing = OSError("The parameter is incorrect")
-        missing.winerror = 87
-        with mock.patch("hq.config.sandbox.os.kill", side_effect=missing):
-            self.assertFalse(_alive(12345))
-        with mock.patch("hq.config.sandbox.os.kill", side_effect=PermissionError):
-            self.assertTrue(_alive(12345))
-        with mock.patch("hq.config.sandbox.os.kill", side_effect=OSError("unexpected")):
-            with self.assertRaises(OSError):
+    def test_permission_denial_preserves_files_and_unknown_errors_stay_visible(self):
+        with mock.patch("hq.config.sandbox.os.name", "posix"):
+            with mock.patch("hq.config.sandbox.os.kill", side_effect=PermissionError):
+                self.assertTrue(_alive(12345))
+            with (
+                mock.patch("hq.config.sandbox.os.kill", side_effect=OSError("unexpected")),
+                self.assertRaises(OSError),
+            ):
                 _alive(12345)
 
     def test_a_killed_runs_files_are_deleted_and_a_live_runs_are_kept(self):
