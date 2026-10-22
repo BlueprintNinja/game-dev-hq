@@ -16,6 +16,7 @@ lazy import django
 lazy from hq_sdk.capabilities import cli_principal
 
 from .delegation import CodexResult, dispatch, opencode_command, opencode_environment, read_result
+from .evidence import digest, passes
 from .quota import quota_reason
 from .readiness import wait_until_ready
 from .supervisor import ProcessFailure, WorkerLock, run_process
@@ -76,7 +77,8 @@ def run_fallback(policy, project, worktree, prompt, canceled, save, reason, outp
     """Finish the work with the other engine, and say that it did.
 
     The fallback runs in the same worktree, under the same sandbox and the
-    same checks, so the evidence the operator reviews is the same either way.
+    same checks, so the evidence the operator reviews is the same either
+    way.
     """
     agent = policy.quota_fallback.agent
     with tempfile.TemporaryDirectory(prefix="hq-fallback-") as runtime:
@@ -92,7 +94,7 @@ def run_fallback(policy, project, worktree, prompt, canceled, save, reason, outp
     marker = (
         f"\n=== fallback to {agent}: the requested agent reported no allowance ===\n{reason}\n=== {agent} output ===\n"
     )
-    return code, f"{output}{marker}{result}", agent
+    return code, f"{output}{marker}{result}", agent, reason
 
 
 def run_agent(run, policy, project, worktree, base, canceled, save):
@@ -120,10 +122,11 @@ def run_agent(run, policy, project, worktree, base, canceled, save):
             progress=lambda text: save(output=text),
         )
     fallback = None
+    reason = ""
     if code and run.task.agent == "codex" and policy.quota_fallback is not None:
         reason = quota_reason(policy.quota_fallback.matches, output)
         if reason:
-            code, output, fallback = run_fallback(
+            code, output, fallback, reason = run_fallback(
                 policy,
                 project,
                 worktree,
@@ -134,7 +137,7 @@ def run_agent(run, policy, project, worktree, base, canceled, save):
                 reason,
                 output,
             )
-    return code, output, fallback
+    return code, output, fallback, reason
 
 
 def check_environment(worktree):
@@ -152,19 +155,31 @@ def check_environment(worktree):
     return environment
 
 
+def evidence_digest(checks):
+    """A fingerprint of the captured check results, so an approval can name them."""
+    return digest(checks)
+
+
 def collect_evidence(policy, project, worktree, canceled):
     """The checks the policy names, and the diff of what the run changed."""
     environment = check_environment(worktree)
     checks = []
-    for command in project.checks:
+    for check in project.checks:
         status, log = run_process(
-            sandbox_command(policy, worktree, command),
+            sandbox_command(policy, worktree, check.command),
             cwd=worktree,
             timeout=project.timeout_seconds,
             canceled=canceled,
             env=environment,
         )
-        checks.append({"command": command, "exit_code": status, "output": log[:64000]})
+        checks.append(
+            {
+                "kind": check.kind,
+                "command": check.command,
+                "exit_code": status,
+                "output": log[:64000],
+            }
+        )
     # Include new files in evidence without creating a commit. Retain worktree for review.
     git(worktree, "add", "--intent-to-add", "--all")
     diff = git(worktree, "diff", "--no-ext-diff", "--binary", "HEAD")
@@ -200,9 +215,10 @@ def execute(run, policy, principal):
         "Work only on this task. Do not commit, push, merge, publish, access credentials, or change other repositories. Return a summary and verification evidence.\n\n"
         + run.prompt
     )
-    code, output, fallback = run_agent(run, policy, project, worktree, base, canceled, save)
+    code, output, fallback, reason = run_agent(run, policy, project, worktree, base, canceled, save)
+    engine = fallback or run.task.agent
     if code:
-        save(output=output)
+        save(output=output, engine=engine, fallback_reason=reason)
         raise ProcessFailure(f"Agent exited with status {code}.")
     checks, diff = collect_evidence(policy, project, worktree, canceled)
     if run.task.agent == "codex" and fallback is None:
@@ -210,10 +226,13 @@ def execute(run, policy, principal):
     save(
         status="review",
         output=output,
+        engine=engine,
+        fallback_reason=reason,
         diff=diff,
         diff_sha256=hashlib.sha256(diff.encode()).hexdigest(),
         verification=checks,
-        passed=all(check["exit_code"] == 0 for check in checks),
+        evidence_sha256=evidence_digest(checks),
+        passed=passes(project, checks),
     )
 
 
@@ -229,13 +248,16 @@ def execute_editor(run, project, principal):
     )
     evidence = json.loads(output) if code == 0 else {}
     passed = code == 0 and (run.kind == "uefn_inspect" or evidence.get("passed") is True)
+    verification = [{"kind": run.kind, "command": [run.kind], "exit_code": 0 if passed else 1, "output": output}]
     update(
         run.pk,
         run.worker_token,
         principal,
         status="review",
         output=output,
-        verification=[{"command": [run.kind], "exit_code": 0 if passed else 1, "output": output}],
+        engine="editor",
+        verification=verification,
+        evidence_sha256=evidence_digest(verification),
         passed=passed,
     )
 

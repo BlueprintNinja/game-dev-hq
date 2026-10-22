@@ -52,6 +52,10 @@ class Run(models.Model):
     diff = models.TextField(blank=True)
     diff_sha256 = models.CharField(max_length=64, blank=True)
     verification = models.JSONField(default=list)
+    evidence_sha256 = models.CharField(max_length=64, blank=True)
+    # The engine that actually did the work, and why another one did it.
+    engine = models.CharField(max_length=20, blank=True)
+    fallback_reason = models.TextField(blank=True)
     passed = models.BooleanField(default=False)
     decision_note = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
