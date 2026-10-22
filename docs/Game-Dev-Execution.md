@@ -43,11 +43,35 @@ No API key is stored by HQ. For one queued job, the equivalent Python entry
 point is `python -m gamedev.worker --policy <path> --once` with the workspace
 environment configured. Only one worker may hold the workspace lock.
 
+The worker waits for the workspace before it opens the database. The workspace
+migrates that database on every start, so a worker that started beside it would
+read a half-migrated file. `Start-GameDevWorker.ps1` passes
+`--workspace-url http://127.0.0.1:<port>/health/live/`, and the worker waits for
+that endpoint to answer before it claims anything; it gives up with what the
+endpoint answered instead, after `--workspace-timeout` seconds.
+
 For startup at logon, use `deploy/windows/Install-GameDevWorker.ps1` with the
 same policy/data/log/runtime arguments. It registers `GameDevHQ-Worker`, using a
 limited interactive principal, hidden PowerShell, explicit absolute paths,
-one instance, and restart on failure. Start it after the workspace migration
-has completed. Do not create a public listener or a Tailscale Funnel route.
+one instance, and restart on failure. The worker it starts waits for the
+workspace, so the two may start at the same logon. Do not create a public
+listener or a Tailscale Funnel route.
+
+## Backups
+
+The workspace database holds the audit history and, once work has run, the
+captured agent logs, diffs and check results. It is operator-private data, so
+it is backed up by a task of its own.
+
+`deploy/windows/Backup-GameDevWorkspace.ps1` folds the write-ahead log into the
+database, copies that one file into `%LOCALAPPDATA%\GameDevHQ\backups`, and
+prunes the copies older than the newest fourteen. Run it by hand for a copy
+now, or `deploy/windows/Install-GameDevBackup.ps1` to register
+`GameDevHQ-Backup`, which runs it daily and keeps the same fourteen.
+
+The copy is made after the checkpoint, so one file holds everything; a copy of
+the raw database file alone would miss whatever still sat in the log. The
+backups live outside the repository and are never uploaded anywhere.
 
 ## Execution and review
 
@@ -91,7 +115,8 @@ and integrate them explicitly. Recursive OpenCode delegation is disabled.
   restart marks interrupted jobs failed and never automatically replays them.
 - Captured logs, diffs and checks are operator-private data in the persistent
   workspace database. They are escaped in HTML and covered by the existing
-  Tailscale identity boundary and CSRF protection. Take database backups.
+  Tailscale identity boundary and CSRF protection. The daily backup keeps
+  copies of that database outside the repository.
 - UEFN exposes only identity inspection and native `BuildAll`. It checks the
   loaded plugin directory and current world against the configured project
   before requesting a build. No arbitrary prompt becomes editor code or a
