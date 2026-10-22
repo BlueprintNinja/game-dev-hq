@@ -71,6 +71,59 @@ def sandbox_command(policy, worktree, argv):
     ]
 
 
+def quota_reason(policy, output):
+    """The message that says the agent is out of allowance, if it said one.
+
+    Only the phrases the operator's policy names count. Any other failure is a
+    failure, and the run says so.
+    """
+    fallback = policy.quota_fallback
+    if fallback is None or not output:
+        return None
+    for phrase in fallback.matches:
+        if not phrase or phrase not in output:
+            continue
+        for line in output.splitlines():
+            if phrase not in line:
+                continue
+            try:
+                event = json.loads(line)
+            except ValueError:
+                return line.strip()[:2000]
+            if isinstance(event, dict):
+                message = event.get("message")
+                if not isinstance(message, str):
+                    error = event.get("error")
+                    message = error.get("message") if isinstance(error, dict) else None
+                if isinstance(message, str):
+                    return message[:2000]
+            return line.strip()[:2000]
+    return None
+
+
+def run_fallback(policy, project, worktree, prompt, canceled, save, reason, output):
+    """Finish the work with the other engine, and say that it did.
+
+    The fallback runs in the same worktree, under the same sandbox and the
+    same checks, so the evidence the operator reviews is the same either way.
+    """
+    agent = policy.quota_fallback.agent
+    with tempfile.TemporaryDirectory(prefix="hq-fallback-") as runtime:
+        code, result = run_process(
+            opencode_command(policy, worktree),
+            cwd=worktree,
+            timeout=project.timeout_seconds,
+            canceled=canceled,
+            input_text=prompt,
+            env=opencode_environment(policy, runtime),
+            progress=lambda text: save(output=text),
+        )
+    marker = (
+        f"\n=== fallback to {agent}: the requested agent reported no allowance ===\n{reason}\n=== {agent} output ===\n"
+    )
+    return code, f"{output}{marker}{result}", agent
+
+
 def execute(run, policy, principal):
 
     project = policy.projects.get(run.task.project_slug)
@@ -95,10 +148,11 @@ def execute(run, policy, principal):
     def canceled():
         return Run.objects.filter(pk=run.pk, cancel_requested=True).exists()
 
-    prompt = (
+    base = (
         "Work only on this task. Do not commit, push, merge, publish, access credentials, or change other repositories. Return a summary and verification evidence.\n\n"
         + run.prompt
     )
+    prompt = base
     schema = policy.artifacts / f"run-{run.pk}-schema.json"
     schema.write_text(json.dumps(CodexResult.model_json_schema()), encoding="utf-8")
     command = [*codex_command(policy, worktree)[:-1], "--output-schema", str(schema), "-"]
@@ -120,6 +174,21 @@ def execute(run, policy, principal):
             env=environment,
             progress=lambda text: save(output=text),
         )
+    fallback = None
+    if code and run.task.agent == "codex":
+        reason = quota_reason(policy, output)
+        if reason:
+            code, output, fallback = run_fallback(
+                policy,
+                project,
+                worktree,
+                base
+                + "\nThe agent that was asked for this work reported no allowance. Finish the same task with the engine you are.",
+                canceled,
+                save,
+                reason,
+                output,
+            )
     if code:
         save(output=output)
         raise ProcessFailure(f"Agent exited with status {code}.")
@@ -134,7 +203,7 @@ def execute(run, policy, principal):
     diff = git(worktree, "diff", "--no-ext-diff", "--binary", "HEAD")
     if len(diff.encode()) > 1024 * 1024:
         raise ProcessFailure("Diff exceeds the review limit. Inspect the retained worktree locally.")
-    if run.task.agent == "codex":
+    if run.task.agent == "codex" and fallback is None:
         dispatch(run, read_result(output), principal)
     save(
         status="review",
