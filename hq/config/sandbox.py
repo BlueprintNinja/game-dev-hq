@@ -11,10 +11,12 @@ cleanup, can be told from those of a run still going.
 
 import atexit
 import contextlib
+import ctypes
 import os
 import re
 import shutil
 import tempfile
+from ctypes import wintypes
 from pathlib import Path
 
 PREFIX = "severino-test-"
@@ -27,7 +29,32 @@ def database_path() -> str:
     return str(Path(tempfile.gettempdir()) / f"{PREFIX}{os.getpid()}.sqlite3")
 
 
+def _windows_alive(pid: int) -> bool:
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = kernel.OpenProcess(0x1000, False, pid)
+    if not handle:
+        error = ctypes.get_last_error()
+        if error == 87:  # ERROR_INVALID_PARAMETER: the PID no longer exists
+            return False
+        if error == 5:  # ERROR_ACCESS_DENIED: preserve another user's files
+            return True
+        raise ctypes.WinError(error)
+    try:
+        code = wintypes.DWORD()
+        if not kernel.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True  # no proof that it exited: preserve its files
+        return code.value == 259  # STILL_ACTIVE
+    finally:
+        kernel.CloseHandle(handle)
+
+
 def _alive(pid: int) -> bool:
+    if os.name == "nt":
+        return _windows_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
