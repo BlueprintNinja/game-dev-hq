@@ -8,7 +8,11 @@ Only the local worker publishes profiles; nothing here is ever read from
 a web request.
 """
 
+from django.db import transaction
 from django.utils import timezone
+
+from hq_sdk.audit import audit_operation, record_operation
+from hq_sdk.capabilities import cli_principal
 
 from .hq_plugin.models import ProjectProfile
 
@@ -22,16 +26,19 @@ def publish_profiles(policy):
     projects = getattr(policy, "projects", None)
     if not isinstance(projects, dict):
         return
-    for slug, project in projects.items():
-        ProjectProfile.objects.update_or_create(
-            project_slug=slug,
-            defaults={
-                "coding_enabled": project.coding_enabled,
-                "uefn_configured": project.uefn_project is not None,
-                "apply_scope": list(project.apply_scope),
-                "worker_seen_at": timezone.now(),
-            },
-        )
+    principal = cli_principal()
+    with transaction.atomic(), audit_operation(operation="gamedev.worker.heartbeat", principal=principal):
+        for slug, project in projects.items():
+            ProjectProfile.objects.update_or_create(
+                project_slug=slug,
+                defaults={
+                    "coding_enabled": project.coding_enabled,
+                    "uefn_configured": project.uefn_project is not None,
+                    "apply_scope": list(project.apply_scope),
+                    "worker_seen_at": timezone.now(),
+                },
+            )
+        record_operation("gamedev.worker.heartbeat", "Published worker capabilities and heartbeat", required=True)
 
 
 def profiles():

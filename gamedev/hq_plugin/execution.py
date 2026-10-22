@@ -10,6 +10,7 @@ from hq_sdk.audit import audit_operation, record_operation
 from hq_sdk.capabilities import CapabilitySpec, StrictCommand
 
 from .models import Run, Task
+from .observations import decision_span
 
 # A run that finished, badly. Work on it may be asked for again.
 FINISHED = ("failed", "canceled", "rejected")
@@ -115,6 +116,7 @@ def decide_run(command, *, principal):
         run.decision_note = command.note.strip()
         run.version += 1
         run.save()
+        decision_span(run, command.decision)
         if command.decision in ("accept", "reject"):
             settle_task(run, command)
         record_operation(

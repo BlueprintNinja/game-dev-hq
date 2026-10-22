@@ -1,5 +1,6 @@
 {% extends "page.html" %}
 {% block page %}
+<p><a href="{% url 'gamedev:trace' run.pk %}">Execution trace</a> · <a href="{% url 'gamedev:metrics' %}">Harness metrics</a></p>
 <p><a href="{% url 'gamedev:index' %}">Back to tasks</a></p>
 {% partialdef progress inline %}
 <section class="card" data-fragment="{% url 'gamedev:run' run.pk %}?fragment=1"{% if run.status == 'running' or run.status == 'queued' %} data-fragment-poll="3"{% endif %}>

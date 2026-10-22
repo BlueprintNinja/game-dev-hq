@@ -1,0 +1,37 @@
+{% extends "page.html" %}
+{% block page %}
+<p><a href="{% url 'gamedev:index' %}">Tasks</a>{% if phoenix_url %} · <a href="{{ phoenix_url }}">Open Phoenix traces</a>{% endif %}</p>
+<form method="get">
+  <p><label for="metrics_project">Project slug (leave empty for all)</label><input id="metrics_project" name="project" value="{{ project }}" maxlength="180"></p>
+  <p><label for="metrics_hours">Time window</label><select id="metrics_hours" name="hours"><option value="1"{% if hours == '1' %} selected{% endif %}>Last hour</option><option value="24"{% if hours == '24' %} selected{% endif %}>Last day</option><option value="168"{% if hours == '168' %} selected{% endif %}>Last week</option><option value="720"{% if hours == '720' %} selected{% endif %}>Last 30 days</option></select></p>
+  <button type="submit">Show readings</button>
+</form>
+{% partialdef readings inline %}
+<div id="harness-readings" data-fragment="{% url 'gamedev:metrics' %}?fragment=1&amp;hours={{ hours }}&amp;project={{ project|urlencode }}" data-fragment-poll="10">
+<section class="card">
+  <h2>Pipeline</h2>
+  <p>{{ metrics.total }} runs · {{ metrics.delegations }} delegations · {{ metrics.retries }} retries · {{ metrics.fallbacks }} fallbacks · {{ metrics.applied }} applies · {{ metrics.rollbacks }} rollbacks</p>
+  <dl>{% for name, value in metrics.counts.items %}<dt>{{ name|title }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>
+  <p>Detailed readings cover up to the latest 1,000 runs in this window. Missing measurements are unavailable, not zero.</p>
+  <dl><dt>Median execution (seconds)</dt><dd>{{ metrics.summary.duration_p50_seconds|default_if_none:'Unavailable' }}</dd><dt>95th percentile execution (seconds)</dt><dd>{{ metrics.summary.duration_p95_seconds|default_if_none:'Unavailable' }}</dd><dt>95th percentile queue wait (seconds)</dt><dd>{{ metrics.summary.queue_p95_seconds|default_if_none:'Unavailable' }}</dd><dt>Median approval wait (seconds)</dt><dd>{{ metrics.summary.approval_p50_seconds|default_if_none:'Unavailable' }}</dd></dl>
+</section>
+<section class="card"><h2>Checks and agent usage</h2>
+  <dl>{% for name, value in metrics.summary.engines.items %}<dt>{{ name }}</dt><dd>{{ value }} runs</dd>{% endfor %}{% for name, value in metrics.summary.checks.items %}<dt>{{ name }}</dt><dd>{{ value }}</dd>{% empty %}<dt>Checks</dt><dd>No readings yet</dd>{% endfor %}
+  {% for name, value in metrics.summary.reported_usage.items %}<dt>{{ name }}</dt><dd>{{ value }}</dd>{% empty %}<dt>Tokens and cost</dt><dd>Unavailable until reported by an agent</dd>{% endfor %}</dl>
+  <p>Usage and cost totals include only values the agent reported. USD costs are provider reports, not billing reconciliation. A clean Verse build verifies compilation; gameplay remains unverified.</p>
+  <details><summary>Usage coverage by metric</summary><dl>{% for name, value in metrics.summary.usage_run_coverage.items %}<dt>{{ name }}</dt><dd>{{ value }} runs reported this metric</dd>{% endfor %}</dl></details>
+</section>
+<section class="card"><h2>Infrastructure</h2>
+  {% if metrics.infrastructure_stale %}<p>Readings are stale or have not arrived. Check the telemetry service.</p>{% endif %}
+  <p>Observed: {{ metrics.infrastructure_as_of|default_if_none:'Unavailable' }}</p>
+  <dl><dt>CPU usage (%)</dt><dd>{{ metrics.infrastructure.cpu_percent|default_if_none:'Unavailable' }}</dd><dt>Memory usage (%)</dt><dd>{{ metrics.infrastructure.memory_percent|default_if_none:'Unavailable' }}</dd><dt>Available memory (bytes)</dt><dd>{{ metrics.infrastructure.memory_available_bytes|default_if_none:'Unavailable' }}</dd><dt>Free disk (bytes)</dt><dd>{{ metrics.infrastructure.disk_free_bytes|default_if_none:'Unavailable' }}</dd><dt>Network sent / received (bytes since boot)</dt><dd>{{ metrics.infrastructure.network_sent_bytes|default_if_none:'Unavailable' }} / {{ metrics.infrastructure.network_received_bytes|default_if_none:'Unavailable' }}</dd><dt>Uptime (seconds)</dt><dd>{{ metrics.infrastructure.uptime_seconds|default_if_none:'Unavailable' }}</dd><dt>GPU utilization (%)</dt><dd>{{ metrics.infrastructure.gpu_utilization_percent|default_if_none:'Unavailable' }}</dd><dt>Database size (bytes)</dt><dd>{{ metrics.infrastructure.database_bytes|default_if_none:'Unavailable' }}</dd></dl>
+  <h3>Local service listeners</h3><p>A listening port is connectivity evidence, not a full service health check.</p>
+  <dl>{% for name, service in metrics.infrastructure.services.items %}<dt>{{ name }}</dt><dd>Port {{ service.port }} · {% if service.listening %}Listening{% else %}Unavailable{% endif %}</dd>{% endfor %}</dl>
+  <details><summary>All collected infrastructure readings</summary><pre>{{ all_readings }}</pre></details>
+  <h3>Workers</h3><dl>{% for profile in metrics.profiles %}<dt>{{ profile.project_slug }}</dt><dd>{% if profile.stale %}Heartbeat stale{% else %}Heartbeat current{% endif %} · coding {{ profile.coding_enabled|yesno:'enabled,disabled' }} · editor {{ profile.uefn_configured|yesno:'configured,not configured' }}</dd>{% endfor %}</dl>
+</section>
+<section class="card"><h2>Trace delivery</h2><p>{{ metrics.traces.recorded }} recorded spans · {{ metrics.traces.pending_export }} awaiting export</p><p>Last export error: {{ metrics.infrastructure.phoenix_export.error|default:'None reported' }}. Export failures retain local spans for retry.</p><p>Trace exports contain timing, usage, identifiers and outcomes. Prompts, command text, file contents, raw logs and secrets are excluded.</p></section>
+<section class="card"><h2>Recent work</h2><ul>{% for run in recent %}<li><a href="{% url 'gamedev:run' run.pk %}">#{{ run.pk }} · {{ run.task.title }} · {{ run.status|title }}</a> · {{ run.engine|default:'Engine not reported' }}</li>{% empty %}<li>No runs yet.</li>{% endfor %}</ul></section>
+</div>
+{% endpartialdef %}
+{% endblock %}

@@ -23,6 +23,7 @@ from .profile import publish_profiles
 from .quota import quota_reason
 from .readiness import wait_until_ready
 from .supervisor import ProcessFailure, WorkerLock, run_process
+from .tracing import observed_process, stage
 from .worker_config import load_policy
 lazy from .hq_plugin.models import Run
 lazy from .hq_plugin.worker_state import claim, note_rollback, recover, update
@@ -75,7 +76,10 @@ def run_fallback(policy, project, worktree, prompt, canceled, save, reason, outp
     """
     agent = policy.quota_fallback.agent
     with tempfile.TemporaryDirectory(prefix="hq-fallback-") as runtime:
-        code, result = run_process(
+        code, result = observed_process(
+            None,
+            "fallback",
+            run_process,
             opencode_command(policy, worktree),
             cwd=worktree,
             timeout=project.timeout_seconds,
@@ -105,7 +109,10 @@ def run_agent(run, policy, project, worktree, base, canceled, save):
         )
     with tempfile.TemporaryDirectory(prefix="hq-agent-") as runtime:
         environment = opencode_environment(policy, runtime) if run.task.agent == "opencode" else None
-        code, output = run_process(
+        code, output = observed_process(
+            run.pk,
+            "agent",
+            run_process,
             command,
             cwd=worktree,
             timeout=project.timeout_seconds,
@@ -158,7 +165,10 @@ def collect_evidence(policy, project, worktree, canceled):
     environment = check_environment(worktree)
     checks = []
     for check in project.checks:
-        status, log = run_process(
+        status, log = observed_process(
+            None,
+            "verification:" + check.kind,
+            run_process,
             sandbox_command(policy, worktree, check.command),
             cwd=worktree,
             timeout=project.timeout_seconds,
@@ -273,7 +283,10 @@ def execute_rollback(run, policy, project, principal):
 def execute_editor(run, project, principal):
     if project.uefn_project is None:
         raise ProcessFailure("Editor access is not configured for this project.")
-    code, output = run_process(
+    code, output = observed_process(
+        run.pk,
+        run.kind,
+        run_process,
         [sys.executable, "-m", "gamedev.uefn", "--project", str(project.uefn_project), "--action", run.kind],
         cwd=Path(__file__).resolve().parents[1],
         timeout=120,
@@ -301,7 +314,26 @@ def process_next(policy, principal):
     if run is None:
         return False
     try:
-        execute(run, policy, principal)
+        with stage(
+            run.pk,
+            "hq.run",
+            attributes={
+                "hq.project": run.task.project_slug,
+                "hq.kind": run.kind,
+                "hq.requested_agent": run.task.agent,
+                "hq.queue.seconds": max(0, (run.started_at - run.created_at).total_seconds()) if run.started_at else 0,
+            },
+        ) as metrics:
+            execute(run, policy, principal)
+            current = Run.objects.get(pk=run.pk)
+            metrics.update(
+                {
+                    "hq.engine": current.engine,
+                    "hq.status": current.status,
+                    "hq.verification.passed": current.passed,
+                    "hq.fallback": bool(current.fallback_reason),
+                }
+            )
     except (OSError, ValueError, subprocess.SubprocessError, ProcessFailure) as exc:
         current = Run.objects.get(pk=run.pk)
         update(
@@ -330,8 +362,6 @@ def main():
 
     django.setup()
 
-    publish_profiles(policy)
-
     principal = cli_principal()
     try:
         # The workspace migrates the database on every start; a worker that
@@ -341,11 +371,16 @@ def main():
     except TimeoutError as error:
         parser.exit(1, f"Error: {error}\n")
     with WorkerLock(Path(os.environ["GAMEDEV_WORKSPACE_DATA"]) / "worker.lock"):
+        publish_profiles(policy)
         recover(principal)
+        heartbeat = time.monotonic()
         while True:
             worked = process_next(policy, principal)
             if args.once:
                 break
+            if time.monotonic() - heartbeat >= 30:
+                publish_profiles(policy)
+                heartbeat = time.monotonic()
             if not worked:
                 time.sleep(3)
 

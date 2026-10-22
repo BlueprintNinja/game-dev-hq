@@ -1,0 +1,10 @@
+{% extends "page.html" %}
+{% block page %}
+<p><a href="{% url 'gamedev:run' run.pk %}">Run #{{ run.pk }}</a> · <a href="{% url 'gamedev:metrics' %}">Harness metrics</a>{% if phoenix_url %} · <a href="{{ phoenix_url }}">Open Phoenix</a>{% endif %}</p>
+<p>Tool timing uses provider timestamps when supplied. Otherwise it records when events reached the supervisor, with up to three seconds of sampling resolution. It is not exact tool execution time.</p>
+{% for row in rows %}
+<section class="card"><h2>{{ row.span.name }}</h2>
+<dl><dt>Trace ID</dt><dd><code>{{ row.span.trace_id }}</code></dd><dt>Span / parent</dt><dd><code>{{ row.span.span_id }}</code> / <code>{{ row.span.parent_id|default:'Root' }}</code></dd><dt>Duration (seconds)</dt><dd>{{ row.duration|default_if_none:'Still running' }}</dd><dt>Outcome</dt><dd>{% if row.span.failed %}Failed{% else %}No failure recorded{% endif %}</dd><dt>Export</dt><dd>{% if row.span.exported_at %}Sent to Phoenix{% else %}Pending{% endif %}</dd>{% for name, value in row.span.attributes.items %}<dt>{{ name }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>
+</section>
+{% empty %}<p>No trace was recorded for this run. Runs created before tracing was enabled keep their original evidence; timings are not reconstructed.</p>{% endfor %}
+{% endblock %}

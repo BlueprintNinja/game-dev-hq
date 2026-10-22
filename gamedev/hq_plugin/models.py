@@ -75,6 +75,9 @@ class Run(models.Model):
     applied_revision = models.CharField(max_length=64, blank=True)
     snapshot = models.TextField(blank=True)
     rolled_back_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    metrics = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -125,3 +128,40 @@ class ProjectProfile(models.Model):
     @override
     def __str__(self):
         return self.project_slug
+
+
+class TraceSpan(models.Model):
+    run = models.ForeignKey(Run, on_delete=models.CASCADE, related_name="spans")
+    trace_id = models.CharField(max_length=32)
+    span_id = models.CharField(max_length=16, unique=True)
+    parent_id = models.CharField(max_length=16, blank=True)
+    name = models.CharField(max_length=120)
+    kind = models.CharField(max_length=20, default="CHAIN")
+    attributes = models.JSONField(default=dict)
+    started_at = models.DateTimeField()
+    finished_at = models.DateTimeField(null=True, blank=True)
+    failed = models.BooleanField(default=False)
+    exported_at = models.DateTimeField(null=True, blank=True)
+    export_attempts = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        app_label = "gamedev_hq"
+        ordering = ("started_at", "id")
+        indexes = [models.Index(fields=("exported_at", "finished_at"), name="gamedev_span_pending")]
+
+    @override
+    def __str__(self):
+        return self.name
+
+
+class InfrastructureSample(models.Model):
+    observed_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    readings = models.JSONField(default=dict)
+
+    class Meta:
+        app_label = "gamedev_hq"
+        ordering = ("-id",)
+
+    @override
+    def __str__(self):
+        return f"Infrastructure reading #{self.pk}"
