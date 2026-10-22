@@ -40,6 +40,10 @@ class Run(models.Model):
     delegated_by = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.PROTECT, related_name="delegated_runs"
     )
+    retried_from = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="retries")
+    # The run whose approved changes this run writes, or whose apply this
+    # run takes back.
+    applies = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="applied_runs")
     prompt = models.TextField()
     kind = models.CharField(max_length=20, default="coding")
     status = models.CharField(max_length=20, default="queued")
@@ -52,8 +56,25 @@ class Run(models.Model):
     diff = models.TextField(blank=True)
     diff_sha256 = models.CharField(max_length=64, blank=True)
     verification = models.JSONField(default=list)
+    evidence_sha256 = models.CharField(max_length=64, blank=True)
+    # The engine that actually did the work, and why another one did it.
+    engine = models.CharField(max_length=20, blank=True)
+    fallback_reason = models.TextField(blank=True)
     passed = models.BooleanField(default=False)
     decision_note = models.TextField(blank=True)
+    # Who asked for this run.
+    requested_by = models.CharField(max_length=150, blank=True)
+    # What an approval was given, and when it was given.
+    approved_diff_sha256 = models.CharField(max_length=64, blank=True)
+    approved_evidence_sha256 = models.CharField(max_length=64, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    # What an apply wrote, where it wrote it, and how it is taken back.
+    applied_files = models.JSONField(default=list)
+    applied_at = models.DateTimeField(null=True, blank=True)
+    applied_by = models.CharField(max_length=150, blank=True)
+    applied_revision = models.CharField(max_length=64, blank=True)
+    snapshot = models.TextField(blank=True)
+    rolled_back_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -68,7 +89,8 @@ class Run(models.Model):
                 name="gamedev_run_status",
             ),
             models.CheckConstraint(
-                condition=models.Q(kind__in=("coding", "uefn_inspect", "uefn_build")), name="gamedev_run_kind"
+                condition=models.Q(kind__in=("coding", "uefn_inspect", "uefn_build", "apply", "rollback")),
+                name="gamedev_run_kind",
             ),
             models.UniqueConstraint(
                 fields=("task",),
@@ -80,3 +102,26 @@ class Run(models.Model):
     @override
     def __str__(self):
         return f"Run #{self.pk}: {self.status}"
+
+
+class ProjectProfile(models.Model):
+    """What the local worker can do for a project, published at startup.
+
+    The web process reads this to show each project's actual capabilities
+    instead of guessing: whether coding is enabled, whether a UEFN project
+    is configured, and which destination paths an apply may touch.
+    """
+
+    project_slug = models.SlugField(max_length=180, primary_key=True)
+    coding_enabled = models.BooleanField(default=False)
+    uefn_configured = models.BooleanField(default=False)
+    apply_scope = models.JSONField(default=list)
+    worker_seen_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "gamedev_hq"
+        ordering = ("project_slug",)
+
+    @override
+    def __str__(self):
+        return self.project_slug

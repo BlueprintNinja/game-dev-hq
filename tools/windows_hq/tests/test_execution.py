@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -13,11 +14,19 @@ from gamedev.delegation import CodexResult, dispatch, opencode_environment
 from gamedev.hq_plugin.models import Run, Task
 from gamedev.hq_plugin.worker_state import claim, recover, update
 from gamedev.supervisor import ProcessFailure, run_process
-from gamedev.worker import process_next
+from gamedev.worker import execute, process_next
 from gamedev.worker_config import WorkerPolicy
 from hq_sdk.capabilities import Principal, execute_capability
 
 from .test_workspace import WorkspaceTests, workspace_only
+
+
+def git(repository, *args):
+    """Git, in a test, without a shell."""
+    completed = subprocess.run(["git", "-C", str(repository), *args], capture_output=True, text=True, check=False)
+    if completed.returncode:
+        raise AssertionError(f"git {args} failed: {completed.stderr}")
+    return completed.stdout
 
 
 @workspace_only
@@ -32,10 +41,23 @@ class ExecutionTests(WorkspaceTests):
         self.assertTrue(result["ok"], result)
         return Run.objects.get(pk=result["id"])
 
-    def decision(self, run, decision, note="Reviewed the exact changes"):
+    def decision(self, run, decision, note="Reviewed the exact changes", diff_sha256=""):
         return execute_capability(
             "gamedev.run.decide",
-            {"run_id": run.pk, "version": run.version, "decision": decision, "note": note},
+            {
+                "run_id": run.pk,
+                "version": run.version,
+                "decision": decision,
+                "note": note,
+                "diff_sha256": diff_sha256,
+            },
+            principal=self.principal,
+        )
+
+    def retry(self, run, note=""):
+        return execute_capability(
+            "gamedev.run.retry",
+            {"run_id": run.pk, "version": run.version, "note": note},
             principal=self.principal,
         )
 
@@ -142,6 +164,263 @@ class ExecutionTests(WorkspaceTests):
         self.assertEqual(owned.status, "canceled")
         self.assertFalse(owned.passed)
         self.assertFalse(self.decision(owned, "accept")["ok"])
+
+    def test_an_approval_is_bound_to_the_captured_changes(self):
+        run = self.queued()
+        owned = claim(self.principal)
+        update(
+            owned.pk,
+            owned.worker_token,
+            self.principal,
+            status="review",
+            passed=True,
+            diff_sha256="a" * 64,
+            evidence_sha256="c" * 64,
+        )
+        run.refresh_from_db()
+        self.assertFalse(self.decision(run, "accept", diff_sha256="b" * 64)["ok"])
+        run.refresh_from_db()
+        self.assertEqual(run.status, "review")
+        self.assertTrue(self.decision(run, "accept", diff_sha256="a" * 64)["ok"])
+        run.refresh_from_db()
+        self.assertEqual(run.approved_diff_sha256, "a" * 64)
+        self.assertEqual(run.approved_evidence_sha256, "c" * 64)
+        self.assertIsNotNone(run.approved_at)
+
+    def test_a_retry_is_a_new_run_and_never_a_replay(self):
+        run = self.queued()
+        owned = claim(self.principal)
+        update(owned.pk, owned.worker_token, self.principal, status="failed")
+        run.refresh_from_db()
+        result = self.retry(run)
+        self.assertTrue(result["ok"], result)
+        retried = Run.objects.get(pk=result["id"])
+        self.assertEqual(retried.retried_from_id, run.pk)
+        self.assertEqual(retried.prompt, run.prompt)
+        self.assertEqual(retried.kind, run.kind)
+        run.refresh_from_db()
+        self.assertEqual(run.status, "failed")
+        self.assertFalse(self.retry(retried)["ok"])
+
+    def test_a_run_that_is_still_open_cannot_be_retried(self):
+        run = self.queued()
+        self.assertFalse(self.retry(run)["ok"])
+        claim(self.principal)
+        run.refresh_from_db()
+        self.assertFalse(self.retry(run)["ok"])
+
+    def test_a_rejected_delegated_job_can_be_revised_and_unblocks_its_parent(self):
+        parent = self.queued()
+        owned = claim(self.principal)
+        dispatch(
+            owned,
+            CodexResult.model_validate(
+                {"summary": "delegate", "delegations": [{"title": "Child", "prompt": "Write a small note"}]}
+            ),
+            self.principal,
+        )
+        child = owned.delegated_runs.get()
+        update(owned.pk, owned.worker_token, self.principal, status="review", passed=True)
+        child_owned = claim(self.principal)
+        self.assertEqual(child_owned.pk, child.pk)
+        update(child.pk, child_owned.worker_token, self.principal, status="failed")
+        child.refresh_from_db()
+        self.assertEqual(child.task.status, "blocked")
+        parent.refresh_from_db()
+        self.assertFalse(self.decision(parent, "accept")["ok"])
+
+        retried = self.retry(child)
+        self.assertTrue(retried["ok"], retried)
+        revision = Run.objects.get(pk=retried["id"])
+        self.assertEqual(revision.delegated_by_id, owned.pk)
+        self.assertEqual(revision.task.parent_id, parent.task_id)
+
+        revision_owned = claim(self.principal)
+        update(revision.pk, revision_owned.worker_token, self.principal, status="review", passed=True)
+        revision.refresh_from_db()
+        self.assertTrue(self.decision(revision, "accept")["ok"])
+        parent.refresh_from_db()
+        self.assertTrue(self.decision(parent, "accept")["ok"])
+        parent.task.refresh_from_db()
+        self.assertEqual(parent.task.status, "done")
+
+    def test_an_apply_writes_the_approved_changes_and_can_be_put_back(self):
+        with tempfile.TemporaryDirectory() as root:
+            source = Path(root) / "source"
+            island = Path(root) / "island"
+            (source / "Content").mkdir(parents=True)
+            (island / "Content").mkdir(parents=True)
+            (source / "Content" / "one.verse").write_bytes(b"old\n")
+            (island / "Content" / "one.verse").write_bytes(b"old\n")
+            git(source, "init")
+            git(source, "add", "-A")
+            git(source, "-c", "user.name=tests", "-c", "user.email=tests@example.test", "commit", "-m", "base")
+            revision = git(source, "rev-parse", "HEAD").strip()
+            (source / "Content" / "one.verse").write_bytes(b"new\n")
+            policy = WorkerPolicy(
+                codex=Path(sys.executable),
+                artifacts=Path(root) / "artifacts",
+                projects={
+                    "test-island": {
+                        "repository": source,
+                        "checks": [[sys.executable, "--version"]],
+                        "apply_destination": island,
+                        "apply_scope": ["Content/**/*.verse"],
+                    }
+                },
+            )
+            run = self.queued()
+            diff = git(source, "diff", "--no-ext-diff", "--binary", "HEAD")
+            fingerprint = hashlib.sha256(diff.encode()).hexdigest()
+            owned = claim(self.principal)
+            update(
+                owned.pk,
+                owned.worker_token,
+                self.principal,
+                status="review",
+                passed=True,
+                diff=diff,
+                diff_sha256=fingerprint,
+                evidence_sha256="c" * 64,
+                base_revision=revision,
+                worktree=str(source),
+            )
+            run.refresh_from_db()
+            self.assertTrue(self.decision(run, "accept", diff_sha256=fingerprint)["ok"])
+
+            run.refresh_from_db()
+
+            queued = execute_capability(
+                "gamedev.run.apply",
+                {"run_id": run.pk, "version": run.version},
+                principal=self.principal,
+            )
+            self.assertTrue(queued["ok"], queued)
+            apply = Run.objects.get(pk=queued["id"])
+            self.assertEqual(apply.kind, "apply")
+            self.assertEqual(apply.applies_id, run.pk)
+
+            applied = claim(self.principal)
+            self.assertEqual(applied.pk, apply.pk)
+            execute(applied, policy, self.principal)
+            apply.refresh_from_db()
+            self.assertEqual(apply.status, "accepted")
+            self.assertEqual((island / "Content" / "one.verse").read_bytes(), b"new\n")
+            self.assertEqual([entry["path"] for entry in apply.applied_files], ["Content/one.verse"])
+            self.assertTrue(Path(apply.snapshot).is_dir())
+
+            undone = execute_capability(
+                "gamedev.run.rollback",
+                {"run_id": apply.pk, "version": apply.version},
+                principal=self.principal,
+            )
+            self.assertTrue(undone["ok"], undone)
+            rolled = claim(self.principal)
+            execute(rolled, policy, self.principal)
+            apply.refresh_from_db()
+            self.assertIsNotNone(apply.rolled_back_at)
+            self.assertEqual((island / "Content" / "one.verse").read_bytes(), b"old\n")
+
+    def test_an_apply_refuses_a_destination_that_changed_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as root:
+            source = Path(root) / "source"
+            island = Path(root) / "island"
+            (source / "Content").mkdir(parents=True)
+            (island / "Content").mkdir(parents=True)
+            (source / "Content" / "one.verse").write_bytes(b"old\n")
+            (island / "Content" / "one.verse").write_bytes(b"old\n")
+            git(source, "init")
+            git(source, "add", "-A")
+            git(source, "-c", "user.name=tests", "-c", "user.email=tests@example.test", "commit", "-m", "base")
+            (source / "Content" / "one.verse").write_bytes(b"new\n")
+            policy = WorkerPolicy(
+                codex=Path(sys.executable),
+                artifacts=Path(root) / "artifacts",
+                projects={
+                    "test-island": {
+                        "repository": source,
+                        "checks": [[sys.executable, "--version"]],
+                        "apply_destination": island,
+                        "apply_scope": ["Content/**/*.verse"],
+                    }
+                },
+            )
+            run = self.queued()
+            diff = git(source, "diff", "--no-ext-diff", "--binary", "HEAD")
+            fingerprint = hashlib.sha256(diff.encode()).hexdigest()
+            owned = claim(self.principal)
+            update(
+                owned.pk,
+                owned.worker_token,
+                self.principal,
+                status="review",
+                passed=True,
+                diff=diff,
+                diff_sha256=fingerprint,
+                base_revision=git(source, "rev-parse", "HEAD").strip(),
+                worktree=str(source),
+            )
+            run.refresh_from_db()
+            self.assertTrue(self.decision(run, "accept", diff_sha256=fingerprint)["ok"])
+            run.refresh_from_db()
+            queued = execute_capability(
+                "gamedev.run.apply", {"run_id": run.pk, "version": run.version}, principal=self.principal
+            )
+            self.assertTrue(queued["ok"], queued)
+            (island / "Content" / "one.verse").write_bytes(b"changed in the island\n")
+            applied = claim(self.principal)
+            with self.assertRaises(ProcessFailure):
+                execute(applied, policy, self.principal)
+            self.assertEqual((island / "Content" / "one.verse").read_bytes(), b"changed in the island\n")
+
+    def test_an_apply_refuses_a_run_that_was_not_approved(self):
+        run = self.queued()
+        result = execute_capability(
+            "gamedev.run.apply", {"run_id": run.pk, "version": run.version}, principal=self.principal
+        )
+        self.assertFalse(result["ok"])
+
+    def test_worker_publishes_project_profiles_from_policy(self):
+        from gamedev.hq_plugin.models import ProjectProfile
+        from gamedev.profile import publish_profiles
+
+        policy = WorkerPolicy(
+            codex=Path(sys.executable),
+            artifacts=Path(tempfile.gettempdir()),
+            projects={
+                "test-island": {
+                    "repository": tempfile.gettempdir(),
+                    "checks": [[sys.executable, "--version"]],
+                    "coding_enabled": True,
+                    "uefn_project": Path(tempfile.gettempdir()) / "Example.uefnproject",
+                    "apply_destination": tempfile.gettempdir(),
+                    "apply_scope": ["Content/**/*.verse"],
+                },
+                "editor-only": {
+                    "repository": tempfile.gettempdir(),
+                    "checks": [[sys.executable, "--version"]],
+                    "coding_enabled": False,
+                    "uefn_project": Path(tempfile.gettempdir()) / "Other.uefnproject",
+                },
+                "nothing": {
+                    "repository": tempfile.gettempdir(),
+                    "checks": [[sys.executable, "--version"]],
+                    "coding_enabled": False,
+                },
+            },
+        )
+        publish_profiles(policy)
+
+        profiles = {p.project_slug: p for p in ProjectProfile.objects.all()}
+        self.assertEqual(set(profiles), {"test-island", "editor-only", "nothing"})
+        self.assertTrue(profiles["test-island"].coding_enabled)
+        self.assertTrue(profiles["test-island"].uefn_configured)
+        self.assertEqual(profiles["test-island"].apply_scope, ["Content/**/*.verse"])
+        self.assertFalse(profiles["editor-only"].coding_enabled)
+        self.assertTrue(profiles["editor-only"].uefn_configured)
+        self.assertFalse(profiles["nothing"].coding_enabled)
+        self.assertFalse(profiles["nothing"].uefn_configured)
+        self.assertEqual(profiles["nothing"].apply_scope, [])
 
 
 class SupervisorTests(SimpleTestCase):

@@ -83,6 +83,8 @@ def inspect_or_build(project, action):
     diagnostics = value.get("returnValue")
     result["diagnostics"] = diagnostics
     result["passed"] = diagnostics == []
+    result["verification"] = "verse_compilation"
+    result["gameplay_verified"] = False
     return result
 
 

@@ -4,11 +4,13 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST
 
+from gamedev.profile import profiles
 from hq_sdk.capabilities import execute_capability, web_principal
 from hq_sdk.pages import page_context
 from hq_sdk.resources import list_resource
 from hq_sdk.web import capability_required
 
+from .. import apply as apply_module
 from .contracts import TRANSITIONS
 from .forms import MoveForm, TaskForm
 from .models import Run, Task
@@ -40,6 +42,7 @@ def index(request):
         form.add_error(None, result.get("error", {}).get("message", "Task could not be saved."))
     tasks = list(Task.objects.prefetch_related("runs").all())
     names = {p["slug"]: p["name"] for p in projects}
+    profiles_by_slug = profiles()
     rows = []
     for task in tasks:
         move = MoveForm(
@@ -47,7 +50,31 @@ def index(request):
             auto_id=f"id_task_{task.pk}_%s",
         )
         move.fields["status"].choices = [(value, value.title()) for value in TRANSITIONS[task.status]]
-        rows.append({"task": task, "project": names.get(task.project_slug, task.project_slug), "move": move})
+        profile = profiles_by_slug.get(task.project_slug)
+        worker_label = "no worker actions available"
+        has_worker_actions = False
+        if profile and (profile.coding_enabled or profile.uefn_configured):
+            has_worker_actions = True
+            parts = []
+            if profile.coding_enabled:
+                parts.append("coding")
+            if profile.uefn_configured:
+                parts.append("editor")
+            if profile.apply_scope:
+                parts.append(f"apply: {', '.join(profile.apply_scope)}")
+            worker_label = " · ".join(parts)
+        rows.append(
+            {
+                "task": task,
+                "project": names.get(task.project_slug, task.project_slug),
+                "move": move,
+                "coding_enabled": profile.coding_enabled if profile else False,
+                "uefn_configured": profile.uefn_configured if profile else False,
+                "apply_scope": profile.apply_scope if profile else [],
+                "worker_label": worker_label,
+                "has_worker_actions": has_worker_actions,
+            }
+        )
     return render(
         request,
         "gamedev_hq/board.html",
@@ -79,7 +106,8 @@ def move(request):
 @capability_required("gamedev.write")
 @require_POST
 def queue(request):
-    result = execute_capability(
+    return submit_run(
+        request,
         "gamedev.run.queue",
         {
             "task_id": request.POST.get("task_id"),
@@ -87,12 +115,8 @@ def queue(request):
             "prompt": request.POST.get("prompt", ""),
             "kind": request.POST.get("kind", "coding"),
         },
-        principal=web_principal(request.user),
+        reverse("gamedev:index"),
     )
-    if result.get("ok"):
-        return redirect("gamedev:run", run_id=result["id"])
-    messages.error(request, result.get("error", {}).get("message", "Work could not be queued."))
-    return redirect("gamedev:index")
 
 
 @capability_required("gamedev.read")
@@ -101,7 +125,26 @@ def run_detail(request, run_id):
 
     run = get_object_or_404(Run.objects.select_related("task"), pk=run_id)
     template = "gamedev_hq/run.html#progress" if request.GET.get("fragment") == "1" else "gamedev_hq/run.html"
-    return render(request, template, {**page_context(f"Run #{run.pk}", run.task.title), "run": run})
+    return render(
+        request,
+        template,
+        {
+            **page_context(f"Run #{run.pk}", run.task.title),
+            "run": run,
+            "changed_paths": changed_paths(run),
+            "applied_run": run.applies,
+        },
+    )
+
+
+def changed_paths(run):
+    """The files a run's captured changes touch, as a preview of an apply."""
+    if not run.diff:
+        return []
+    try:
+        return [path for path, removed in apply_module.changed_paths(run.diff) if not removed]
+    except apply_module.Refusal:
+        return []
 
 
 @capability_required("gamedev.write")
@@ -114,9 +157,30 @@ def decide(request, run_id):
             "version": request.POST.get("version"),
             "decision": request.POST.get("decision"),
             "note": request.POST.get("note", ""),
+            "diff_sha256": request.POST.get("diff_sha256", ""),
         },
         principal=web_principal(request.user),
     )
     if not result.get("ok"):
         messages.error(request, result.get("error", {}).get("message", "Decision could not be saved."))
     return redirect("gamedev:run", run_id=run_id)
+
+
+def submit_run(request, capability, payload, failure_url):
+    result = execute_capability(capability, payload, principal=web_principal(request.user))
+    if result.get("ok"):
+        return redirect("gamedev:run", run_id=result["id"])
+    messages.error(request, result.get("error", {}).get("message", "The work could not be queued."))
+    return redirect(failure_url)
+
+
+@capability_required("gamedev.write")
+@require_POST
+def submit_action(request, run_id, action):
+    capabilities = {"retry": "gamedev.run.retry", "apply": "gamedev.run.apply", "rollback": "gamedev.run.rollback"}
+    return submit_run(
+        request,
+        capabilities[action],
+        {"run_id": run_id, "version": request.POST.get("version"), "note": request.POST.get("note", "")},
+        reverse("gamedev:run", kwargs={"run_id": run_id}),
+    )
