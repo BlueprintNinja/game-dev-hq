@@ -41,11 +41,11 @@ def _file_content(path):
     return Path(path).read_bytes()
 
 
-def _source_base_content(repository, worktree, relative):
+def _text_base_content(repository, worktree, relative):
     """Imported Windows text can differ from its Git blob only in line endings.
 
     Preserve the exact pre-write bytes in the snapshot. No content difference is
-    ignored, and island destinations continue to require byte-for-byte matches.
+    ignored. Island callers permit this only for UTF-8 Verse source files.
     """
     base = _base_content(worktree, relative)
     current = _file_content(Path(repository) / relative)
@@ -114,8 +114,8 @@ def execute_apply(run, policy, project):
             paths,
             scope,
             lambda relative: (
-                _source_base_content(project.repository, worktree, relative)
-                if destination.resolve() == project.repository.resolve()
+                _text_base_content(destination, worktree, relative)
+                if destination.resolve() == project.repository.resolve() or Path(relative).suffix == ".verse"
                 else _base_content(worktree, relative)
             ),
             _file_content,

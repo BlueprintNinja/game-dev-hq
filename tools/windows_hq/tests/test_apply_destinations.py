@@ -128,6 +128,62 @@ class ApplyDestinationTests(WorkspaceTests):
             self.assertFalse((repository / "workspace/README.md").exists())
             self.assertEqual((island / "Content/keep.verse").read_bytes(), b"island unchanged\n")
 
+    def test_island_verse_crlf_apply_conflicts_and_exact_rollback(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            repository, worktree, island = (root / name for name in ("source", "work", "island"))
+            relative = "Content/check.verse"
+            (repository / "Content").mkdir(parents=True)
+            (island / "Content").mkdir(parents=True)
+            (repository / relative).write_bytes(b"old\n")
+            (island / relative).write_bytes(b"old\r\n")
+            git(repository, "init")
+            git(repository, "config", "core.autocrlf", "false")
+            git(repository, "add", "-A")
+            git(repository, "-c", "user.name=tests", "-c", "user.email=tests@example.test", "commit", "-m", "base")
+            revision = git(repository, "rev-parse", "HEAD").strip()
+            git(repository, "worktree", "add", "--detach", str(worktree), revision)
+            (worktree / relative).write_bytes(b"new\n")
+            policy = WorkerPolicy(
+                codex=Path(sys.executable),
+                artifacts=root / "artifacts",
+                projects={
+                    "test-island": {
+                        "repository": repository,
+                        "checks": [[sys.executable, "--version"]],
+                        "apply_destination": island,
+                        "apply_scope": ["Content/**/*.verse"],
+                    }
+                },
+            )
+            publish_profiles(policy)
+            run = self.approved(worktree, revision)
+            requested = execute_capability(
+                "gamedev.run.apply", {"run_id": run.pk, "version": run.version}, principal=self.principal
+            )
+            self.assertTrue(requested["ok"], requested)
+            operation = claim(self.principal)
+            # Neither real operator edits nor non-text/binary differences are EOL equivalence.
+            for conflict in (b"operator edit\r\n", b"old\x00\r\n", b"old\xff\r\n"):
+                (island / relative).write_bytes(conflict)
+                with self.assertRaises(ProcessFailure):
+                    execute(operation, policy, self.principal)
+                self.assertEqual((island / relative).read_bytes(), conflict)
+                self.assertFalse((root / "artifacts" / f"apply-{operation.pk}" / "snapshot").exists())
+            (island / relative).write_bytes(b"old\r\n")
+            execute(operation, policy, self.principal)
+            operation.refresh_from_db()
+            self.assertEqual(operation.status, "accepted")
+            self.assertEqual((island / relative).read_bytes(), b"new\n")
+            self.assertEqual((Path(operation.snapshot) / relative).read_bytes(), b"old\r\n")
+            self.assertEqual((repository / relative).read_bytes(), b"old\n")
+            rolled = execute_capability(
+                "gamedev.run.rollback", {"run_id": operation.pk, "version": operation.version}, principal=self.principal
+            )
+            self.assertTrue(rolled["ok"], rolled)
+            execute(claim(self.principal), policy, self.principal)
+            self.assertEqual((island / relative).read_bytes(), b"old\r\n")
+
     def test_unconfigured_tooling_is_blocked_before_queueing(self):
         from django.db import transaction
 

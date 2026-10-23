@@ -49,6 +49,7 @@ def stage(run_id, name, kind="CHAIN", attributes=None):
                 "error.type" in values
                 or values.get("process.exit_code", 0) != 0
                 or values.get("hq.verification.passed") is False
+                or values.get("hq.operation.succeeded") is False
             )
             span.save(update_fields=("finished_at", "attributes", "failed"))
             record_operation("gamedev.trace.finish", f"Finished {name} for run #{run_id}", required=True)

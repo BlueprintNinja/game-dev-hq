@@ -16,8 +16,11 @@ refused. The worker publishes both scopes so the dashboard can show the target
 and block unsupported changes before queueing an apply. The worker revalidates
 the actual policy and destination contents before writing, with a rollback
 snapshot. Source text imports may differ from their Git base only in LF/CRLF
-line endings; content differences still conflict, and island comparisons remain
-byte-for-byte. A failed apply retains the original approval: return to the
+line endings; the same exception applies to UTF-8 island `.verse` files only.
+Content differences, NUL-containing data, and invalid UTF-8 still conflict.
+Snapshots preserve the destination's exact original bytes, including CRLF;
+installed files hold the approved worktree bytes. Other island files retain
+byte-for-byte comparisons. A failed apply retains the original approval: return to the
 approved run after correcting the policy, rather than rerunning the coding job.
 
 Keep `worker-policy.json` outside every coding repository, alongside the

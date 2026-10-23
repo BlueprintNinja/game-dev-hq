@@ -23,7 +23,7 @@ def dashboard_cards():
             "id": "gamedev-tasks",
             "label": "Game development tasks",
             "value": str(Task.objects.exclude(status="done").count()),
-            "url": reverse("gamedev:index"),
+            "url": reverse("gamedev:mission"),
         },
         {
             "id": "gamedev-harness",

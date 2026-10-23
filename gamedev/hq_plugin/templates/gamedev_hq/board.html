@@ -1,5 +1,6 @@
 {% extends "page.html" %}
 {% block page %}
+<p><a href="{% url 'gamedev:mission' %}">Mission Control</a></p>
 <p><a href="{% url 'gamedev:metrics' %}">Harness metrics and Phoenix traces</a></p>
 {% if showcase_url %}<p><a href="{{ showcase_url }}">Explore the full sample showcase</a> · Example data is separate from your saved workspace.</p>{% endif %}
 <section class="card">

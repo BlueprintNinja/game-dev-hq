@@ -330,16 +330,21 @@ def process_next(policy, principal):
                 "hq.queue.seconds": max(0, (run.started_at - run.created_at).total_seconds()) if run.started_at else 0,
             },
         ) as metrics:
+            if run.kind in ("apply", "rollback"):
+                metrics["hq.operation.succeeded"] = False
             execute(run, policy, principal)
             current = Run.objects.get(pk=run.pk)
             metrics.update(
                 {
                     "hq.engine": current.engine,
                     "hq.status": current.status,
-                    "hq.verification.passed": current.passed,
                     "hq.fallback": bool(current.fallback_reason),
                 }
             )
+            if current.kind in ("apply", "rollback"):
+                metrics["hq.operation.succeeded"] = current.status == "accepted"
+            else:
+                metrics["hq.verification.passed"] = current.passed
     except (OSError, ValueError, subprocess.SubprocessError, ProcessFailure) as exc:
         current = Run.objects.get(pk=run.pk)
         update(
