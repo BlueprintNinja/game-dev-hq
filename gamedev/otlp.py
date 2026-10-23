@@ -3,6 +3,7 @@
 import urllib.request
 from urllib.parse import urlsplit
 
+from google.protobuf.message import DecodeError
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
     ExportTraceServiceRequest,
     ExportTraceServiceResponse,
@@ -81,7 +82,10 @@ def export_spans(spans, endpoint, api_key):
         body = response.read(65536)
         if response.status != 200:
             raise ValueError("Phoenix did not accept the telemetry batch.")
-        accepted = ExportTraceServiceResponse.FromString(body)
+        try:
+            accepted = ExportTraceServiceResponse.FromString(body)
+        except DecodeError as exc:
+            raise ValueError("Phoenix returned an invalid export acknowledgment.") from exc
         if accepted.partial_success.rejected_spans:
             raise ValueError("Phoenix rejected spans from the batch.")
         return len(body)

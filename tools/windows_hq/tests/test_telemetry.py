@@ -10,6 +10,7 @@ from gamedev.hq_plugin.metrics import MetricsQuery, snapshot
 from gamedev.hq_plugin.models import InfrastructureSample, Run, TraceSpan
 from gamedev.hq_plugin.worker_state import claim, update
 from gamedev.otlp import encode_spans, local_endpoint
+from gamedev.tool_tracing import ToolObserver
 from gamedev.tracing import observed_process, stage
 from gamedev.usage import agent_usage
 from hq_sdk.capabilities import Principal, execute_capability
@@ -88,6 +89,33 @@ class TelemetryTests(WorkspaceTests):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("output", response.json())
         self.assertEqual(self.client.get("/game-dev/harness/?hours=999999").status_code, 400)
+
+    def test_tool_events_are_idempotent_and_never_export_arguments(self):
+        run = self.queued()
+        with stage(run.pk, "agent", "LLM"):
+            parent = TraceSpan.objects.get(run=run)
+            observer = ToolObserver(parent)
+            observer.feed(
+                json.dumps(
+                    {"type": "item.started", "item": {"id": "one", "type": "command_execution", "command": "SECRET"}}
+                )
+                + "\n"
+            )
+            final = json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"id": "one", "type": "command_execution", "exit_code": 1, "aggregated_output": "PRIVATE"},
+                }
+            )
+            observer.event(final)
+            observer.event(final)
+        tool = TraceSpan.objects.get(run=run, kind="TOOL")
+        self.assertEqual(tool.parent_id, parent.span_id)
+        self.assertTrue(tool.failed)
+        self.assertFalse(tool.attributes["hq.timing.precise"])
+        exported = encode_spans(list(run.spans.all()))
+        self.assertNotIn(b"SECRET", exported)
+        self.assertNotIn(b"PRIVATE", exported)
 
     def test_failed_stage_records_only_error_type(self):
         run = self.queued()

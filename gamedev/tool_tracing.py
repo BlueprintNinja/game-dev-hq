@@ -10,6 +10,7 @@ lazy from django.db import transaction
 lazy from hq_sdk.audit import audit_operation, record_operation
 lazy from hq_sdk.capabilities import cli_principal
 
+from .usage import valid_number
 lazy from .hq_plugin.models import TraceSpan
 
 
@@ -87,10 +88,6 @@ class ToolObserver:
     def times(self, item, identity, now):
         timing = object_value(object_value(item.get("state")).get("time"))
         start, end = timing.get("start"), timing.get("end")
-        if (
-            isinstance(start, (int, float))
-            and isinstance(end, (int, float))
-            and 0 <= start <= end <= now.timestamp() * 1000 + 60000
-        ):
+        if valid_number(start) and valid_number(end) and 0 <= start <= end <= now.timestamp() * 1000 + 60000:
             return datetime.fromtimestamp(start / 1000, UTC), datetime.fromtimestamp(end / 1000, UTC), True
         return self.started.pop(identity, now), now, False
