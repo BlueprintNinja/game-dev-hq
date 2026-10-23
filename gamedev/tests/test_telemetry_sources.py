@@ -1,6 +1,8 @@
 """Privacy and failure boundaries of the real telemetry adapters."""
 
 import json
+import os
+import sys
 import sqlite3
 import subprocess
 import tempfile
@@ -227,3 +229,12 @@ class ExportTests(unittest.TestCase):
                 export_spans([span], "http://127.0.0.1:6006/v1/traces", "secret")
         with self.assertRaises(ValueError):
             NoRedirect().redirect_request(None, None, 302, "", {}, "https://external")
+
+
+class WorkerEntryPointTests(unittest.TestCase):
+    def test_worker_help_starts_without_initialized_django(self):
+        environment = dict(os.environ)
+        environment.pop("DJANGO_SETTINGS_MODULE", None)
+        result = subprocess.run([sys.executable, "-m", "gamedev.worker", "--help"], env=environment, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--policy", result.stdout)

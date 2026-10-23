@@ -8,13 +8,13 @@ Only the local worker publishes profiles; nothing here is ever read from
 a web request.
 """
 
-from django.db import transaction
+lazy from django.db import transaction
 from django.utils import timezone
 
-from hq_sdk.audit import audit_operation, record_operation
-from hq_sdk.capabilities import cli_principal
+lazy from hq_sdk.audit import audit_operation, record_operation
+lazy from hq_sdk.capabilities import cli_principal
 
-from .hq_plugin.models import ProjectProfile
+lazy from .hq_plugin.models import ProjectProfile
 
 
 def publish_profiles(policy):
