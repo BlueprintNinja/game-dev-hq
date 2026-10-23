@@ -2,9 +2,9 @@
 
 import json
 import os
-import sys
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -235,6 +235,12 @@ class WorkerEntryPointTests(unittest.TestCase):
     def test_worker_help_starts_without_initialized_django(self):
         environment = dict(os.environ)
         environment.pop("DJANGO_SETTINGS_MODULE", None)
-        result = subprocess.run([sys.executable, "-m", "gamedev.worker", "--help"], env=environment, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(
+            [sys.executable, "-m", "gamedev.worker", "--help"],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--policy", result.stdout)

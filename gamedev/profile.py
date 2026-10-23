@@ -8,8 +8,8 @@ Only the local worker publishes profiles; nothing here is ever read from
 a web request.
 """
 
-lazy from django.db import transaction
 from django.utils import timezone
+lazy from django.db import transaction
 
 lazy from hq_sdk.audit import audit_operation, record_operation
 lazy from hq_sdk.capabilities import cli_principal
