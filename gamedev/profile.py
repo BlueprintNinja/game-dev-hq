@@ -35,6 +35,7 @@ def publish_profiles(policy):
                     "coding_enabled": project.coding_enabled,
                     "uefn_configured": project.uefn_project is not None,
                     "apply_scope": list(project.apply_scope),
+                    "source_apply_scope": list(project.source_apply_scope),
                     "worker_seen_at": timezone.now(),
                 },
             )

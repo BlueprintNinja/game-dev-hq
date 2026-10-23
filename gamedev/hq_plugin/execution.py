@@ -152,6 +152,8 @@ def retry_run(command, *, principal):
             raise ValueError("Run changed. Reload before retrying.")
         if run.status not in FINISHED:
             raise ValueError("Only a run that failed, was canceled or was rejected can be retried.")
+        if run.kind in ("apply", "rollback"):
+            raise ValueError("Retry the file operation from its original approved run, not as a new coding task.")
         task = Task.objects.select_for_update().get(pk=run.task_id)
         if task.runs.filter(status__in=("queued", "running", "review")).exists():
             raise ValueError("This task already has work running or awaiting review.")

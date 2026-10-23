@@ -41,6 +41,12 @@
   </form>
   {% endif %}
   {% if run.status == 'accepted' and run.kind == 'coding' %}
+  {% if apply_preview.completed_run %}
+  <p>These approved changes have been applied. <a href="{% url 'gamedev:run' apply_preview.completed_run %}">View the completed apply</a>.</p>
+  {% elif apply_preview.error %}
+  <p>Approved result retained. Apply is unavailable: {{ apply_preview.error }}</p>
+  {% else %}
+  <p>Apply destination: <strong>{{ apply_preview.target }}</strong>. Source tooling goes to the repository; island files go to UEFN.</p>
   <p>These changes are approved. Applying them writes them into the destination; it is a separate operation, and what it replaces is kept so it can be put back.</p>
   {% if changed_paths %}
   <p>Files this would write:</p>
@@ -52,6 +58,7 @@
     <button type="submit">Apply approved changes</button>
   </form>
   {% endif %}
+  {% endif %}
   {% if run.kind == 'apply' and run.status == 'accepted' and not run.rolled_back_at %}
   <p>The changes are in the destination. Putting them back restores the files the apply replaced.</p>
   <form method="post" action="{% url 'gamedev:rollback' run.pk %}">
@@ -62,12 +69,18 @@
   {% endif %}
   {% if run.decision_note %}<p>{{ run.decision_note|linebreaksbr }}</p>{% endif %}
   {% if run.status == 'failed' or run.status == 'canceled' or run.status == 'rejected' %}
+  {% if run.kind == 'apply' or run.kind == 'rollback' %}
+  <p>The file operation failed. The original approved result is retained; this does not mean its coding checks failed.</p>
+  <p>{{ run.output|linebreaksbr }}</p>
+  {% if run.applies_id %}<p><a href="{% url 'gamedev:run' run.applies_id %}">Return to the source run to review or retry the file operation</a>.</p>{% endif %}
+  {% else %}
   <p>This run finished without an approved result. Asking again starts a new run from the repository's current revision; it does not repeat this one.</p>
   <form method="post" action="{% url 'gamedev:retry' run.pk %}">
     {% csrf_token %}<input type="hidden" name="version" value="{{ run.version }}">
     <p><label for="retry_note">What should change</label><textarea id="retry_note" name="note" maxlength="4000" rows="2"></textarea></p>
     <button type="submit">Ask again</button>
   </form>
+  {% endif %}
   {% endif %}
 </section>
 {% endpartialdef %}

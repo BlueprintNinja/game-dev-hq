@@ -15,6 +15,7 @@ from pydantic import Field
 from hq_sdk.audit import audit_operation, record_operation
 from hq_sdk.capabilities import CapabilitySpec, StrictCommand
 
+from .apply_preview import preview
 from .models import Run, Task
 
 
@@ -47,6 +48,11 @@ def apply_approved(command, *, principal):
             raise ValueError("That run holds no approved changes.")
         if source.approved_diff_sha256 != source.diff_sha256:
             raise ValueError("The approval does not name this run's changes.")
+        destination = preview(source)
+        if destination.get("completed_run"):
+            raise ValueError("These approved changes have already been applied. Open the completed apply run.")
+        if destination.get("known") and destination.get("error"):
+            raise ValueError(destination["error"])
         task = Task.objects.select_for_update().get(pk=source.task_id)
         if task.runs.filter(status__in=("queued", "running", "review")).exists():
             raise ValueError("This task already has work running or awaiting review.")

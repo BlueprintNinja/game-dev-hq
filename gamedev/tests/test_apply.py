@@ -18,6 +18,22 @@ index 1111111..2222222 100644
 
 
 class ScopeTests(unittest.TestCase):
+    def test_destination_selection_keeps_tooling_and_island_scopes_separate(self):
+        source = ["tools/*.py", "workspace/*.md"]
+        self.assertEqual(
+            apply_module.destination_kind(["tools/check.py", "workspace/README.md"], SCOPE, source), "source"
+        )
+        self.assertEqual(apply_module.destination_kind(["Content/deep/one.verse"], SCOPE, source), "island")
+        for paths, island, tooling in [
+            (["tools/check.py"], SCOPE, []),
+            (["Content/one.verse", "tools/check.py"], SCOPE, source),
+            (["../outside"], ["**"], source),
+            (["tools/check.py"], ["**"], source),
+            ([], SCOPE, source),
+        ]:
+            with self.subTest(paths=paths), self.assertRaises(apply_module.Refusal):
+                apply_module.destination_kind(paths, island, tooling)
+
     def test_a_pattern_matches_the_files_it_names(self):
         self.assertTrue(apply_module.matches_scope("Content/one.verse", SCOPE))
         self.assertTrue(apply_module.matches_scope("Content/deep/two.verse", SCOPE))

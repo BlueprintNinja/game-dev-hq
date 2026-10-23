@@ -94,6 +94,25 @@ def matches_scope(relative, patterns):
     return any(_scope_regex(pattern).match(relative) for pattern in patterns)
 
 
+def destination_kind(paths, island_scope, source_scope):
+    """One complete approved change must fit exactly one configured destination."""
+    paths = [normalize(path) for path in paths]
+    if not paths:
+        raise Refusal("The approved change touches no file.")
+    matches = [
+        name
+        for name, scope in (("island", island_scope), ("source", source_scope))
+        if all(matches_scope(path, scope) for path in paths)
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        raise Refusal("The apply scopes overlap. The operator must choose unambiguous scopes before applying.")
+    raise Refusal(
+        "These files do not fit one configured destination. Tooling needs a source-repository scope; mixed source and island changes must be split."
+    )
+
+
 def _diff_path(text):
     """The path a diff header names."""
     value = text.strip()

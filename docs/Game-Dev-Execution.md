@@ -6,6 +6,20 @@ The local worker is a separate process. Web requests never start commands.
 
 ## Local policy
 
+Application has two separate destinations. `apply_destination` and `apply_scope`
+govern island writes. Optional `source_apply_scope` names tooling files that may
+instead be written into `repository`. Keep these scopes narrow and disjoint.
+For example, explicitly list reviewed `tools/example.py` and
+`workspace/SOURCE_CHECKS.md`; do not widen the island scope to admit Python.
+One change must fit exactly one destination. Mixed or ambiguous changes are
+refused. The worker publishes both scopes so the dashboard can show the target
+and block unsupported changes before queueing an apply. The worker revalidates
+the actual policy and destination contents before writing, with a rollback
+snapshot. Source text imports may differ from their Git base only in LF/CRLF
+line endings; content differences still conflict, and island comparisons remain
+byte-for-byte. A failed apply retains the original approval: return to the
+approved run after correcting the policy, rather than rerunning the coding job.
+
 Keep `worker-policy.json` outside every coding repository, alongside the
 workspace database. It is a trusted operator file, never uploaded from the UI.
 Use absolute executable and repository paths. Example (replace the paths):

@@ -119,6 +119,7 @@ class ProjectProfile(models.Model):
     coding_enabled = models.BooleanField(default=False)
     uefn_configured = models.BooleanField(default=False)
     apply_scope = models.JSONField(default=list)
+    source_apply_scope = models.JSONField(default=list)
     worker_seen_at = models.DateTimeField(auto_now=True)
 
     class Meta:

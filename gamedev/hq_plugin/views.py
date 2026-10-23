@@ -11,6 +11,7 @@ from hq_sdk.web import capability_required
 
 from .. import apply as apply_module
 from ..profile import profiles
+from .apply_preview import preview
 from .contracts import TRANSITIONS
 from .forms import MoveForm, TaskForm
 from .models import Run, Task
@@ -139,6 +140,7 @@ def run_detail(request, run_id):
             "run": run,
             "changed_paths": changed_paths(run),
             "applied_run": run.applies,
+            "apply_preview": preview(run) if run.kind == "coding" and run.status == "accepted" else {},
         },
     )
 

@@ -48,6 +48,8 @@ class ProjectPolicy(BaseModel):
     # taken from a web request.
     apply_destination: Path | None = None
     apply_scope: list[str] = Field(default_factory=list, max_length=16)
+    # Tooling is installed in the source repository, never the island.
+    source_apply_scope: list[str] = Field(default_factory=list, max_length=16)
 
     @field_validator("repository", "uefn_project", "apply_destination")
     @classmethod
@@ -56,14 +58,14 @@ class ProjectPolicy(BaseModel):
             raise ValueError("Worker paths must be absolute.")
         return value
 
-    @field_validator("required_kinds", "apply_scope")
+    @field_validator("required_kinds", "apply_scope", "source_apply_scope")
     @classmethod
     def nonempty_names(cls, value):
         if any(not name.strip() for name in value):
             raise ValueError("Names must not be empty.")
         return value
 
-    @field_validator("apply_scope")
+    @field_validator("apply_scope", "source_apply_scope")
     @classmethod
     def relative_scope(cls, value):
         for pattern in value:
