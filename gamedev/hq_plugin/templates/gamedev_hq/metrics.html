@@ -31,7 +31,7 @@
   <h3>Workers</h3><dl>{% for profile in metrics.profiles %}<dt>{{ profile.project_slug }}</dt><dd>{% if profile.stale %}Heartbeat stale{% else %}Heartbeat current{% endif %} · coding {{ profile.coding_enabled|yesno:'enabled,disabled' }} · editor {{ profile.uefn_configured|yesno:'configured,not configured' }}</dd>{% endfor %}</dl>
 </section>
 <section class="card"><h2>Trace delivery</h2><p>{{ metrics.traces.recorded }} recorded spans · {{ metrics.traces.pending_export }} awaiting export</p><p>Last export error: {{ metrics.infrastructure.phoenix_export.error|default:'None reported' }}. Export failures retain local spans for retry.</p><p>Trace exports contain timing, usage, identifiers and outcomes. Prompts, command text, file contents, raw logs and secrets are excluded.</p></section>
-<section class="card"><h2>Recent work</h2><ul>{% for run in recent %}<li><a href="{% url 'gamedev:run' run.pk %}">#{{ run.pk }} · {{ run.task.title }} · {{ run.status|title }}</a> · {{ run.engine|default:'Engine not reported' }}</li>{% empty %}<li>No runs yet.</li>{% endfor %}</ul></section>
+<section class="card"><h2>Recent work</h2><ul>{% for run in recent %}<li><a href="{% url 'gamedev:run' run.pk %}">#{{ run.pk }} · {{ run.kind }} · {{ run.status|title }}</a> · {{ run.engine|default:'Engine not reported' }}</li>{% empty %}<li>No runs yet.</li>{% endfor %}</ul></section>
 </div>
 {% endpartialdef %}
 {% endblock %}

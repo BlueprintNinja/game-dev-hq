@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 from unittest import mock
 
 from django.test import SimpleTestCase
@@ -126,3 +127,24 @@ class TelemetryParsingTests(SimpleTestCase):
     def test_uninstrumented_process_helpers_remain_usable_without_a_database(self):
         process = mock.Mock(return_value=(0, "no usage"))
         self.assertEqual(observed_process(None, "agent", process, ["fixed-command"]), (0, "no usage"))
+
+
+@workspace_only
+class DispatchBoundaryTests(SimpleTestCase):
+    def test_editor_apply_and_rollback_never_enter_coding(self):
+        policy = SimpleNamespace(projects={"island": SimpleNamespace(coding_enabled=True)})
+        for kind, handler in [
+            ("apply", "execute_apply"),
+            ("rollback", "execute_rollback"),
+            ("uefn_build", "execute_editor"),
+        ]:
+            with (
+                self.subTest(kind=kind),
+                mock.patch("gamedev.worker." + handler) as selected,
+                mock.patch("gamedev.worker.execute_coding") as coding,
+            ):
+                from gamedev.worker import execute
+
+                execute(SimpleNamespace(kind=kind, task=SimpleNamespace(project_slug="island")), policy, None)
+                selected.assert_called_once()
+                coding.assert_not_called()

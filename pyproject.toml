@@ -31,6 +31,8 @@ dependencies = [
 # Runtime dependencies no host code imports, and why each is installed anyway.
 [tool.severino-hq.unimported]
 httpx2 = "The HTTP client extensions import: admitted wheels install with --no-deps, so the host provides it."
+opentelemetry-proto = "Local telemetry adapters encode OTLP protobuf without installing the full telemetry SDK."
+psutil = "Local infrastructure adapters sample workstation resources outside the web process."
 tblib = "Django's parallel test runner pickles a failure's traceback with it, in the image as well."
 
 [tool.uv]

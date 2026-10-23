@@ -3,6 +3,7 @@
 import json
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 
 from .usage import valid_number
@@ -21,7 +22,7 @@ def opencode_usage(database, roots):
     rows = 0
     try:
         uri = Path(database).resolve().as_uri() + "?mode=ro"
-        with sqlite3.connect(uri, uri=True, timeout=1) as connection:
+        with closing(sqlite3.connect(uri, uri=True, timeout=1)) as connection:
             connection.execute("PRAGMA query_only=ON")
             records = connection.execute(
                 "SELECT s.id,s.directory,json_extract(m.data,'$.modelID'),json_extract(m.data,'$.providerID'),json_extract(m.data,'$.tokens'),json_extract(m.data,'$.cost') FROM message m JOIN session s ON s.id=m.session_id WHERE json_extract(m.data,'$.role')='assistant' AND m.time_created>=? ORDER BY m.time_created DESC LIMIT 10000",

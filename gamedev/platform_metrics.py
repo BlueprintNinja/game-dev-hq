@@ -6,7 +6,7 @@ import subprocess
 import time
 from pathlib import Path
 
-TASK_QUERY = """+$names = @('GameDevHQ-Workspace','GameDevHQ-Worker','GameDevHQ-Showcase','GameDevHQ-Backup','GameDevHQ-Phoenix','GameDevHQ-Telemetry')
+TASK_QUERY = """$names = @('GameDevHQ-Workspace','GameDevHQ-Worker','GameDevHQ-Showcase','GameDevHQ-Backup','GameDevHQ-Phoenix','GameDevHQ-Telemetry')
 $rows = foreach ($name in $names) {
   $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
   if ($task) {

@@ -202,6 +202,12 @@ def execute(run, policy, principal):
         execute_rollback(run, policy, project, principal)
     elif run.kind != "coding":
         execute_editor(run, project, principal)
+    else:
+        execute_coding(run, policy, project, principal)
+
+
+def execute_coding(run, policy, project, principal):
+    """Coding is a separate path from editor and approved file operations."""
     if not project.coding_enabled:
         raise ProcessFailure("Coding is disabled by the local policy for this project.")
     if run.task.agent == "opencode" and (not run.delegated_by_id or run.delegated_by.task_id != run.task.parent_id):
