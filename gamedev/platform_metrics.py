@@ -7,11 +7,15 @@ import time
 from pathlib import Path
 
 TASK_QUERY = """$names = @('GameDevHQ-Workspace','GameDevHQ-Worker','GameDevHQ-Showcase','GameDevHQ-Backup','GameDevHQ-Phoenix','GameDevHQ-Telemetry')
+function Read-Date($value) {
+  if ($value -is [DateTime] -and $value.Year -gt 1900) { $value.ToUniversalTime().ToString('o') }
+  else { $null }
+}
 $rows = foreach ($name in $names) {
   $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
   if ($task) {
     $info = Get-ScheduledTaskInfo -TaskName $name
-    [pscustomobject]@{name=$name;state=$task.State.ToString();last_result=$info.LastTaskResult;last_run=$info.LastRunTime.ToUniversalTime().ToString('o');next_run=$info.NextRunTime.ToUniversalTime().ToString('o')}
+    [pscustomobject]@{name=$name;state=$task.State.ToString();last_result=$info.LastTaskResult;last_run=(Read-Date $info.LastRunTime);next_run=(Read-Date $info.NextRunTime)}
   }
 }
 ConvertTo-Json -InputObject @($rows) -Compress

@@ -17,6 +17,7 @@ lazy from hq_sdk.capabilities import cli_principal
 from .agent_inventory import opencode_usage
 from .infrastructure import sample_infrastructure
 from .otlp import export_spans, local_endpoint
+from .readiness import wait_until_ready
 from .supervisor import WorkerLock
 from .usage import agent_usage, compact_checks
 lazy from .hq_plugin.models import InfrastructureSample, Run, TraceSpan
@@ -86,6 +87,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--workspace-url", default="")
     args = parser.parse_args()
     config = json.loads(args.config.read_text(encoding="utf-8"))
     endpoint = local_endpoint(config["endpoint"])
@@ -93,6 +95,8 @@ def main():
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tools.windows_hq.settings")
     django.setup()
     principal = cli_principal()
+    if args.workspace_url:
+        wait_until_ready(local_endpoint(args.workspace_url))
     with WorkerLock(Path(os.environ["GAMEDEV_WORKSPACE_DATA"]) / "telemetry.lock"):
         while True:
             try:

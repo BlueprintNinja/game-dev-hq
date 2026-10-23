@@ -216,6 +216,10 @@ class ExportTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 export_spans([span], "http://127.0.0.1:6006/v1/traces", "secret")
             response.status = 200
+            response.read.return_value = b"\xff"
+            with self.assertRaisesRegex(ValueError, "invalid export acknowledgment"):
+                export_spans([span], "http://127.0.0.1:6006/v1/traces", "secret")
+            response.status = 200
             partial = ExportTraceServiceResponse()
             partial.partial_success.rejected_spans = 1
             response.read.return_value = partial.SerializeToString()

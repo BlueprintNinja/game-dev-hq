@@ -18,6 +18,6 @@ $log = Join-Path $LogDirectory 'telemetry.log'
 Push-Location $root
 try {
     $ErrorActionPreference = 'Continue'
-    & $UvPath run --no-sync python -m gamedev.collector --config $config *>> $log
+    & $UvPath run --no-sync python -m gamedev.collector --config $config --workspace-url 'http://127.0.0.1:18767/health/live/' *>> $log
     if ($LASTEXITCODE -ne 0) { throw 'Telemetry collector stopped. Inspect telemetry.log.' }
 } finally { Pop-Location }
