@@ -16,8 +16,10 @@ There is no collector, experiment execution, automation/export switch, Phoenix
 integration, network client, subprocess execution, editor operation, persistence,
 or Django/database initialization in the evaluator. It neither reads prompts,
 source, logs, credentials nor worker records. Input is never executable. Existing
-worker/evidence/usage contracts are unchanged. A later adapter must deliberately
-construct this new contract; existing worker digests are not interchangeable.
+worker/evidence/usage contracts are unchanged. The separate [verified run evidence adapter](Verified-Run-Evidence.md) returns
+a provenance record without dataset assignment or grading. It does not feed
+real runs into this synthetic contract; worker digests are not interchangeable
+with sanitized fingerprints.
 Only the CLI test invokes a Python subprocess, against temporary synthetic files.
 
 ## Version 1 contract
