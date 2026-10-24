@@ -1,4 +1,3 @@
-import asyncio
 import os
 import tempfile
 from pathlib import Path
@@ -6,7 +5,7 @@ from unittest import mock, skipUnless
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.test import Client, TestCase, override_settings
+from django.test import Client, SimpleTestCase, TestCase, override_settings
 
 from gamedev.hq_plugin.models import Task
 from hq_sdk.audit import AuditLog
@@ -23,6 +22,43 @@ workspace_only = skipUnless(
     "gamedev.hq_plugin" in settings.INSTALLED_APPS,
     "the Game Dev extension is not installed in this composition",
 )
+
+
+def complete_inline(coroutine):
+    """Run an in-memory coroutine; any suspension is an unexpected I/O boundary."""
+    try:
+        try:
+            coroutine.send(None)
+        except StopIteration as completed:
+            return completed.value
+        raise AssertionError("The unit-test coroutine suspended instead of completing inline")
+    finally:
+        coroutine.close()
+
+
+class InlineCoroutineTests(SimpleTestCase):
+    def test_returns_completed_value(self):
+        async def completed():
+            return 200
+
+        self.assertEqual(complete_inline(completed()), 200)
+
+    def test_rejects_suspension_and_closes_coroutine(self):
+        closed = []
+
+        class Suspending:
+            def __await__(self):
+                yield "external I/O"
+
+        async def suspended():
+            try:
+                await Suspending()
+            finally:
+                closed.append(True)
+
+        with self.assertRaisesRegex(AssertionError, "suspended"):
+            complete_inline(suspended())
+        self.assertEqual(closed, [True])
 
 
 @workspace_only
@@ -140,10 +176,10 @@ class WorkspaceTests(TestCase):
             return events[0]["status"]
 
         identity = (b"tailscale-user-login", self.operator.encode())
-        self.assertEqual(asyncio.run(run([])), 403)
-        self.assertEqual(asyncio.run(run([identity, identity])), 403)
-        self.assertEqual(asyncio.run(run([identity], "100.64.0.1")), 403)
-        self.assertEqual(asyncio.run(run([identity])), 200)
+        self.assertEqual(complete_inline(run([])), 403)
+        self.assertEqual(complete_inline(run([identity, identity])), 403)
+        self.assertEqual(complete_inline(run([identity], "100.64.0.1")), 403)
+        self.assertEqual(complete_inline(run([identity])), 200)
 
 
 @workspace_only

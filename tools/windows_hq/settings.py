@@ -35,6 +35,7 @@ _base = importlib.import_module("hq.config.settings")
 globals().update({key: getattr(_base, key) for key in dir(_base) if key.isupper()})
 AUTHENTICATION_BACKENDS = ["tools.windows_hq.auth.TailnetBackend"]
 GAMEDEV_SHOWCASE_URL = f"https://{DNS}:9444/"
+GAMEDEV_PHOENIX_URL = f"https://{DNS}:9445/"
 MIDDLEWARE = [*_base.MIDDLEWARE]
 MIDDLEWARE.insert(
     MIDDLEWARE.index("django.contrib.auth.middleware.AuthenticationMiddleware") + 1,

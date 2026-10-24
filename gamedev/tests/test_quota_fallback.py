@@ -50,5 +50,44 @@ class QuotaReasonTests(unittest.TestCase):
         self.assertNotIn("django", source)
 
 
+class QuotaIsNotGuessedTests(unittest.TestCase):
+    """A failure that is not an exhausted allowance must not be read as one."""
+
+    def test_an_agent_quoting_the_phrase_is_not_a_quota(self):
+        output = json.dumps(
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": f"The user asked what {QUOTA} means. I explained it."},
+            }
+        )
+        self.assertIsNone(quota.quota_reason([QUOTA], output))
+
+    def test_a_tool_result_mentioning_the_phrase_is_not_a_quota(self):
+        output = json.dumps({"type": "item.completed", "item": {"type": "command_execution", "text": f"grep: {QUOTA}"}})
+        self.assertIsNone(quota.quota_reason([QUOTA], output))
+
+    def test_a_failure_that_quotes_the_phrase_is_not_a_quota(self):
+        output = json.dumps(
+            {"type": "error", "message": f"The sandbox refused the prompt: it said '{QUOTA}' inside a file."}
+        )
+        self.assertIsNone(quota.quota_reason([QUOTA], output))
+
+    def test_the_phrase_at_the_start_of_a_failure_is_a_quota(self):
+        output = json.dumps({"type": "error", "message": f"{QUOTA}. Try again at 10:13 PM."})
+        self.assertIsNotNone(quota.quota_reason([QUOTA], output))
+
+    def test_the_phrase_after_a_sentence_boundary_is_a_quota(self):
+        output = json.dumps({"type": "error", "message": f"Request refused. {QUOTA}."})
+        self.assertIsNotNone(quota.quota_reason([QUOTA], output))
+
+    def test_a_turn_that_merely_mentions_the_phrase_is_not_a_quota(self):
+        output = json.dumps({"type": "turn.completed", "message": f"All good; {QUOTA} was never reached."})
+        self.assertIsNone(quota.quota_reason([QUOTA], output))
+
+    def test_a_crash_with_the_phrase_in_a_traceback_is_not_a_quota(self):
+        output = json.dumps({"type": "item.completed", "item": {"type": "error", "text": f"boom {QUOTA}"}})
+        self.assertIsNone(quota.quota_reason([QUOTA], output))
+
+
 if __name__ == "__main__":
     unittest.main()

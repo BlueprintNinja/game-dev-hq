@@ -7,8 +7,10 @@ from hq_sdk.audit import audit_operation, record_operation
 from hq_sdk.capabilities import CapabilitySpec, StrictCommand
 from hq_sdk.resources import get_resource
 
+from .apply_execution import capabilities as apply_capabilities
 from .contracts import TRANSITIONS
 from .execution import capabilities as execution_capabilities
+from .metrics import capabilities as metrics_capabilities
 from .models import Task
 
 
@@ -87,7 +89,9 @@ def move_task(command, *, principal):
 
 def capabilities():
     return (
+        *metrics_capabilities(),
         *execution_capabilities(),
+        *apply_capabilities(),
         CapabilitySpec(
             "gamedev.task.create",
             "Create a task or explicit delegation",

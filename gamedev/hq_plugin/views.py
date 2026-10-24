@@ -9,6 +9,9 @@ from hq_sdk.pages import page_context
 from hq_sdk.resources import list_resource
 from hq_sdk.web import capability_required
 
+from .. import apply as apply_module
+from ..profile import profiles
+from .apply_preview import preview
 from .contracts import TRANSITIONS
 from .forms import MoveForm, TaskForm
 from .models import Run, Task
@@ -20,7 +23,13 @@ def dashboard_cards():
             "id": "gamedev-tasks",
             "label": "Game development tasks",
             "value": str(Task.objects.exclude(status="done").count()),
-            "url": reverse("gamedev:index"),
+            "url": reverse("gamedev:mission"),
+        },
+        {
+            "id": "gamedev-harness",
+            "label": "Harness metrics",
+            "value": str(Run.objects.filter(status="running").count()) + " running",
+            "url": reverse("gamedev:metrics"),
         },
     )
 
@@ -40,6 +49,7 @@ def index(request):
         form.add_error(None, result.get("error", {}).get("message", "Task could not be saved."))
     tasks = list(Task.objects.prefetch_related("runs").all())
     names = {p["slug"]: p["name"] for p in projects}
+    profiles_by_slug = profiles()
     rows = []
     for task in tasks:
         move = MoveForm(
@@ -47,7 +57,31 @@ def index(request):
             auto_id=f"id_task_{task.pk}_%s",
         )
         move.fields["status"].choices = [(value, value.title()) for value in TRANSITIONS[task.status]]
-        rows.append({"task": task, "project": names.get(task.project_slug, task.project_slug), "move": move})
+        profile = profiles_by_slug.get(task.project_slug)
+        worker_label = "no worker actions available"
+        has_worker_actions = False
+        if profile and (profile.coding_enabled or profile.uefn_configured):
+            has_worker_actions = True
+            parts = []
+            if profile.coding_enabled:
+                parts.append("coding")
+            if profile.uefn_configured:
+                parts.append("editor")
+            if profile.apply_scope:
+                parts.append(f"apply: {', '.join(profile.apply_scope)}")
+            worker_label = " · ".join(parts)
+        rows.append(
+            {
+                "task": task,
+                "project": names.get(task.project_slug, task.project_slug),
+                "move": move,
+                "coding_enabled": profile.coding_enabled if profile else False,
+                "uefn_configured": profile.uefn_configured if profile else False,
+                "apply_scope": profile.apply_scope if profile else [],
+                "worker_label": worker_label,
+                "has_worker_actions": has_worker_actions,
+            }
+        )
     return render(
         request,
         "gamedev_hq/board.html",
@@ -79,29 +113,53 @@ def move(request):
 @capability_required("gamedev.write")
 @require_POST
 def queue(request):
-    result = execute_capability(
+    if set(request.POST) - {"csrfmiddlewaretoken", "task_id", "version", "prompt", "kind", "profile"}:
+        messages.error(request, "Unknown queue fields.")
+        return redirect("gamedev:index")
+    return submit_run(
+        request,
         "gamedev.run.queue",
         {
             "task_id": request.POST.get("task_id"),
             "version": request.POST.get("version"),
             "prompt": request.POST.get("prompt", ""),
             "kind": request.POST.get("kind", "coding"),
+            "profile": request.POST.get("profile", "routine"),
         },
-        principal=web_principal(request.user),
+        reverse("gamedev:index"),
     )
-    if result.get("ok"):
-        return redirect("gamedev:run", run_id=result["id"])
-    messages.error(request, result.get("error", {}).get("message", "Work could not be queued."))
-    return redirect("gamedev:index")
 
 
 @capability_required("gamedev.read")
 @require_http_methods(["GET"])
 def run_detail(request, run_id):
 
-    run = get_object_or_404(Run.objects.select_related("task"), pk=run_id)
+    run = get_object_or_404(
+        Run.objects.select_related("task", "applies").prefetch_related("delegated_runs", "escalations"), pk=run_id
+    )
     template = "gamedev_hq/run.html#progress" if request.GET.get("fragment") == "1" else "gamedev_hq/run.html"
-    return render(request, template, {**page_context(f"Run #{run.pk}", run.task.title), "run": run})
+    return render(
+        request,
+        template,
+        {
+            **page_context(f"Run #{run.pk}", run.task.title),
+            "run": run,
+            "reported_usage": reported_usage(run),
+            "changed_paths": changed_paths(run),
+            "applied_run": run.applies,
+            "apply_preview": preview(run) if run.kind == "coding" and run.status == "accepted" else {},
+        },
+    )
+
+
+def changed_paths(run):
+    """The files a run's captured changes touch, as a preview of an apply."""
+    if not run.diff:
+        return []
+    try:
+        return [path for path, removed in apply_module.changed_paths(run.diff) if not removed]
+    except apply_module.Refusal:
+        return []
 
 
 @capability_required("gamedev.write")
@@ -114,9 +172,45 @@ def decide(request, run_id):
             "version": request.POST.get("version"),
             "decision": request.POST.get("decision"),
             "note": request.POST.get("note", ""),
+            "diff_sha256": request.POST.get("diff_sha256", ""),
         },
         principal=web_principal(request.user),
     )
     if not result.get("ok"):
         messages.error(request, result.get("error", {}).get("message", "Decision could not be saved."))
     return redirect("gamedev:run", run_id=run_id)
+
+
+def submit_run(request, capability, payload, failure_url):
+    result = execute_capability(capability, payload, principal=web_principal(request.user))
+    if result.get("ok"):
+        return redirect("gamedev:run", run_id=result["id"])
+    messages.error(request, result.get("error", {}).get("message", "The work could not be queued."))
+    return redirect(failure_url)
+
+
+@capability_required("gamedev.write")
+@require_POST
+def submit_action(request, run_id, action):
+    capabilities = {"retry": "gamedev.run.retry", "apply": "gamedev.run.apply", "rollback": "gamedev.run.rollback"}
+    payload = {"run_id": run_id, "version": request.POST.get("version"), "note": request.POST.get("note", "")}
+    if action == "retry":
+        payload["escalate"] = request.POST.get("escalate", "") == "true"
+    return submit_run(
+        request,
+        capabilities[action],
+        payload,
+        reverse("gamedev:run", kwargs={"run_id": run_id}),
+    )
+
+
+def reported_usage(run):
+    labels = {
+        "llm.token_count.prompt": "Input tokens",
+        "llm.token_count.completion": "Output tokens",
+        "llm.token_count.total": "Total tokens",
+        "hq.tokens.cached": "Cached tokens",
+        "hq.tokens.reasoning": "Reasoning tokens",
+        "llm.cost.total": "Provider-reported cost",
+    }
+    return [(label, run.metrics[key]) for key, label in labels.items() if key in run.metrics]

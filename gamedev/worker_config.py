@@ -4,31 +4,75 @@ import json
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from .routing import RoutePolicy
+
+
+class CheckSpec(BaseModel):
+    """One check the operator configured, and the kind of evidence it gives.
+
+    A bare command is a check of the kind "check", so a policy written before
+    the kinds existed keeps working.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    kind: str = Field(default="check", min_length=1, max_length=40)
+    command: list[str] = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def a_bare_command_is_a_check(cls, value):
+        if isinstance(value, (list, tuple)):
+            return {"command": list(value)}
+        return value
+
+    @field_validator("command")
+    @classmethod
+    def commands(cls, value):
+        if any(not isinstance(argument, str) or not argument for argument in value):
+            raise ValueError("Checks must be nonempty argument arrays.")
+        if not Path(value[0]).is_absolute():
+            raise ValueError("Check executables must use absolute paths.")
+        return value
 
 
 class ProjectPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
     repository: Path
-    checks: list[list[str]] = Field(min_length=1, max_length=8)
+    checks: list[CheckSpec] = Field(min_length=1, max_length=8)
+    required_kinds: list[str] = Field(default_factory=list, max_length=8)
     timeout_seconds: int = Field(default=600, ge=30, le=1800)
     coding_enabled: bool = True
     uefn_project: Path | None = None
+    # Where an approved change may be written, and which paths inside it may
+    # be written at all. Both are the operator's to set; neither is ever
+    # taken from a web request.
+    apply_destination: Path | None = None
+    apply_scope: list[str] = Field(default_factory=list, max_length=16)
+    # Tooling is installed in the source repository, never the island.
+    source_apply_scope: list[str] = Field(default_factory=list, max_length=16)
 
-    @field_validator("repository", "uefn_project")
+    @field_validator("repository", "uefn_project", "apply_destination")
     @classmethod
     def absolute_path(cls, value):
         if value is not None and not value.is_absolute():
             raise ValueError("Worker paths must be absolute.")
         return value
 
-    @field_validator("checks")
+    @field_validator("required_kinds", "apply_scope", "source_apply_scope")
     @classmethod
-    def commands(cls, value):
-        if any(not command or any(not isinstance(arg, str) or not arg for arg in command) for command in value):
-            raise ValueError("Checks must be nonempty argument arrays.")
-        if any(not Path(command[0]).is_absolute() for command in value):
-            raise ValueError("Check executables must use absolute paths.")
+    def nonempty_names(cls, value):
+        if any(not name.strip() for name in value):
+            raise ValueError("Names must not be empty.")
+        return value
+
+    @field_validator("apply_scope", "source_apply_scope")
+    @classmethod
+    def relative_scope(cls, value):
+        for pattern in value:
+            if pattern.startswith("/") or pattern.startswith("\\") or ".." in pattern.split("/"):
+                raise ValueError("Apply scope patterns must be relative to the destination.")
         return value
 
 
@@ -42,6 +86,7 @@ class QuotaFallback(BaseModel):
 
 class WorkerPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    routes: RoutePolicy = Field(default_factory=RoutePolicy)
     codex: Path
     windows_sandbox: Literal["mxc", "elevated"] = "mxc"
     opencode: Path | None = None
