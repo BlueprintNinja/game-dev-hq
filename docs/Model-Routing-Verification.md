@@ -16,7 +16,7 @@ No cost estimates are added. See Game-Dev-Execution.md for policy and rollout.
 ## Executed checks
 
 Python executable used (existing installation, no dependencies installed):
-`C:/Users/mrray/Documents/Codex/2026-10-21/referenced-chatgpt-conversation-this-is-an/work/source-apply/.venv/Scripts/python.exe`.
+`<workspace>/.venv/Scripts/python.exe`.
 TEMP, TMP and TMPDIR were set per process to this checkout's ignored var/tmp.
 
 - `python -m tools.windows_hq.check`: 98 tests, OK, no skips; final run
@@ -35,7 +35,7 @@ TEMP, TMP and TMPDIR were set per process to this checkout's ignored var/tmp.
   regression verifies old fields are absent and new historical defaults are
   blank, with no backfill inference.
 - Cached Ruff 0.17.1 executable:
-  `C:/Users/mrray/AppData/Local/uv/cache/archive-v0/Ce9kQwHd3Kpy5DsA/ruff-0.17.1.data/scripts/ruff.exe`.
+  `<uv-cache>/ruff-0.17.1.data/scripts/ruff.exe`.
   `check gamedev tools/windows_hq/tests`: all checks passed, exit 0.
   `format --check gamedev tools/windows_hq/tests`: 76 files already formatted,
   exit 0. No downloaded tooling or rule exceptions.

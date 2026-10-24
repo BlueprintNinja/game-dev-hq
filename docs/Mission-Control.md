@@ -1,8 +1,13 @@
 # Project Echo Mission Control: capability audit and implementation contract
 
-Status: source audit and implementation contract, October 23, 2026. A tested candidate exists in HQ run 23; Mission Control is not deployed.
-The existing task board and harness remain the supported interfaces. This document
-sets the first implementation boundary; it does not claim dataset or model experiments exist.
+Status: local Mission Control implementation from run 23 was applied locally in
+run 24; model routing from run 28 was applied locally in run 29. These existing
+local interfaces include the task board, Mission Control and guarded run forms.
+The native home/Needs you attention integration in run 31 is a code candidate
+pending review; it has not been applied or deployed. Completed validation run 30
+is evidence, not an outstanding operator decision. This document does not claim
+dataset or model experiments exist. See [Native Attention](Native-Attention.md)
+for the candidate's shared-summary boundary, thresholds and verification.
 
 ## Release baseline
 
