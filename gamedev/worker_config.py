@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .routing import RoutePolicy
+
 
 class CheckSpec(BaseModel):
     """One check the operator configured, and the kind of evidence it gives.
@@ -84,6 +86,7 @@ class QuotaFallback(BaseModel):
 
 class WorkerPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    routes: RoutePolicy = Field(default_factory=RoutePolicy)
     codex: Path
     windows_sandbox: Literal["mxc", "elevated"] = "mxc"
     opencode: Path | None = None

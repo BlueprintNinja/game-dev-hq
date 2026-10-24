@@ -31,11 +31,11 @@ def git(repository, *args):
 
 @workspace_only
 class ExecutionTests(WorkspaceTests):
-    def queued(self):
+    def queued(self, profile="routine"):
         task = Task.objects.get(pk=self.create()["id"])
         result = execute_capability(
             "gamedev.run.queue",
-            {"task_id": task.pk, "version": task.version, "prompt": "Add a useful note"},
+            {"task_id": task.pk, "version": task.version, "prompt": "Add a useful note", "profile": profile},
             principal=self.principal,
         )
         self.assertTrue(result["ok"], result)
@@ -112,7 +112,7 @@ class ExecutionTests(WorkspaceTests):
         self.assertIsNone(claim(self.principal))
 
     def test_only_owning_codex_run_can_delegate_with_a_bounded_schema(self):
-        run = self.queued()
+        run = self.queued("orchestration")
         with self.assertRaises(ValueError):
             dispatch(run, CodexResult(summary="", delegations=[]), self.principal)
         run = claim(self.principal)
@@ -210,7 +210,7 @@ class ExecutionTests(WorkspaceTests):
         self.assertFalse(self.retry(run)["ok"])
 
     def test_a_rejected_delegated_job_can_be_revised_and_unblocks_its_parent(self):
-        parent = self.queued()
+        parent = self.queued("orchestration")
         owned = claim(self.principal)
         dispatch(
             owned,

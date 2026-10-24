@@ -55,13 +55,13 @@ def stage(run_id, name, kind="CHAIN", attributes=None):
             record_operation("gamedev.trace.finish", f"Finished {name} for run #{run_id}", required=True)
 
 
-def observed_process(run_id, name, process, *args, **kwargs):
+def observed_process(run_id, name, process, *args, trace_attributes=None, **kwargs):
     parent = _parent.get()
     if parent is None:
         return process(*args, **kwargs)
     run_id = run_id or parent.run_id
     kind = "LLM" if name in ("agent", "fallback") else "TOOL"
-    with stage(run_id, name, kind) as metrics:
+    with stage(run_id, name, kind, attributes=trace_attributes) as metrics:
         observer = ToolObserver(_parent.get()) if kind == "LLM" else None
         original_progress = kwargs.get("progress", lambda text: None)
 

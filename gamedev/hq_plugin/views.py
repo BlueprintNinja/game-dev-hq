@@ -113,6 +113,9 @@ def move(request):
 @capability_required("gamedev.write")
 @require_POST
 def queue(request):
+    if set(request.POST) - {"csrfmiddlewaretoken", "task_id", "version", "prompt", "kind", "profile"}:
+        messages.error(request, "Unknown queue fields.")
+        return redirect("gamedev:index")
     return submit_run(
         request,
         "gamedev.run.queue",
@@ -121,6 +124,7 @@ def queue(request):
             "version": request.POST.get("version"),
             "prompt": request.POST.get("prompt", ""),
             "kind": request.POST.get("kind", "coding"),
+            "profile": request.POST.get("profile", "routine"),
         },
         reverse("gamedev:index"),
     )
@@ -130,7 +134,9 @@ def queue(request):
 @require_http_methods(["GET"])
 def run_detail(request, run_id):
 
-    run = get_object_or_404(Run.objects.select_related("task"), pk=run_id)
+    run = get_object_or_404(
+        Run.objects.select_related("task", "applies").prefetch_related("delegated_runs", "escalations"), pk=run_id
+    )
     template = "gamedev_hq/run.html#progress" if request.GET.get("fragment") == "1" else "gamedev_hq/run.html"
     return render(
         request,
@@ -138,6 +144,7 @@ def run_detail(request, run_id):
         {
             **page_context(f"Run #{run.pk}", run.task.title),
             "run": run,
+            "reported_usage": reported_usage(run),
             "changed_paths": changed_paths(run),
             "applied_run": run.applies,
             "apply_preview": preview(run) if run.kind == "coding" and run.status == "accepted" else {},
@@ -186,9 +193,24 @@ def submit_run(request, capability, payload, failure_url):
 @require_POST
 def submit_action(request, run_id, action):
     capabilities = {"retry": "gamedev.run.retry", "apply": "gamedev.run.apply", "rollback": "gamedev.run.rollback"}
+    payload = {"run_id": run_id, "version": request.POST.get("version"), "note": request.POST.get("note", "")}
+    if action == "retry":
+        payload["escalate"] = request.POST.get("escalate", "") == "true"
     return submit_run(
         request,
         capabilities[action],
-        {"run_id": run_id, "version": request.POST.get("version"), "note": request.POST.get("note", "")},
+        payload,
         reverse("gamedev:run", kwargs={"run_id": run_id}),
     )
+
+
+def reported_usage(run):
+    labels = {
+        "llm.token_count.prompt": "Input tokens",
+        "llm.token_count.completion": "Output tokens",
+        "llm.token_count.total": "Total tokens",
+        "hq.tokens.cached": "Cached tokens",
+        "hq.tokens.reasoning": "Reasoning tokens",
+        "llm.cost.total": "Provider-reported cost",
+    }
+    return [(label, run.metrics[key]) for key, label in labels.items() if key in run.metrics]

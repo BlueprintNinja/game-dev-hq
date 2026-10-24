@@ -131,12 +131,14 @@ backups live outside the repository and are never uploaded anywhere.
    approval of captured evidence; it does not apply, commit, push, merge or
    publish changes. Retained worktrees remain available for local inspection.
 
-Codex receives a bounded structured response schema. It may request at most
-two OpenCode children. The worker records the originating Codex run and creates
+Only an orchestration profile receives delegation instructions. Codex receives
+a bounded structured response schema and may request at most two routine
+Codex/Luna or OpenCode children. The worker records the originating Codex run and creates
 the children in the same project. A web-created OpenCode assignment cannot
 launch itself. Each child gets its own worktree, check run and independent
 review. Child changes are not automatically combined into the parent; review
-and integrate them explicitly. Recursive OpenCode delegation is disabled.
+and integrate them explicitly. Children cannot delegate further or apply changes into either destination.
+Recursive OpenCode delegation is disabled.
 
 ## Boundaries and operational limits
 
@@ -174,3 +176,93 @@ They are not forwarded through HQ. The adapter uses fixed requests with
 timeouts, rejects redirects, and ignores system HTTP proxy settings.
 
 Sandbox reference: [official OpenAI Windows sandbox documentation](https://learn.chatgpt.com/docs/windows/windows-sandbox).
+
+
+## Coding profiles and routing
+
+New coding queues default to `routine`: `gpt-6-luna`, reasoning effort `high`.
+Choose `complex` for `gpt-6.1-sol` / `high`, or `orchestration` for the same Sol
+route with optional bounded children. Routine and complex runs cannot dispatch
+children. There is no Sol planning or review call around routine runs.
+The queue form and the `gamedev.run.queue` capability (including the host CLI
+adapter) accept only the profile, not a model, executable or argument array.
+Editor inspections, builds, apply and rollback never invoke a coding model.
+
+Older operator policies work unchanged. An optional trusted local `routes`
+object can set each profile's effort to `low`, `medium` or `high`; unknown
+keys, efforts and models fail validation. Routine must select Luna and the
+other profiles must select Sol. For example:
+
+```json
+"routes": {
+  "routine": {"model": "gpt-6-luna", "effort": "high"},
+  "complex": {"model": "gpt-6.1-sol", "effort": "high"},
+  "orchestration": {"model": "gpt-6.1-sol", "effort": "high"}
+}
+```
+
+The worker records requested profile, selected model, effort and a fixed local
+policy reason durably before invocation. It passes `--model` and
+`-c model_reasoning_effort=...` explicitly while retaining ignored user config,
+workspace-write, the existing Windows sandbox policy, disabled command network
+and never approvals. Selected means requested from Codex; it is not evidence
+of the provider's actual served model. Actual model remains unavailable until
+a supported provider report can establish it. Historical selections are blank
+and displayed as unknown; they are never reconstructed from current defaults.
+Historical retries preserve that unknown profile and fail closed: queue fresh
+work with an explicit profile rather than guessing what the old run requested.
+
+Child payloads accept optional `agent` (`codex` or `opencode`) and `profile`
+(`routine` only). Old title/prompt payloads default to OpenCode/routine. New
+Codex children require a Sol orchestration parent; old historical OpenCode
+provenance remains compatible. The maximum is two children total, not two per
+engine. Each runs in a separate retained worktree with the configured timeout,
+output/diff limits and checks. Children have no application or delegation
+privileges. Independently inspect and accept every child; parent acceptance
+still waits for all child tasks to finish. No changes are silently merged.
+
+## Explicit escalation
+
+For a failed or rejected routine coding run, the retry form can request one
+complex/Sol attempt, or a caller may send `escalate: true` to
+`gamedev.run.retry`. This requires `gamedev.write`, the current run version,
+a nonblank review note and no queued/running/review work for the task. The new
+run links both its retry source and escalation root and requires its own review.
+Ordinary retries preserve the requested profile and delegation lineage.
+
+Only one escalation is permitted per task, including across ordinary retries.
+The escalation attempt itself cannot be retried. Editor, apply, rollback,
+delegated, canceled, non-routine and previously escalated jobs are ineligible.
+Cancellation requests, recorded quota fallbacks and failure output indicating
+quota, authentication, credentials or sandbox problems also block escalation;
+this conservative text guard can require manual diagnosis. No failure triggers
+a Sol retry automatically, and escalation never accepts or applies a result.
+The existing explicitly configured quota/OpenCode fallback remains a separate
+mechanism and is shown distinctly from escalation and delegation.
+
+## Usage, privacy and migration order
+
+Run details show selected routing, reported usage and linked retry, escalation
+and delegation history. Mission Control uses bounded projections with the route
+fields selected in the existing queries; it does not load prompt/log/diff data.
+Token counts are provider-reported tokens, not subscription credits or USD.
+Missing usage and costs remain unavailable. No percentage savings are promised.
+Trace routing metadata contains fixed route values and numeric run IDs; export
+uses an explicit attribute allowlist, excluding prompts, source, commands,
+logs and secrets. Existing provider-reported usage is retained, never estimated.
+
+Deployment is a separate operator operation: stop the worker, back up the
+workspace using its supported backup procedure, install the coherent code,
+then migrate the workspace through `gamedev_hq.0010_run_routing` before starting
+the new web process or worker. The startup health wait remains required. Do not
+copy a subset of Python files into an unmigrated deployment. Validate policy
+and sandbox compatibility before enabling queues.
+
+For rollback, stop workers and web writers first. Retain the backup and reviewed
+worktrees. Restore the previous code while retaining the additive columns if
+possible; the older model ignores them. Do not run an old worker against queued
+profile-routed work: it ignores profiles and model selection. Drain or cancel
+such queues under the new code first. Reversing migration 0010 deletes routing
+and escalation history, so prefer retaining it; a full database restore also
+loses all runs and audit events written since that backup. No migration or
+rollback of a live database is part of this change.

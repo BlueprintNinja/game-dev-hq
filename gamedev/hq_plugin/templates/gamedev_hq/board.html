@@ -34,6 +34,9 @@
         {% if row.coding_enabled %}<option value="coding">Coding task</option>{% endif %}
         {% if row.uefn_configured %}<option value="uefn_inspect">Check open UEFN project</option><option value="uefn_build">Build Verse</option>{% endif %}
       </select></p>
+      <p><label for="profile_{{ row.task.pk }}">Coding profile</label><select id="profile_{{ row.task.pk }}" name="profile">
+        <option value="routine">Routine / Luna</option><option value="complex">Complex / Sol</option><option value="orchestration">Orchestration / Sol with bounded delegation</option>
+      </select></p>
       <button type="submit">Start work</button>
     </form>
     {% elif row.task.status != 'done' and row.task.agent == 'codex' %}

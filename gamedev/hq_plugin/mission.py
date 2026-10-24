@@ -21,6 +21,9 @@ RUN_FIELDS = (
     "kind",
     "status",
     "engine",
+    "requested_profile",
+    "selected_model",
+    "escalation_root_id",
     "passed",
     "delegated_by_id",
     "applies_id",
@@ -44,6 +47,9 @@ def run_row(run):
     detail = f"{KINDS[run.kind]} · {run.status} · Engine: {run.engine or 'not reported'}"
     if run.delegated_by_id:
         detail += f" · Delegated by run #{run.delegated_by_id}"
+    detail += f" · Profile: {run.requested_profile or 'unknown'} · Selected: {run.selected_model or 'unknown'}"
+    if run.escalation_root_id:
+        detail += f" · Escalated from run #{run.escalation_root_id}"
     detail += evidence_detail(run.check_outcomes)
     return ListRow(
         title=f"Run #{run.pk}: {run.task.title}",

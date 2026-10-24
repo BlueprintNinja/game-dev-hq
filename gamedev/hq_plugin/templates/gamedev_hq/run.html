@@ -7,6 +7,18 @@
   <h2>{{ run.status|title }}</h2>
   {% if run.kind == 'apply' %}<p>Apply: writing approved changes into the destination.</p>{% endif %}
   {% if run.kind == 'rollback' %}<p>Rollback: putting back what an apply wrote.</p>{% endif %}
+  <dl class="kv">
+    <dt>Requested profile</dt><dd>{{ run.requested_profile|default:"Unknown (historical or non-coding)" }}</dd>
+    <dt>Selected model</dt><dd>{{ run.selected_model|default:"Unknown / not selected" }}</dd>
+    <dt>Selected effort</dt><dd>{{ run.selected_effort|default:"Unknown / not selected" }}</dd>
+    <dt>Routing reason</dt><dd>{{ run.routing_reason|default:"Not recorded" }}</dd>
+    <dt>Provider-reported model</dt><dd>Unavailable</dd>
+  </dl>
+  <p>Reported usage (tokens are not subscription credits or USD):</p>
+  <dl class="kv">{% for label, value in reported_usage %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% empty %}<dt>Usage</dt><dd>Unavailable</dd>{% endfor %}</dl>
+  {% if run.escalation_root_id %}<p>Complex escalation of <a href="{% url 'gamedev:run' run.escalation_root_id %}">run #{{ run.escalation_root_id }}</a>.</p>{% endif %}
+  {% for child in run.delegated_runs.all %}<p>Independent child: <a href="{% url 'gamedev:run' child.pk %}">run #{{ child.pk }}</a> · {{ child.status }}. Review independently; changes are never merged automatically.</p>{% endfor %}
+  {% for attempt in run.escalations.all %}<p>Escalation: <a href="{% url 'gamedev:run' attempt.pk %}">run #{{ attempt.pk }}</a>.</p>{% endfor %}
   <p>{{ run.prompt|linebreaksbr }}</p>
   {% if run.engine %}<p>Worked by: <strong>{{ run.engine }}</strong>{% if run.engine != run.task.agent and run.kind == 'coding' %} (the task asked for {{ run.task.agent }}){% endif %}</p>{% endif %}
   {% if run.fallback_reason %}<p>The requested agent reported no allowance, so another engine finished the work: {{ run.fallback_reason|linebreaksbr }}</p>{% endif %}
@@ -79,6 +91,9 @@
     {% csrf_token %}<input type="hidden" name="version" value="{{ run.version }}">
     <p><label for="retry_note">What should change</label><textarea id="retry_note" name="note" maxlength="4000" rows="2"></textarea></p>
     <button type="submit">Ask again</button>
+    {% if run.requested_profile == 'routine' and run.kind == 'coding' and not run.delegated_by_id and not run.escalation_root_id and run.status != 'canceled' %}
+    <button type="submit" name="escalate" value="true">Escalate once to complex / Sol (note required)</button>
+    {% endif %}
   </form>
   {% endif %}
   {% endif %}

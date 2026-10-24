@@ -29,12 +29,17 @@ lazy from .hq_plugin.models import Run
 lazy from .hq_plugin.worker_state import claim, note_rollback, recover, update
 
 
-def codex_command(policy, worktree):
+def codex_command(policy, worktree, route=None):
+    route = route or policy.routes.resolve("routine")
     return [
         str(policy.codex),
         "--no-daemon",
         "exec",
         "--ignore-user-config",
+        "--model",
+        route.model,
+        "-c",
+        "model_reasoning_effort=" + json.dumps(route.effort),
         "--sandbox",
         "workspace-write",
         "-c",
@@ -94,6 +99,16 @@ def run_fallback(policy, project, worktree, prompt, canceled, save, reason, outp
     return code, f"{output}{marker}{result}", agent, reason
 
 
+def delegation_instructions(run):
+    if run.requested_profile == "orchestration" and not run.delegated_by_id and not run.task.parent_id:
+        return (
+            "\nReturn the required JSON. You may delegate at most TWO bounded routine jobs to "
+            "Codex/Luna (agent codex, profile routine) or OpenCode (agent opencode). "
+            "Children use independent worktrees and require independent review; never merge their changes."
+        )
+    return "\nReturn the required JSON with delegations empty. Do not delegate or launch other agents."
+
+
 def run_agent(run, policy, project, worktree, base, canceled, save):
     """Run the agent the task names, and the fallback engine when it has no allowance."""
     if run.task.agent == "opencode":
@@ -102,11 +117,13 @@ def run_agent(run, policy, project, worktree, base, canceled, save):
     else:
         schema = policy.artifacts / f"run-{run.pk}-schema.json"
         schema.write_text(json.dumps(CodexResult.model_json_schema()), encoding="utf-8")
-        command = [*codex_command(policy, worktree)[:-1], "--output-schema", str(schema), "-"]
-        prompt = (
-            base
-            + "\nReturn the required JSON. You may delegate at most two isolated coding jobs to OpenCode; leave delegations empty when unnecessary. Delegated changes are separate worktrees and need independent review."
-        )
+        command = [
+            *codex_command(policy, worktree, policy.routes.resolve(run.requested_profile))[:-1],
+            "--output-schema",
+            str(schema),
+            "-",
+        ]
+        prompt = base + delegation_instructions(run)
     with tempfile.TemporaryDirectory(prefix="hq-agent-") as runtime:
         environment = opencode_environment(policy, runtime) if run.task.agent == "opencode" else None
         code, output = observed_process(
@@ -114,6 +131,15 @@ def run_agent(run, policy, project, worktree, base, canceled, save):
             "agent",
             run_process,
             command,
+            trace_attributes={
+                "hq.route.profile": run.requested_profile,
+                "hq.route.model": run.selected_model if run.task.agent == "codex" else "",
+                "hq.route.effort": run.selected_effort if run.task.agent == "codex" else "",
+                "hq.route.reason": "local-policy:" + run.requested_profile if run.task.agent == "codex" else "",
+                "hq.delegated_by.id": run.delegated_by_id or 0,
+                "hq.retried_from.id": getattr(run, "retried_from_id", None) or 0,
+                "hq.escalation_root.id": getattr(run, "escalation_root_id", None) or 0,
+            },
             cwd=worktree,
             timeout=project.timeout_seconds,
             canceled=canceled,
@@ -124,7 +150,7 @@ def run_agent(run, policy, project, worktree, base, canceled, save):
     fallback = None
     reason = ""
     if code and run.task.agent == "codex" and policy.quota_fallback is not None:
-        reason = quota_reason(policy.quota_fallback.matches, output)
+        reason = quota_reason(policy.quota_fallback.matches, output) or ""
         if reason:
             code, output, fallback, reason = run_fallback(
                 policy,
@@ -210,8 +236,22 @@ def execute_coding(run, policy, project, principal):
     """Coding is a separate path from editor and approved file operations."""
     if not project.coding_enabled:
         raise ProcessFailure("Coding is disabled by the local policy for this project.")
-    if run.task.agent == "opencode" and (not run.delegated_by_id or run.delegated_by.task_id != run.task.parent_id):
+    if (run.task.agent == "opencode" or run.task.parent_id or run.delegated_by_id) and (
+        not run.delegated_by_id or run.delegated_by.task_id != run.task.parent_id
+    ):
         raise ProcessFailure("OpenCode dispatch requires verified Codex delegation provenance.")
+    if run.task.agent == "codex":
+        route = policy.routes.resolve(run.requested_profile)
+        update(
+            run.pk,
+            run.worker_token,
+            principal,
+            selected_model=route.model,
+            selected_effort=route.effort,
+            routing_reason="local-policy:" + run.requested_profile,
+        )
+        run.selected_model = route.model
+        run.selected_effort = route.effort
     revision = git(project.repository, "rev-parse", "HEAD").strip()
     worktree = policy.artifacts / f"run-{run.pk}"
     policy.artifacts.mkdir(parents=True, exist_ok=True)
@@ -235,7 +275,9 @@ def execute_coding(run, policy, project, principal):
         raise ProcessFailure(f"Agent exited with status {code}.")
     checks, diff = collect_evidence(policy, project, worktree, canceled)
     if run.task.agent == "codex" and fallback is None:
-        dispatch(run, read_result(output), principal)
+        result = read_result(output)
+        if result.delegations:
+            dispatch(run, result, principal)
     save(
         status="review",
         output=output,
@@ -337,6 +379,13 @@ def process_next(policy, principal):
             metrics.update(
                 {
                     "hq.engine": current.engine,
+                    "hq.route.profile": current.requested_profile,
+                    "hq.route.model": current.selected_model,
+                    "hq.route.effort": current.selected_effort,
+                    "hq.route.reason": current.routing_reason,
+                    "hq.delegated_by.id": current.delegated_by_id or 0,
+                    "hq.retried_from.id": current.retried_from_id or 0,
+                    "hq.escalation_root.id": current.escalation_root_id or 0,
                     "hq.status": current.status,
                     "hq.fallback": bool(current.fallback_reason),
                 }

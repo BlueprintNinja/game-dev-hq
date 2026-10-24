@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 lazy from django.db import transaction
@@ -15,6 +16,8 @@ lazy from .hq_plugin.models import Run, Task
 
 class DelegatedWork(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    agent: Literal["opencode", "codex"] = "opencode"
+    profile: Literal["routine"] = "routine"
     title: str = Field(min_length=1, max_length=500)
     prompt: str = Field(min_length=1, max_length=12000)
 
@@ -51,17 +54,29 @@ def dispatch(run, result, principal):
             or parent.delegated_by_id
         ):
             raise ValueError("Only the owning Codex run can delegate.")
+        if not result.delegations:
+            return
+        if result.delegations and parent.requested_profile not in ("", "orchestration"):
+            raise ValueError("Only orchestration runs may delegate.")
+        if any(item.agent == "codex" for item in result.delegations) and (
+            parent.requested_profile != "orchestration" or parent.selected_model != "gpt-6.1-sol"
+        ):
+            raise ValueError("Codex children require selected Sol orchestration.")
+        if parent.task.parent_id:
+            raise ValueError("Child tasks cannot delegate.")
         if parent.delegated_runs.exists():
             raise ValueError("Delegations have already been dispatched.")
         for item in result.delegations:
             child = Task.objects.create(
                 project_slug=parent.task.project_slug,
                 title=item.title,
-                agent="opencode",
+                agent=item.agent,
                 parent=parent.task,
                 status="active",
             )
-            delegated = Run.objects.create(task=child, delegated_by=parent, prompt=item.prompt)
+            delegated = Run.objects.create(
+                task=child, delegated_by=parent, prompt=item.prompt, requested_profile=item.profile
+            )
             record_operation(
                 "gamedev.run.delegate",
                 f"Codex run #{parent.pk} delegated run #{delegated.pk}",

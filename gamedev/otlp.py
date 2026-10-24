@@ -44,10 +44,51 @@ def attribute(key, value):
     return KeyValue(key=key, value=wrapped)
 
 
+EXPORT_ATTRIBUTES = frozenset(
+    {
+        "hq.project",
+        "hq.kind",
+        "hq.requested_agent",
+        "hq.queue.seconds",
+        "hq.engine",
+        "hq.status",
+        "hq.fallback",
+        "hq.operation.succeeded",
+        "hq.verification.passed",
+        "hq.output.bytes",
+        "hq.route.profile",
+        "hq.route.model",
+        "hq.route.effort",
+        "hq.route.reason",
+        "hq.delegated_by.id",
+        "hq.retried_from.id",
+        "hq.escalation_root.id",
+        "hq.review.decision",
+        "hq.review.diff_sha256",
+        "hq.review.evidence_sha256",
+        "hq.tool.type",
+        "hq.timing.source",
+        "hq.timing.resolution_seconds",
+        "hq.timing.precise",
+        "hq.tokens.cached",
+        "hq.tokens.reasoning",
+        "hq.tokens.cache_write",
+        "hq.tools.count",
+        "llm.token_count.prompt",
+        "llm.token_count.completion",
+        "llm.token_count.total",
+        "llm.cost.total",
+        "process.exit_code",
+        "error.type",
+    }
+)
+
+
 def encode_spans(spans):
     result = []
     for span in spans:
-        values = {**span.attributes, "openinference.span.kind": span.kind, "hq.run.id": span.run_id}
+        values = {key: value for key, value in span.attributes.items() if key in EXPORT_ATTRIBUTES}
+        values.update({"openinference.span.kind": span.kind, "hq.run.id": span.run_id})
         result.append(
             Span(
                 trace_id=bytes.fromhex(span.trace_id),

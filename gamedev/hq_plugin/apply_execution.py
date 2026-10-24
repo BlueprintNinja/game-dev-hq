@@ -31,6 +31,12 @@ class RollbackApply(StrictCommand):
     note: Annotated[str, Field(max_length=4000)] = ""
 
 
+def require_direct_result(source):
+    """Delegated work can be reviewed but cannot write to a destination."""
+    if source.delegated_by_id or source.task.parent_id:
+        raise ValueError("Delegated changes require independent review and cannot be applied here.")
+
+
 def apply_approved(command, *, principal):
     """Ask the worker to write an accepted run's changes into the destination."""
     principal.require("gamedev.write")
@@ -40,6 +46,7 @@ def apply_approved(command, *, principal):
             raise ValueError("The run does not exist.")
         if source.version != command.version:
             raise ValueError("Run changed. Reload before applying.")
+        require_direct_result(source)
         if source.status != "accepted":
             raise ValueError("Only an accepted run may be applied.")
         if not source.passed:

@@ -9,6 +9,7 @@ from pydantic import Field
 from hq_sdk.audit import audit_operation, record_operation
 from hq_sdk.capabilities import CapabilitySpec, StrictCommand
 
+from ..routing import CodingProfile
 from .models import Run, Task
 from .observations import decision_span
 
@@ -17,6 +18,7 @@ FINISHED = ("failed", "canceled", "rejected")
 
 
 class QueueRun(StrictCommand):
+    profile: CodingProfile = "routine"
     task_id: Annotated[int, Field(gt=0)]
     version: Annotated[int, Field(gt=0)]
     prompt: Annotated[str, Field(min_length=1, max_length=12000)]
@@ -35,6 +37,7 @@ class DecideRun(StrictCommand):
 
 
 class RetryRun(StrictCommand):
+    escalate: bool = False
     run_id: Annotated[int, Field(gt=0)]
     version: Annotated[int, Field(gt=0)]
     note: Annotated[str, Field(max_length=4000)] = ""
@@ -52,10 +55,14 @@ def queue_run(command, *, principal):
             raise ValueError("Describe the work first.")
         if task.runs.filter(status__in=("queued", "running", "review")).exists():
             raise ValueError("This task already has work running or awaiting review.")
-        if task.agent == "opencode":
+        if task.agent == "opencode" or task.parent_id:
             raise ValueError("Only the Codex worker can dispatch an OpenCode delegation.")
         run = Run.objects.create(
-            task=task, prompt=command.prompt.strip(), kind=command.kind, requested_by=principal.actor
+            task=task,
+            prompt=command.prompt.strip(),
+            kind=command.kind,
+            requested_by=principal.actor,
+            requested_profile=command.profile if command.kind == "coding" else "",
         )
         task.status = "active"
         task.version += 1
@@ -152,17 +159,24 @@ def retry_run(command, *, principal):
             raise ValueError("Run changed. Reload before retrying.")
         if run.status not in FINISHED:
             raise ValueError("Only a run that failed, was canceled or was rejected can be retried.")
+        if run.escalation_root_id:
+            raise ValueError("The single escalation attempt cannot be retried.")
         if run.kind in ("apply", "rollback"):
             raise ValueError("Retry the file operation from its original approved run, not as a new coding task.")
         task = Task.objects.select_for_update().get(pk=run.task_id)
         if task.runs.filter(status__in=("queued", "running", "review")).exists():
             raise ValueError("This task already has work running or awaiting review.")
+        if command.escalate:
+            validate_escalation(run, command.note)
         retried = Run.objects.create(
             task=task,
             prompt=run.prompt,
             kind=run.kind,
             delegated_by=run.delegated_by,
             retried_from=run,
+            requested_profile="complex" if command.escalate else run.requested_profile,
+            escalation_root=run if command.escalate else run.escalation_root,
+            decision_note=command.note.strip(),
             requested_by=principal.actor,
         )
         task.status = "active"
@@ -171,10 +185,38 @@ def retry_run(command, *, principal):
         record_operation(
             "gamedev.run.retry",
             f"Retried run #{run.pk} as run #{retried.pk}",
-            metadata={"run_id": run.pk, "retried_run_id": retried.pk, "task_id": task.pk},
+            metadata={
+                "run_id": run.pk,
+                "retried_run_id": retried.pk,
+                "task_id": task.pk,
+                "escalation": command.escalate,
+                "profile": retried.requested_profile,
+            },
             required=True,
         )
         return {"ok": True, "id": retried.pk}
+
+
+def validate_escalation(run, note):
+    """One explicit complex attempt per task, including across ordinary retries."""
+    if (
+        not note.strip()
+        or run.kind != "coding"
+        or run.status not in ("failed", "rejected")
+        or run.requested_profile != "routine"
+        or run.task.agent != "codex"
+        or run.delegated_by_id
+        or run.task.parent_id
+        or run.escalation_root_id
+        or run.task.runs.filter(escalation_root__isnull=False).exists()
+        or run.cancel_requested
+        or run.fallback_reason
+    ):
+        raise ValueError("Escalation requires an eligible routine failure, a note, and no earlier escalation.")
+    # Infrastructure failures require operator repair, not a more expensive model.
+    blocked = ("quota", "allowance", "rate limit", "auth", "credential", "cancel", "sandbox", "401", "403")
+    if any(word in run.output.lower() for word in blocked):
+        raise ValueError("Resolve quota, authentication, cancellation or sandbox issues before new work.")
 
 
 def capabilities():

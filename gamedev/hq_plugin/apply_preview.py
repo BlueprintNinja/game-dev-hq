@@ -5,6 +5,8 @@ from .models import ProjectProfile
 
 
 def preview(run):
+    if run.delegated_by_id or run.task.parent_id:
+        return {"error": "Delegated changes require independent review; apply is unavailable.", "known": True}
     completed = (
         run.applied_runs.filter(kind="apply", status="accepted", rolled_back_at__isnull=True).order_by("-id").first()
     )
