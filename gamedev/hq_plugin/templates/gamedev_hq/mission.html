@@ -1,0 +1,45 @@
+{% extends "page.html" %}
+{% block page %}
+<p><a href="{% url 'gamedev:index' %}">Game Dev tasks</a></p>
+<form method="get" action="{% url 'gamedev:mission' %}">
+  <label for="mission-project">Project</label>
+  <select id="mission-project" name="project">
+    <option value="">Choose a project</option>
+    {% for item in projects %}<option value="{{ item.slug }}"{% if project == item.slug %} selected{% endif %}>{{ item.name }}</option>{% endfor %}
+  </select>
+  <button type="submit">Show project</button>
+</form>
+{% partialdef mission inline %}
+<section id="mission" data-fragment="{% url 'gamedev:mission' %}?project={{ project|urlencode }}&amp;fragment=1"{% if selected %} data-fragment-poll="15"{% endif %}>
+{% if selected %}
+  <h2>{{ selected.name }}</h2>
+  <p>Recent activity: last 7 days. Working, queued and pending work includes all ages. Project selection filters work; it does not change access rights.</p>
+  {% if truncated %}<p>Some current work is not shown. Each list is limited to 100 runs or tasks. <a href="{% url 'gamedev:index' %}">Open the task board</a>.</p>{% endif %}
+  {% include "partials/_kpi_grid.html" with items=kpis only %}
+  <h2>What next</h2>
+  {% if suggestions %}{% include "partials/_insight_grid.html" with items=suggestions only %}{% else %}<p>No next step established by the shown run records. Choose work on the task board.</p>{% endif %}
+  <h2>Working and queued</h2>
+  {% include "partials/_record_list.html" with rows=active empty="No runs working or queued." only %}
+  <h2>Tasks awaiting a run</h2>
+  {% include "partials/_record_list.html" with rows=pending empty="No pending tasks without a run." only %}
+  <h2>Coding changes to review or apply</h2>
+  {% include "partials/_record_list.html" with rows=changes empty="No current coding changes ready for review or apply." only %}
+  <h2>Results to acknowledge</h2>
+  <p>Editor and compilation results are separate from coding changes. Coding checks without saved changes also appear here.</p>
+  {% include "partials/_record_list.html" with rows=results empty="No current results awaiting acknowledgement." only %}
+  <h2>Latest problems</h2>
+  {% include "partials/_record_list.html" with rows=failures empty="No unresolved latest failure shown." only %}
+  <h2>Evidence limits</h2>
+  <p>Source checks, compilation, work process checks and gameplay evidence answer different questions. Passing a check does not mean the game is complete. Run pages show the captured evidence. No overall game quality rating is established.</p>
+  {% if health %}<h2>Reading freshness</h2>
+  <p>Current means recently reported, not healthy. Workstation readings cover all projects.</p>
+  {% include "partials/_kpi_grid.html" with items=health only %}{% endif %}
+  <h2>Recent project activity</h2>
+  {% if recent_truncated %}<p>Only the latest 20 runs updated in the last 7 days are shown.</p>{% endif %}
+  {% include "partials/_record_list.html" with rows=recent empty="No run activity in the last 7 days." only %}
+  {% if traces %}<h2>Execution traces</h2>{% include "partials/_record_list.html" with rows=traces only %}{% endif %}
+{% else %}<p>Choose a project to see its work and next steps.</p>{% endif %}
+</section>
+{% endpartialdef %}
+{% endblock %}
+

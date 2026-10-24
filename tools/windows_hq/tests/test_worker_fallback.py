@@ -46,6 +46,7 @@ class QuotaFallbackTests(SimpleTestCase):
         return SimpleNamespace(
             pk=7,
             kind="coding",
+            requested_profile="routine",
             prompt="Write the file.",
             worker_token="token",
             delegated_by_id=None,
@@ -71,6 +72,7 @@ class QuotaFallbackTests(SimpleTestCase):
             return ""
 
         with (
+            mock.patch("gamedev.delegation.Path.home", return_value=self.root / "missing"),
             mock.patch.object(worker, "run_process", side_effect=fake_process),
             mock.patch.object(worker, "git", side_effect=fake_git),
             mock.patch.object(worker, "update", side_effect=lambda *a, **k: self.saved.append(k)),

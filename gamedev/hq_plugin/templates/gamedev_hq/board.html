@@ -1,5 +1,7 @@
 {% extends "page.html" %}
 {% block page %}
+<p><a href="{% url 'gamedev:mission' %}">Mission Control</a></p>
+<p><a href="{% url 'gamedev:metrics' %}">Harness metrics and Phoenix traces</a></p>
 {% if showcase_url %}<p><a href="{{ showcase_url }}">Explore the full sample showcase</a> · Example data is separate from your saved workspace.</p>{% endif %}
 <section class="card">
   <div class="section-head"><h2>New task</h2></div>
@@ -16,20 +18,29 @@
   <details>
     <summary>#{{ row.task.pk }} · {{ row.task.title }} · {{ row.task.status|title }}</summary>
     <p>{{ row.project }} · {{ row.task.agent }}{% if row.task.parent_id %} · delegated by #{{ row.task.parent_id }}{% endif %}</p>
+    <p>Worker: {{ row.worker_label }}</p>
     {% if row.task.status == 'done' %}<p>{{ row.task.evidence|linebreaksbr }}</p>
     {% else %}
     <form method="post" action="{% url 'gamedev:move' %}">{% csrf_token %}{{ row.move.as_p }}<button type="submit">Update task</button></form>
     {% endif %}
     {% for run in row.task.runs.all %}<p><a href="{% url 'gamedev:run' run.pk %}">Run #{{ run.pk }} · {{ run.status|title }}</a></p>{% endfor %}
-    {% if row.task.status != 'done' and row.task.agent == 'codex' %}
+    {% if row.task.status != 'done' and row.task.agent == 'codex' and row.has_worker_actions %}
     <form method="post" action="{% url 'gamedev:queue' %}">
       {% csrf_token %}
       <input type="hidden" name="task_id" value="{{ row.task.pk }}">
       <input type="hidden" name="version" value="{{ row.task.version }}">
       <p><label for="prompt_{{ row.task.pk }}">Work instructions</label><textarea id="prompt_{{ row.task.pk }}" name="prompt" required maxlength="12000" rows="4"></textarea></p>
-      <p><label for="kind_{{ row.task.pk }}">Action</label><select id="kind_{{ row.task.pk }}" name="kind"><option value="coding">Coding task</option><option value="uefn_inspect">Check open UEFN project</option><option value="uefn_build">Build Verse</option></select></p>
+      <p><label for="kind_{{ row.task.pk }}">Action</label><select id="kind_{{ row.task.pk }}" name="kind">
+        {% if row.coding_enabled %}<option value="coding">Coding task</option>{% endif %}
+        {% if row.uefn_configured %}<option value="uefn_inspect">Check open UEFN project</option><option value="uefn_build">Build Verse</option>{% endif %}
+      </select></p>
+      <p><label for="profile_{{ row.task.pk }}">Coding profile</label><select id="profile_{{ row.task.pk }}" name="profile">
+        <option value="routine">Routine / Luna</option><option value="complex">Complex / Sol</option><option value="orchestration">Orchestration / Sol with bounded delegation</option>
+      </select></p>
       <button type="submit">Start work</button>
     </form>
+    {% elif row.task.status != 'done' and row.task.agent == 'codex' %}
+    <p>This project has no worker actions configured, so work cannot be started from here.</p>
     {% endif %}
   </details>
   {% empty %}<p>No tasks yet.</p>{% endfor %}

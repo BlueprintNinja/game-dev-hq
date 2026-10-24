@@ -21,5 +21,5 @@ plugin = PluginManifest(
     url_prefix="game-dev/",
     urlconf="gamedev.hq_plugin.urls",
     navigation=(NavigationItem("Game Dev", "gamedev:index", "gamedev", order=150),),
-    operator_capabilities=("gamedev.read", "gamedev.write"),
+    operator_capabilities=("gamedev.read", "gamedev.write", "gamedev.metrics.read", "gamedev.traces.read"),
 )

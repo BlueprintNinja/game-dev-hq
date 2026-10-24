@@ -5,10 +5,11 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 from django.test import SimpleTestCase
 
-from hq.config.sandbox import sweep_abandoned
+from hq.config.sandbox import _alive, sweep_abandoned
 from hq.platform.core.test_runner import SOURCE, SeverinoTestRunner, excluded_tags
 
 
@@ -34,6 +35,16 @@ class EmptySelectionTests(SimpleTestCase):
 
 
 class AbandonedRunTests(SimpleTestCase):
+    def test_permission_denial_preserves_files_and_unknown_errors_stay_visible(self):
+        with mock.patch("hq.config.sandbox.os.name", "posix"):
+            with mock.patch("hq.config.sandbox.os.kill", side_effect=PermissionError):
+                self.assertTrue(_alive(12345))
+            with (
+                mock.patch("hq.config.sandbox.os.kill", side_effect=OSError("unexpected")),
+                self.assertRaises(OSError),
+            ):
+                _alive(12345)
+
     def test_a_killed_runs_files_are_deleted_and_a_live_runs_are_kept(self):
         dead = subprocess.Popen([sys.executable, "-c", ""])
         dead.wait()

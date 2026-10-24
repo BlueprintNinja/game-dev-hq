@@ -25,6 +25,11 @@ uv run coverage erase
 uv run coverage run manage.py test --noinput --parallel auto --durations 10 >"$log" 2>&1 || status=$?
 cat "$log"
 [ "$status" -eq 0 ]
+# The Windows workspace is a separate Django composition. The host-only suite
+# deliberately stands its database tests down when that extension is absent.
+# Measure its real tests as well before judging the same repository-wide floor.
+# check creates its own throwaway database and never opens workstation data.
+uv run coverage run -m tools.windows_hq.check
 uv run coverage combine --quiet
 total="$(uv run coverage report --format=total --precision=2)"
 # Decimals, so awk compares them: test(1) compares integers only.
