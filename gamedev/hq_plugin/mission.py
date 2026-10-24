@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 
-from django.db.models import Exists, F, OuterRef, Q, Subquery
+from django.db.models import Case, Exists, F, OuterRef, Q, Subquery, When
 from django.urls import reverse
 from django.utils import timezone
 
@@ -80,9 +80,9 @@ def evidence_detail(checks):
     return "; " + "; ".join(parts) + suffix
 
 
-def run_query(project):
+def run_query(project=None):
     return (
-        Run.objects.filter(task__project_slug=project)
+        (Run.objects.filter(task__project_slug=project) if project is not None else Run.objects.all())
         .select_related("task")
         .only(*RUN_FIELDS)
         .annotate(check_outcomes=F("metrics__checks"))
@@ -93,7 +93,7 @@ def latest_work():
     return Run.objects.filter(task_id=OuterRef("task_id"), kind__in=WORK_KINDS).order_by("-id")
 
 
-def current_query(project):
+def current_query(project=None):
     """Latest work per task, plus latest file operation per source and kind.
 
     File operations stay relevant only while their approved source is current.
@@ -140,6 +140,25 @@ def attention_kind(run):
     return ""
 
 
+def attention_query(project=None):
+    """Shared current-decision predicate, applied before any display limit."""
+    return (
+        current_query(project)
+        .filter(
+            Q(status__in=("review", "failed", "canceled"))
+            | Q(kind="coding", status="accepted", already_applied=False, has_diff=True)
+        )
+        .order_by(
+            Case(
+                When(Q(status__in=("failed", "canceled")) | Q(status="review", passed=False), then=0),
+                When(kind="coding", has_diff=True, passed=True, then=1),
+                default=2,
+            ),
+            "-id",
+        )
+    )
+
+
 def suggestion(run, group):
     if group == "failures":
         body = "The latest attempt needs attention. Review its evidence and the available retry form."
@@ -176,14 +195,8 @@ def health(project, now):
 def project_mission(project, *, principal, now=None):
     principal.require("gamedev.read")
     now = now or timezone.now()
-    query = current_query(project)
-    # Filter attention in SQL before bounding, so completed history cannot hide a problem.
-    current = list(
-        query.filter(
-            Q(status__in=("review", "failed", "canceled"))
-            | Q(kind="coding", status="accepted", already_applied=False, has_diff=True)
-        )[: LIMIT + 1]
-    )
+    # Filter current decisions before bounding, across all history.
+    current = list(attention_query(project)[: LIMIT + 1])
     active = list(run_query(project).filter(status__in=("queued", "running")).order_by("id")[: LIMIT + 1])
     tasks = Task.objects.filter(project_slug=project, status__in=("queued", "active", "blocked", "review"))
     pending = list(
