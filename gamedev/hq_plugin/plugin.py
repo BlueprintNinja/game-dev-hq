@@ -1,11 +1,12 @@
 from hq_sdk.plugin import NavigationItem, PluginIntegration, PluginManifest
 
+lazy from .attention import attention_items
 lazy from .services import capabilities
 lazy from .views import dashboard_cards
 
 
 def integration():
-    return PluginIntegration(capabilities=capabilities, dashboard=dashboard_cards)
+    return PluginIntegration(capabilities=capabilities, dashboard=dashboard_cards, attention=attention_items)
 
 
 plugin = PluginManifest(
