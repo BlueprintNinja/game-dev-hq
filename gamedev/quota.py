@@ -70,7 +70,10 @@ def message_in(line):
 
 def states_quota(message, matches):
     """Whether a message says the agent has no allowance."""
+    # Provider messages may spell the same apostrophe typographically.
+    message = message.replace("\u2019", "'").replace("\u2018", "'")
     for phrase in matches:
+        phrase = phrase.replace("\u2019", "'").replace("\u2018", "'")
         if not phrase:
             continue
         index = message.find(phrase)
