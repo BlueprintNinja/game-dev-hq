@@ -29,6 +29,20 @@ lazy from .hq_plugin.models import Run
 lazy from .hq_plugin.worker_state import claim, note_rollback, recover, update
 
 
+def profile_heartbeat(policy):
+    """Return a throttled callback for the supervisor's existing progress poll."""
+    published = time.monotonic()
+
+    def maybe_publish(_output=""):
+        nonlocal published
+        now = time.monotonic()
+        if now - published >= 30:
+            publish_profiles(policy)
+            published = now
+
+    return maybe_publish
+
+
 def codex_command(policy, worktree, route=None):
     route = route or policy.routes.resolve("routine")
     return [
@@ -72,7 +86,7 @@ def sandbox_command(policy, worktree, argv):
     ]
 
 
-def run_fallback(policy, project, worktree, prompt, canceled, save, reason, output):
+def run_fallback(policy, project, worktree, prompt, canceled, save, reason, output, heartbeat=None):
     """Finish the work with the other engine, and say that it did.
 
     The fallback runs in the same worktree, under the same sandbox and the
@@ -91,7 +105,7 @@ def run_fallback(policy, project, worktree, prompt, canceled, save, reason, outp
             canceled=canceled,
             input_text=prompt,
             env=opencode_environment(policy, runtime),
-            progress=lambda text: save(output=text),
+            progress=lambda text: (save(output=text), heartbeat(text)) if heartbeat else save(output=text),
         )
     marker = (
         f"\n=== fallback to {agent}: the requested agent reported no allowance ===\n{reason}\n=== {agent} output ===\n"
@@ -109,7 +123,7 @@ def delegation_instructions(run):
     return "\nReturn the required JSON with delegations empty. Do not delegate or launch other agents."
 
 
-def run_agent(run, policy, project, worktree, base, canceled, save):
+def run_agent(run, policy, project, worktree, base, canceled, save, heartbeat=None):
     """Run the agent the task names, and the fallback engine when it has no allowance."""
     if run.task.agent == "opencode":
         command = opencode_command(policy, worktree)
@@ -145,7 +159,7 @@ def run_agent(run, policy, project, worktree, base, canceled, save):
             canceled=canceled,
             input_text=prompt,
             env=environment,
-            progress=lambda text: save(output=text),
+            progress=lambda text: (save(output=text), heartbeat(text)) if heartbeat else save(output=text),
         )
     fallback = None
     reason = ""
@@ -162,6 +176,7 @@ def run_agent(run, policy, project, worktree, base, canceled, save):
                 save,
                 reason,
                 output,
+                heartbeat,
             )
     return code, output, fallback, reason
 
@@ -186,7 +201,7 @@ def evidence_digest(checks):
     return digest(checks)
 
 
-def collect_evidence(policy, project, worktree, canceled):
+def collect_evidence(policy, project, worktree, canceled, heartbeat=None):
     """The checks the policy names, and the diff of what the run changed."""
     environment = check_environment(worktree)
     checks = []
@@ -200,6 +215,7 @@ def collect_evidence(policy, project, worktree, canceled):
             timeout=project.timeout_seconds,
             canceled=canceled,
             env=environment,
+            progress=heartbeat or (lambda _text: None),
         )
         checks.append(
             {
@@ -217,7 +233,7 @@ def collect_evidence(policy, project, worktree, canceled):
     return checks, diff
 
 
-def execute(run, policy, principal):
+def execute(run, policy, principal, heartbeat=None):
 
     project = policy.projects.get(run.task.project_slug)
     if project is None:
@@ -227,12 +243,15 @@ def execute(run, policy, principal):
     elif run.kind == "rollback":
         execute_rollback(run, policy, project, principal)
     elif run.kind != "coding":
-        execute_editor(run, project, principal)
+        if heartbeat is None:
+            execute_editor(run, project, principal)
+        else:
+            execute_editor(run, project, principal, heartbeat)
     else:
-        execute_coding(run, policy, project, principal)
+        execute_coding(run, policy, project, principal, heartbeat)
 
 
-def execute_coding(run, policy, project, principal):
+def execute_coding(run, policy, project, principal, heartbeat=None):
     """Coding is a separate path from editor and approved file operations."""
     if not project.coding_enabled:
         raise ProcessFailure("Coding is disabled by the local policy for this project.")
@@ -268,12 +287,12 @@ def execute_coding(run, policy, project, principal):
         "Work only on this task. Do not commit, push, merge, publish, access credentials, or change other repositories. Return a summary and verification evidence.\n\n"
         + run.prompt
     )
-    code, output, fallback, reason = run_agent(run, policy, project, worktree, base, canceled, save)
+    code, output, fallback, reason = run_agent(run, policy, project, worktree, base, canceled, save, heartbeat)
     engine = fallback or run.task.agent
     if code:
         save(output=output, engine=engine, fallback_reason=reason)
         raise ProcessFailure(f"Agent exited with status {code}.")
-    checks, diff = collect_evidence(policy, project, worktree, canceled)
+    checks, diff = collect_evidence(policy, project, worktree, canceled, heartbeat)
     if run.task.agent == "codex" and fallback is None:
         result = read_result(output)
         if result.delegations:
@@ -328,7 +347,7 @@ def execute_rollback(run, policy, project, principal):
     )
 
 
-def execute_editor(run, project, principal):
+def execute_editor(run, project, principal, heartbeat=None):
     if project.uefn_project is None:
         raise ProcessFailure("Editor access is not configured for this project.")
     code, output = observed_process(
@@ -339,6 +358,7 @@ def execute_editor(run, project, principal):
         cwd=Path(__file__).resolve().parents[1],
         timeout=120,
         canceled=lambda: Run.objects.filter(pk=run.pk, cancel_requested=True).exists(),
+        progress=heartbeat or (lambda _text: None),
     )
     evidence = json.loads(output) if code == 0 else {}
     passed = code == 0 and (run.kind == "uefn_inspect" or evidence.get("passed") is True)
@@ -356,7 +376,7 @@ def execute_editor(run, project, principal):
     )
 
 
-def process_next(policy, principal):
+def process_next(policy, principal, heartbeat=None):
 
     run = claim(principal)
     if run is None:
@@ -374,7 +394,7 @@ def process_next(policy, principal):
         ) as metrics:
             if run.kind in ("apply", "rollback"):
                 metrics["hq.operation.succeeded"] = False
-            execute(run, policy, principal)
+            execute(run, policy, principal, heartbeat)
             current = Run.objects.get(pk=run.pk)
             metrics.update(
                 {
@@ -433,14 +453,12 @@ def main():
     with WorkerLock(Path(os.environ["GAMEDEV_WORKSPACE_DATA"]) / "worker.lock"):
         publish_profiles(policy)
         recover(principal)
-        heartbeat = time.monotonic()
+        heartbeat = profile_heartbeat(policy)
         while True:
-            worked = process_next(policy, principal)
+            worked = process_next(policy, principal, heartbeat)
             if args.once:
                 break
-            if time.monotonic() - heartbeat >= 30:
-                publish_profiles(policy)
-                heartbeat = time.monotonic()
+            heartbeat()
             if not worked:
                 time.sleep(3)
 

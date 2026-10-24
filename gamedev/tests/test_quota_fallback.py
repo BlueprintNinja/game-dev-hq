@@ -88,6 +88,23 @@ class QuotaIsNotGuessedTests(unittest.TestCase):
         output = json.dumps({"type": "item.completed", "item": {"type": "error", "text": f"boom {QUOTA}"}})
         self.assertIsNone(quota.quota_reason([QUOTA], output))
 
+    def test_typographic_apostrophe_in_real_limit_error_matches_operator_phrase(self):
+        message = "You\u2019ve hit your usage limit. Try again later."
+        output = json.dumps({"type": "turn.failed", "error": {"message": message}})
+        self.assertEqual(quota.quota_reason([QUOTA], output), message)
+
+    def test_typographic_quota_in_agent_work_message_is_not_a_failure(self):
+        output = json.dumps(
+            {"type": "item.completed", "item": {"type": "agent_message", "text": "You\u2019ve hit your usage limit"}}
+        )
+        self.assertIsNone(quota.quota_reason([QUOTA], output))
+
+    def test_typographic_quota_quoted_in_error_is_not_a_report_of_allowance(self):
+        output = json.dumps(
+            {"type": "error", "message": "The file contained 'You\u2019ve hit your usage limit' as an example."}
+        )
+        self.assertIsNone(quota.quota_reason([QUOTA], output))
+
 
 if __name__ == "__main__":
     unittest.main()

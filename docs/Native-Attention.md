@@ -62,8 +62,12 @@ and metrics navigation provides the complete workflow; no new list or endpoint.
 
 - Worker heartbeat: stale strictly beyond 90 seconds. Projects with tasks
   older than 90 seconds and no profile have a missing heartbeat. New tasks get
-  90 seconds for first publication. No profiles and no overdue work produces
-  a neutral unknown observation, not a health assertion or startup alarm.
+  90 seconds for first publication. The worker republishes every configured
+  project profile at startup, between idle polls, and at most every 30 seconds
+  through the supervised process progress poll while a job runs. That poll
+  also runs when the child has emitted no output. No profiles and no overdue
+  work produces a neutral unknown observation, not a health assertion or
+  startup alarm.
 - Collector: no local sample means missing/unknown. Latest observation is
   stale strictly beyond 90 seconds. Only its timestamp is selected.
 - Trace delivery: an unexported finished span qualifies strictly beyond five
