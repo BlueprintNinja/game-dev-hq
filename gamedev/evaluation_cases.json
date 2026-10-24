@@ -1,0 +1,346 @@
+{
+  "schema_version": 1,
+  "dataset_id": "synthetic-evidence-foundation",
+  "version": "1",
+  "provenance": "synthetic-harness-self-test",
+  "cases": [
+    {
+      "case_id": "synthetic-source-and-tests",
+      "version": "1",
+      "scenario": "SYNTHETIC harness self-test: source and tests",
+      "criteria": {
+        "required_kinds": [
+          "source",
+          "tests"
+        ],
+        "pass_scope": "declared_tests",
+        "establishes": "Declared required checks passed; no hidden correctness, editor or gameplay verification.",
+        "required_child_ids": [],
+        "recovery_required": false
+      },
+      "fixture": {
+        "provenance": "synthetic-harness-self-test",
+        "evidence": {
+          "status": "completed",
+          "checks": [
+            {
+              "kind": "source",
+              "passed": true
+            },
+            {
+              "kind": "tests",
+              "passed": true
+            }
+          ],
+          "children": [],
+          "recovery": null
+        },
+        "expected_verdict": "pass"
+      }
+    },
+    {
+      "case_id": "synthetic-compilation-only",
+      "version": "1",
+      "scenario": "SYNTHETIC harness self-test: compilation only",
+      "criteria": {
+        "required_kinds": [
+          "compilation"
+        ],
+        "pass_scope": "declared_compilation",
+        "establishes": "Declared required checks passed; no hidden correctness, editor or gameplay verification.",
+        "required_child_ids": [],
+        "recovery_required": false
+      },
+      "fixture": {
+        "provenance": "synthetic-harness-self-test",
+        "evidence": {
+          "status": "completed",
+          "checks": [
+            {
+              "kind": "compilation",
+              "passed": true
+            }
+          ],
+          "children": [],
+          "recovery": null
+        },
+        "expected_verdict": "pass"
+      }
+    },
+    {
+      "case_id": "synthetic-missing-tests",
+      "version": "1",
+      "scenario": "SYNTHETIC harness self-test: missing tests",
+      "criteria": {
+        "required_kinds": [
+          "source",
+          "tests"
+        ],
+        "pass_scope": "declared_tests",
+        "establishes": "Declared required checks passed; no hidden correctness, editor or gameplay verification.",
+        "required_child_ids": [],
+        "recovery_required": false
+      },
+      "fixture": {
+        "provenance": "synthetic-harness-self-test",
+        "evidence": {
+          "status": "completed",
+          "checks": [
+            {
+              "kind": "source",
+              "passed": true
+            }
+          ],
+          "children": [],
+          "recovery": null
+        },
+        "expected_verdict": "incomplete"
+      }
+    },
+    {
+      "case_id": "synthetic-no-evidence",
+      "version": "1",
+      "scenario": "SYNTHETIC harness self-test: no evidence",
+      "criteria": {
+        "required_kinds": [
+          "tests"
+        ],
+        "pass_scope": "declared_tests",
+        "establishes": "Declared required checks passed; no hidden correctness, editor or gameplay verification.",
+        "required_child_ids": [],
+        "recovery_required": false
+      },
+      "fixture": {
+        "provenance": "synthetic-harness-self-test",
+        "evidence": {
+          "status": "pending",
+          "checks": [],
+          "children": [],
+          "recovery": null
+        },
+        "expected_verdict": "incomplete"
+      }
+    },
+    {
+      "case_id": "synthetic-failed-check",
+      "version": "1",
+      "scenario": "SYNTHETIC harness self-test: failed check",
+      "criteria": {
+        "required_kinds": [
+          "tests"
+        ],
+        "pass_scope": "declared_tests",
+        "establishes": "Declared required checks passed; no hidden correctness, editor or gameplay verification.",
+        "required_child_ids": [],
+        "recovery_required": false
+      },
+      "fixture": {
+        "provenance": "synthetic-harness-self-test",
+        "evidence": {
+          "status": "failed",
+          "checks": [
+            {
+              "kind": "tests",
+              "passed": false
+            }
+          ],
+          "children": [],
+          "recovery": null
+        },
+        "expected_verdict": "fail"
+      }
+    },
+    {
+      "case_id": "synthetic-ambiguous-checks",
+      "version": "1",
+      "scenario": "SYNTHETIC harness self-test: ambiguous checks",
+      "criteria": {
+        "required_kinds": [
+          "tests"
+        ],
+        "pass_scope": "declared_tests",
+        "establishes": "Declared required checks passed; no hidden correctness, editor or gameplay verification.",
+        "required_child_ids": [],
+        "recovery_required": false
+      },
+      "fixture": {
+        "provenance": "synthetic-harness-self-test",
+        "evidence": {
+          "status": "completed",
+          "checks": [
+            {
+              "kind": "tests",
+              "passed": true
+            },
+            {
+              "kind": "tests",
+              "passed": false
+            }
+          ],
+          "children": [],
+          "recovery": null
+        },
+        "expected_verdict": "invalid"
+      }
+    },
+    {
+      "case_id": "synthetic-delegation-complete",
+      "version": "1",
+      "scenario": "SYNTHETIC harness self-test: delegation complete",
+      "criteria": {
+        "required_kinds": [
+          "tests"
+        ],
+        "pass_scope": "declared_tests",
+        "establishes": "Declared required checks passed; no hidden correctness, editor or gameplay verification.",
+        "required_child_ids": [
+          "synthetic-child"
+        ],
+        "recovery_required": false
+      },
+      "fixture": {
+        "provenance": "synthetic-harness-self-test",
+        "evidence": {
+          "status": "completed",
+          "checks": [
+            {
+              "kind": "tests",
+              "passed": true
+            }
+          ],
+          "children": [
+            {
+              "child_id": "synthetic-child",
+              "status": "completed",
+              "checks": [
+                {
+                  "kind": "tests",
+                  "passed": true
+                }
+              ]
+            }
+          ],
+          "recovery": null
+        },
+        "expected_verdict": "pass"
+      }
+    },
+    {
+      "case_id": "synthetic-delegation-missing",
+      "version": "1",
+      "scenario": "SYNTHETIC harness self-test: delegation missing",
+      "criteria": {
+        "required_kinds": [
+          "tests"
+        ],
+        "pass_scope": "declared_tests",
+        "establishes": "Declared required checks passed; no hidden correctness, editor or gameplay verification.",
+        "required_child_ids": [
+          "synthetic-child"
+        ],
+        "recovery_required": false
+      },
+      "fixture": {
+        "provenance": "synthetic-harness-self-test",
+        "evidence": {
+          "status": "accepted",
+          "checks": [
+            {
+              "kind": "tests",
+              "passed": true
+            }
+          ],
+          "children": [],
+          "recovery": null
+        },
+        "expected_verdict": "invalid"
+      }
+    },
+    {
+      "case_id": "synthetic-recovery-failed",
+      "version": "1",
+      "scenario": "SYNTHETIC harness self-test: recovery failed",
+      "criteria": {
+        "required_kinds": [
+          "tests"
+        ],
+        "pass_scope": "declared_tests",
+        "establishes": "Declared required checks passed; no hidden correctness, editor or gameplay verification.",
+        "required_child_ids": [],
+        "recovery_required": true
+      },
+      "fixture": {
+        "provenance": "synthetic-harness-self-test",
+        "evidence": {
+          "status": "failed",
+          "checks": [
+            {
+              "kind": "tests",
+              "passed": false
+            }
+          ],
+          "children": [],
+          "recovery": {
+            "completed": false,
+            "initial_checks": [
+              {
+                "kind": "tests",
+                "passed": false
+              }
+            ],
+            "checks": [
+              {
+                "kind": "tests",
+                "passed": false
+              }
+            ]
+          }
+        },
+        "expected_verdict": "fail"
+      }
+    },
+    {
+      "case_id": "synthetic-recovery-successful",
+      "version": "1",
+      "scenario": "SYNTHETIC harness self-test: recovery successful",
+      "criteria": {
+        "required_kinds": [
+          "tests"
+        ],
+        "pass_scope": "declared_tests",
+        "establishes": "Declared required checks passed; no hidden correctness, editor or gameplay verification.",
+        "required_child_ids": [],
+        "recovery_required": true
+      },
+      "fixture": {
+        "provenance": "synthetic-harness-self-test",
+        "evidence": {
+          "status": "success",
+          "checks": [
+            {
+              "kind": "tests",
+              "passed": true
+            }
+          ],
+          "children": [],
+          "recovery": {
+            "completed": true,
+            "initial_checks": [
+              {
+                "kind": "tests",
+                "passed": false
+              }
+            ],
+            "checks": [
+              {
+                "kind": "tests",
+                "passed": true
+              }
+            ]
+          }
+        },
+        "expected_verdict": "pass"
+      }
+    }
+  ]
+}
