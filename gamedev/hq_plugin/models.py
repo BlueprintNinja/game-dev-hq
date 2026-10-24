@@ -44,6 +44,14 @@ class Run(models.Model):
     # The run whose approved changes this run writes, or whose apply this
     # run takes back.
     applies = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="applied_runs")
+    # Empty means historical/unknown, never backfilled with a guessed route.
+    requested_profile = models.CharField(max_length=20, blank=True)
+    selected_model = models.CharField(max_length=40, blank=True)
+    selected_effort = models.CharField(max_length=20, blank=True)
+    routing_reason = models.CharField(max_length=80, blank=True)
+    escalated_from = models.OneToOneField(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="escalation"
+    )
     prompt = models.TextField()
     kind = models.CharField(max_length=20, default="coding")
     status = models.CharField(max_length=20, default="queued")

@@ -4,11 +4,14 @@ import json
 import os
 import shutil
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 lazy from django.db import transaction
 
 lazy from hq_sdk.audit import audit_operation, record_operation
+
+from .routing import delegation_allowed
 
 lazy from .hq_plugin.models import Run, Task
 
@@ -17,6 +20,8 @@ class DelegatedWork(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(min_length=1, max_length=500)
     prompt: str = Field(min_length=1, max_length=12000)
+    agent: Literal["opencode", "codex"] = "opencode"
+    profile: Literal["routine"] = "routine"
 
 
 class CodexResult(BaseModel):
@@ -51,17 +56,22 @@ def dispatch(run, result, principal):
             or parent.delegated_by_id
         ):
             raise ValueError("Only the owning Codex run can delegate.")
+        if result.delegations and not delegation_allowed(parent):
+            raise ValueError("Only Sol orchestration may delegate; routine and child runs cannot delegate.")
         if parent.delegated_runs.exists():
             raise ValueError("Delegations have already been dispatched.")
         for item in result.delegations:
             child = Task.objects.create(
                 project_slug=parent.task.project_slug,
                 title=item.title,
-                agent="opencode",
+                agent=item.agent,
                 parent=parent.task,
                 status="active",
             )
-            delegated = Run.objects.create(task=child, delegated_by=parent, prompt=item.prompt)
+            delegated = Run.objects.create(
+                task=child, delegated_by=parent, prompt=item.prompt, requested_profile=item.profile,
+                requested_by=principal.actor,
+            )
             record_operation(
                 "gamedev.run.delegate",
                 f"Codex run #{parent.pk} delegated run #{delegated.pk}",

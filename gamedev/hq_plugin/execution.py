@@ -9,6 +9,7 @@ from pydantic import Field
 from hq_sdk.audit import audit_operation, record_operation
 from hq_sdk.capabilities import CapabilitySpec, StrictCommand
 
+from ..routing import CodingProfile
 from .models import Run, Task
 from .observations import decision_span
 
@@ -21,6 +22,7 @@ class QueueRun(StrictCommand):
     version: Annotated[int, Field(gt=0)]
     prompt: Annotated[str, Field(min_length=1, max_length=12000)]
     kind: Literal["coding", "uefn_inspect", "uefn_build"] = "coding"
+    profile: CodingProfile = "routine"
 
 
 class DecideRun(StrictCommand):
@@ -38,6 +40,7 @@ class RetryRun(StrictCommand):
     run_id: Annotated[int, Field(gt=0)]
     version: Annotated[int, Field(gt=0)]
     note: Annotated[str, Field(max_length=4000)] = ""
+    escalate: bool = False
 
 
 def queue_run(command, *, principal):
@@ -52,10 +55,11 @@ def queue_run(command, *, principal):
             raise ValueError("Describe the work first.")
         if task.runs.filter(status__in=("queued", "running", "review")).exists():
             raise ValueError("This task already has work running or awaiting review.")
-        if task.agent == "opencode":
+        if task.agent == "opencode" or task.parent_id:
             raise ValueError("Only the Codex worker can dispatch an OpenCode delegation.")
         run = Run.objects.create(
-            task=task, prompt=command.prompt.strip(), kind=command.kind, requested_by=principal.actor
+            task=task, prompt=command.prompt.strip(), kind=command.kind, requested_by=principal.actor,
+            requested_profile=command.profile if command.kind == "coding" else "",
         )
         task.status = "active"
         task.version += 1
@@ -157,12 +161,19 @@ def retry_run(command, *, principal):
         task = Task.objects.select_for_update().get(pk=run.task_id)
         if task.runs.filter(status__in=("queued", "running", "review")).exists():
             raise ValueError("This task already has work running or awaiting review.")
+        if command.escalate:
+            from .escalation import validate_escalation
+
+            validate_escalation(run, command)
         retried = Run.objects.create(
             task=task,
             prompt=run.prompt,
             kind=run.kind,
             delegated_by=run.delegated_by,
             retried_from=run,
+            requested_profile="complex" if command.escalate else run.requested_profile,
+            escalated_from=run if command.escalate else None,
+            decision_note=command.note.strip(),
             requested_by=principal.actor,
         )
         task.status = "active"
@@ -171,7 +182,10 @@ def retry_run(command, *, principal):
         record_operation(
             "gamedev.run.retry",
             f"Retried run #{run.pk} as run #{retried.pk}",
-            metadata={"run_id": run.pk, "retried_run_id": retried.pk, "task_id": task.pk},
+            metadata={
+                "run_id": run.pk, "retried_run_id": retried.pk, "task_id": task.pk,
+                "escalation": command.escalate, "profile": retried.requested_profile,
+            },
             required=True,
         )
         return {"ok": True, "id": retried.pk}

@@ -40,6 +40,8 @@ def apply_approved(command, *, principal):
             raise ValueError("The run does not exist.")
         if source.version != command.version:
             raise ValueError("Run changed. Reload before applying.")
+        if source.delegated_by_id or source.task.parent_id:
+            raise ValueError("Delegated changes require independent review and cannot be applied by this worker.")
         if source.status != "accepted":
             raise ValueError("Only an accepted run may be applied.")
         if not source.passed:
