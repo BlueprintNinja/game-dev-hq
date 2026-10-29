@@ -1,0 +1,32 @@
+{% extends "page.html" %}
+{% block page %}
+<p><a href="{% url 'gamedev:index' %}">Game Dev tasks</a> · <a href="{% url 'gamedev:mission' %}">Mission Control</a> · <a href="{% url 'gamedev:metrics' %}">Harness</a></p>
+<p>Inspect is a read-only navigator. Local Codex sessions are separate from HQ-supervised runs and Phoenix traces. No link between a local session and an HQ task is inferred. This page cannot prove a game change, completed playtest, or approved action.</p>
+<section class="card">
+  <h2>Local Codex sessions</h2>
+  {% if not codex_enrolled %}
+  <p>Not enrolled. On the private workstation, set <code>GAMEDEV_INSPECT_CODEX_ROOT</code> to an absolute path ending in the Codex sessions directory. No local session history is read until this is configured.</p>
+  {% else %}
+  <p>Up to 80 recent session files from the last 14 UTC dates. Sessions may be unrelated to Game Dev HQ. File activity does not mean an agent is currently running. Prompt text, reasoning, commands, tool arguments and results are hidden.</p>
+  <ul class="list-rows">
+  {% for session in sessions %}
+    <li><a href="{% url 'gamedev:inspect_codex' session.key %}">Codex session {{ session.id }}</a> · Last file change {{ session.updated }} · Started {{ session.started }}</li>
+  {% empty %}
+    <li>No readable sessions found within the enrolled directory and bounded window.</li>
+  {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+<section class="card">
+  <h2>HQ-supervised runs</h2>
+  <p>These records come from the HQ database. Separately launched Codex sessions do not become HQ runs automatically. Showing up to the 30 most recent runs.</p>
+  <ul class="list-rows">
+  {% for run in runs %}
+    <li><a href="{% url 'gamedev:run' run.pk %}">Run #{{ run.pk }} · {{ run.task.title }}</a> · {{ run.task.project_slug }} · {{ run.status }} · {{ run.engine|default:'Engine unreported' }} · <a href="{% url 'gamedev:trace' run.pk %}">Trace</a></li>
+  {% empty %}
+    <li>No HQ-supervised runs have been recorded.</li>
+  {% endfor %}
+  </ul>
+</section>
+<p>OpenCode's external session history is not yet part of Inspect. Its existing telemetry collector provides aggregate usage only, not message-level navigation.</p>
+{% endblock %}
