@@ -2,7 +2,7 @@ from django.urls import path
 
 from . import views
 from .metrics_views import metrics, trace
-from .inspect_views import codex_session, inspect
+from .inspect_views import codex_session, inspect, opencode_session
 from .mission_views import mission
 
 app_name = "gamedev"
@@ -11,6 +11,7 @@ urlpatterns += [
     path("mission/", mission, name="mission"),
     path("inspect/", inspect, name="inspect"),
     path("inspect/codex/<str:key>/", codex_session, name="inspect_codex"),
+    path("inspect/opencode/<str:key>/", opencode_session, name="inspect_opencode"),
     path("harness/", metrics, name="metrics"),
     path("runs/<int:run_id>/trace/", trace, name="trace"),
     path("queue/", views.queue, name="queue"),
