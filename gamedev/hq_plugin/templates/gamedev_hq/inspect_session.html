@@ -1,0 +1,21 @@
+{% extends "page.html" %}
+{% block page %}
+<p><a href="{% url 'gamedev:inspect' %}">Back to Inspect</a></p>
+<section class="card">
+  <h2>Codex {{ session.id }}</h2>
+  <p>Started {{ session.started }} · Last file change {{ session.updated }}</p>
+  <p>{{ session.source }}. This session is not automatically attributed to an HQ project, task, or run.</p>
+  {% if session.partial %}<p>Partial view: the session exceeded the read window or event limit. Counts cover only the scanned segment, not the full session.</p>{% endif %}
+  <h3>Observed event counts</h3>
+  <dl class="kv">
+    {% for name, count in session.counts %}<dt>{{ name }}</dt><dd>{{ count }}</dd>{% empty %}<dt>Events</dt><dd>No supported structural events found.</dd>{% endfor %}
+  </dl>
+  <h3>Recent event timeline</h3>
+  <ol>
+    {% for event in session.events %}
+    <li><strong>{{ event.stamp }} · {{ event.name }}</strong>{% if event.detail %} · {{ event.detail }}{% endif %}</li>
+    {% empty %}<li>No supported events recorded.</li>{% endfor %}
+  </ol>
+  <p>For privacy, this view omits prompts, file paths, commands, tool arguments and results, and reasoning text. A tool result alone does not establish whether an action succeeded.</p>
+</section>
+{% endblock %}

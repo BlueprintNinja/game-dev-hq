@@ -20,6 +20,9 @@ plugin = PluginManifest(
     django_apps=("gamedev.hq_plugin",),
     url_prefix="game-dev/",
     urlconf="gamedev.hq_plugin.urls",
-    navigation=(NavigationItem("Game Dev", "gamedev:index", "gamedev", order=150),),
+    navigation=(
+        NavigationItem("Game Dev", "gamedev:index", "gamedev", order=150),
+        NavigationItem("Inspect", "gamedev:inspect", "gamedev", order=151),
+    ),
     operator_capabilities=("gamedev.read", "gamedev.write", "gamedev.metrics.read", "gamedev.traces.read"),
 )
