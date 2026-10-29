@@ -9,6 +9,7 @@ from hq_sdk.pages import page_context
 from hq_sdk.web import capability_required
 
 from ..session_inspect import codex_root, list_codex_sessions, read_codex_session
+from ..opencode_inspect import opencode_source, list_opencode_sessions, read_opencode_session
 from .models import Run
 
 
@@ -22,6 +23,8 @@ def _private(response):
 @require_GET
 def inspect(request):
     root = codex_root()
+    source = opencode_source()
+    opencode_sessions = list_opencode_sessions(source)
     runs = list(
         Run.objects.select_related("task")
         .only("id", "status", "kind", "engine", "task__id", "task__title", "task__project_slug")
@@ -36,6 +39,9 @@ def inspect(request):
                 "runs": runs,
                 "codex_enrolled": root is not None,
                 "sessions": list_codex_sessions(root),
+                "opencode_enrolled": source is not None,
+                "opencode_available": opencode_sessions is not None,
+                "opencode_sessions": opencode_sessions or [],
             },
         )
     )
@@ -53,6 +59,24 @@ def codex_session(request, key):
             "gamedev_hq/inspect_session.html",
             {
                 **page_context("Codex session", "Structural events only; conversation and tool content are hidden."),
+                "session": session,
+            },
+        )
+    )
+
+
+@capability_required("gamedev.traces.read")
+@require_GET
+def opencode_session(request, key):
+    session = read_opencode_session(opencode_source(), key)
+    if session is None:
+        raise Http404("The enrolled OpenCode session was not found in the bounded history window.")
+    return _private(
+        render(
+            request,
+            "gamedev_hq/inspect_opencode.html",
+            {
+                **page_context("OpenCode session", "Message metadata only; conversation and tool content are hidden."),
                 "session": session,
             },
         )
