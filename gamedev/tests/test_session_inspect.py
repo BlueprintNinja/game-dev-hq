@@ -3,6 +3,7 @@
 import json
 import tempfile
 import unittest
+from contextlib import suppress
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -76,19 +77,15 @@ class InspectSessionTests(unittest.TestCase):
         self.write_events([{"type": "session_meta", "payload": {}}])
         self.assertIsNone(read_codex_session(self.root, "../../other", today=self.date))
         link = self.day / "rollout-link.jsonl"
-        try:
+        with suppress(OSError):
             link.symlink_to(self.source)
-        except OSError:
-            pass
         self.assertEqual(len(list_codex_sessions(self.root, today=self.date)), 1)
         with tempfile.TemporaryDirectory() as outside:
             path = Path(outside) / "secret.jsonl"
             path.write_text("SECRET")
             external = self.day / "rollout-external.jsonl"
-            try:
+            with suppress(OSError):
                 external.symlink_to(path)
-            except OSError:
-                pass
             self.assertEqual(len(list_codex_sessions(self.root, today=self.date)), 1)
 
     def test_bad_json_and_untrusted_tool_names(self):
