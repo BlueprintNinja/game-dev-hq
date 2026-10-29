@@ -1,6 +1,5 @@
 """Opt-in OpenCode session metadata; never retrieve message bodies or tool content."""
 
-from collections import deque
 from contextlib import closing
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -104,10 +103,11 @@ def read_opencode_session(source, key, *, now=None):
     if records is None:
         return None
     db, _ = source
-    selected = [(stamp, role) for identifier, stamp, role in records if _session_key(db, identifier) == key]
-    if not selected:
+    matched = [(identifier, stamp, role) for identifier, stamp, role in records if _session_key(db, identifier) == key]
+    if not matched:
         return None
-    selected.reverse()
+    identifier = matched[0][0]
+    selected = [(stamp, role) for _, stamp, role in reversed(matched)]
     events = [
         {
             "stamp": _when(stamp),
@@ -117,7 +117,7 @@ def read_opencode_session(source, key, *, now=None):
         for stamp, role in selected[-MAX_EVENTS:]
     ]
     return {
-        "events": events, "key": key, "messages": len(selected),
+        "events": events, "key": key, "id": identifier, "messages": len(selected),
         "partial": len(selected) > MAX_EVENTS or len(records) >= MAX_MESSAGES,
         "source": "OpenCode local SQLite (content hidden); read-only metadata, no HQ correlation implied",
     }
