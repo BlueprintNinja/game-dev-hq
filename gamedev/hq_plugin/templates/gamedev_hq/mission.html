@@ -1,6 +1,7 @@
 {% extends "page.html" %}
 {% block page %}
 <p><a href="{% url 'gamedev:index' %}">Game Dev tasks</a></p>
+<p><a href="{% url 'gamedev:inspect' %}">Inspect agent sessions</a></p>
 <form method="get" action="{% url 'gamedev:mission' %}">
   <label for="mission-project">Project</label>
   <select id="mission-project" name="project">
