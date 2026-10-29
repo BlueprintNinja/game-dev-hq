@@ -1,0 +1,17 @@
+{% extends "page.html" %}
+{% block page %}
+<p><a href="{% url 'gamedev:inspect' %}">Back to Inspect</a></p>
+<section class="card">
+  <h2>OpenCode {{ session.id }}</h2>
+  <p>{{ session.source }}. This source is not automatically linked to an HQ task, run, or Phoenix trace.</p>
+  {% if session.partial %}<p>Partial view: the message inventory exceeded its bounded limit. Only recent message metadata appears.</p>{% endif %}
+  <p>{{ session.messages }} messages in the selected bounded history. Messages do not prove that a tool action or gameplay step succeeded.</p>
+  <h3>Recent message timeline</h3>
+  <ol>
+  {% for event in session.events %}
+    <li><strong>{{ event.stamp }} · {{ event.name }}</strong> · {{ event.detail }}</li>
+  {% empty %}<li>No supported metadata found.</li>{% endfor %}
+  </ol>
+  <p>Prompt text, reasoning, commands, arguments, tool results, files, and other message contents are not inspected or displayed.</p>
+</section>
+{% endblock %}
