@@ -8,7 +8,7 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-from gamedev.opencode_inspect import opencode_source, list_opencode_sessions, read_opencode_session
+from gamedev.opencode_inspect import list_opencode_sessions, opencode_source, read_opencode_session
 
 
 class OpenCodeInspectTests(unittest.TestCase):
