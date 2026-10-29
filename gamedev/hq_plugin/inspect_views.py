@@ -8,8 +8,8 @@ from django.views.decorators.http import require_GET
 from hq_sdk.pages import page_context
 from hq_sdk.web import capability_required
 
+from ..opencode_inspect import list_opencode_sessions, opencode_source, read_opencode_session
 from ..session_inspect import codex_root, list_codex_sessions, read_codex_session
-from ..opencode_inspect import opencode_source, list_opencode_sessions, read_opencode_session
 from .models import Run
 
 
@@ -49,34 +49,27 @@ def inspect(request):
 
 @capability_required("gamedev.traces.read")
 @require_GET
-def codex_session(request, key):
-    session = read_codex_session(codex_root(), key)
+def session_detail(request, provider, key):
+    if provider == "codex":
+        session = read_codex_session(codex_root(), key)
+        template = "gamedev_hq/inspect_session.html"
+        name = "Codex"
+        description = "Structural events only; conversation and tool content are hidden."
+    elif provider == "opencode":
+        session = read_opencode_session(opencode_source(), key)
+        template = "gamedev_hq/inspect_opencode.html"
+        name = "OpenCode"
+        description = "Message metadata only; conversation and tool content are hidden."
+    else:
+        raise Http404("Choose a supported agent session source.")
     if session is None:
         raise Http404("The enrolled session was not found in the bounded history window.")
     return _private(
         render(
             request,
-            "gamedev_hq/inspect_session.html",
+            template,
             {
-                **page_context("Codex session", "Structural events only; conversation and tool content are hidden."),
-                "session": session,
-            },
-        )
-    )
-
-
-@capability_required("gamedev.traces.read")
-@require_GET
-def opencode_session(request, key):
-    session = read_opencode_session(opencode_source(), key)
-    if session is None:
-        raise Http404("The enrolled OpenCode session was not found in the bounded history window.")
-    return _private(
-        render(
-            request,
-            "gamedev_hq/inspect_opencode.html",
-            {
-                **page_context("OpenCode session", "Message metadata only; conversation and tool content are hidden."),
+                **page_context(f"{name} session", description),
                 "session": session,
             },
         )
