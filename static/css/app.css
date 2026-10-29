@@ -376,8 +376,8 @@ pre { max-width: 100%; background: var(--code-bg); color: var(--code-ink); paddi
 .activity-transcript { display: grid; gap: var(--space-5); }
 .activity-transcript-turn { display: grid; gap: var(--space-5); min-width: 0; }
 .activity-transcript-entry { min-width: 0; padding: var(--space-5) var(--space-6); border-inline-start: 4px solid var(--line-strong); background: var(--surface-2); }
-.activity-transcript-entry[data-kind="assistant"], .activity-transcript-entry[data-kind="summary"] { border-inline-start-color: #8d70c8; background: color-mix(in srgb, #8d70c8 12%, var(--surface)); }
-.activity-transcript-entry[data-kind="tool"], .activity-transcript-entry[data-kind="result"] { border-inline-start-color: #438daa; background: color-mix(in srgb, #438daa 12%, var(--surface)); }
+.activity-transcript-entry[data-kind="assistant"], .activity-transcript-entry[data-kind="summary"] { border-inline-start-color: var(--cat-automation); background: color-mix(in srgb, var(--cat-automation) 12%, var(--surface)); }
+.activity-transcript-entry[data-kind="tool"], .activity-transcript-entry[data-kind="result"] { border-inline-start-color: var(--cat-homelab); background: color-mix(in srgb, var(--cat-homelab) 12%, var(--surface)); }
 .activity-transcript-entry summary { cursor: pointer; overflow-wrap: anywhere; }
 .activity-transcript-entry time { color: var(--muted); font-size: var(--text-xs); }
 .activity-transcript-entry pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; box-sizing: border-box; }

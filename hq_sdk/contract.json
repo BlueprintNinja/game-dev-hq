@@ -2371,6 +2371,9 @@
   "templates": {
     "classes": [
       "actions-col",
+      "activity-transcript",
+      "activity-transcript-entry",
+      "activity-transcript-turn",
       "allocation",
       "allocation-legend",
       "btn",

@@ -91,6 +91,9 @@ LIBRARIES = ("humanize", "static")
 # Classes an extension may write. Layout, tokens and states belong to the host;
 # a class missing here is the host's to add, never the extension's to invent.
 CLASSES = (
+    "activity-transcript",
+    "activity-transcript-entry",
+    "activity-transcript-turn",
     "actions-col",
     "allocation",
     "allocation-legend",

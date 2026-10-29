@@ -61,13 +61,38 @@ def _codex_event(event):
     return None
 
 
+def _codex_window(source, end, offset):
+    events = deque(maxlen=MAX_EVENTS)
+    source.seek(offset)
+    if offset:
+        source.readline(MAX_LINE_BYTES + 1)
+    seen = 0
+    skipped = False
+    while seen < 15000 and source.tell() < end:
+        position = source.tell()
+        line = source.readline(MAX_LINE_BYTES + 1)
+        if not line or source.tell() > end:
+            break
+        seen += 1
+        parsed = _parse_event(line)
+        if parsed is None:
+            skipped = True
+            while line and not line.endswith(b"\n") and seen < 15000:
+                line = source.readline(MAX_LINE_BYTES + 1)
+                seen += 1
+            continue
+        event = _codex_event(parsed)
+        if event:
+            events.append((position, event))
+    return events, skipped or seen >= 15000
+
+
 def codex_transcript(root, key, *, before=None):
     if not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{24}", key):
         return None
     path = next((p for p in recent_session_files(root) if session_key(p) == key), None)
     if path is None:
         return None
-    events = deque(maxlen=MAX_EVENTS)
     try:
         with path.open("rb") as source:
             source.seek(0, 2)
@@ -76,34 +101,40 @@ def codex_transcript(root, key, *, before=None):
                 return None
             end = before if before is not None else size
             offset = max(0, end - MAX_TAIL_BYTES)
-            source.seek(offset)
-            if offset:
-                source.readline(MAX_LINE_BYTES + 1)
-            seen = 0
-            skipped = False
-            while seen < 15000 and source.tell() < end:
-                position = source.tell()
-                line = source.readline(MAX_LINE_BYTES + 1)
-                if not line or source.tell() > end:
-                    break
-                seen += 1
-                parsed = _parse_event(line)
-                if parsed is None:
-                    skipped = True
-                    while line and not line.endswith(b"\n") and seen < 15000:
-                        line = source.readline(MAX_LINE_BYTES + 1)
-                        seen += 1
-                    continue
-                event = _codex_event(parsed)
-                if event:
-                    events.append((position, event))
+            events, skipped = _codex_window(source, end, offset)
         return {
             "groups": _group([event for _, event in events]),
-            "partial": skipped or bool(offset) or len(events) == MAX_EVENTS or seen >= 15000,
+            "partial": skipped or bool(offset) or len(events) == MAX_EVENTS,
             "older": events[0][0] if events and events[0][0] > 0 else (offset or None),
         }
     except OSError:
         return None
+
+
+def _opencode_events(rows):
+    events = []
+    skipped = False
+    for stamp, role, raw, _part_id in reversed(rows[:PAGE_PARTS]):
+        if not isinstance(stamp, int) or not isinstance(raw, str) or len(raw) > MAX_LINE_BYTES:
+            skipped = True
+            continue
+        try:
+            part = json.loads(raw)
+        except ValueError:
+            skipped = True
+            continue
+        if not isinstance(part, dict):
+            skipped = True
+            continue
+        if part.get("type") == "text" and role in ("user", "assistant"):
+            events.append(_entry(role, _when(stamp), part.get("text", "")))
+        elif part.get("type") == "tool" and isinstance(part.get("state"), dict):
+            state = part["state"]
+            events.append(_entry("tool", _when(stamp), state.get("input", ""), str(part.get("tool", "Tool"))))
+            if "output" in state or "error" in state or state.get("status") == "error":
+                label = "Failed" if state.get("status") == "error" else "Tool result"
+                events.append(_entry("result", _when(stamp), state.get("output", state.get("error", "")), label))
+    return events, skipped
 
 
 def opencode_transcript(source, key, *, before=None):
@@ -137,28 +168,7 @@ def opencode_transcript(source, key, *, before=None):
             rows = list(
                 cx.execute(query, (MAX_LINE_BYTES, identifier, identifier, tick, tick, tick, part_id, PAGE_PARTS + 1))
             )
-        events = []
-        skipped = False
-        for stamp, role, raw, _part_id in reversed(rows[:PAGE_PARTS]):
-            if not isinstance(stamp, int) or not isinstance(raw, str) or len(raw) > MAX_LINE_BYTES:
-                skipped = True
-                continue
-            try:
-                part = json.loads(raw)
-            except ValueError:
-                skipped = True
-                continue
-            if not isinstance(part, dict):
-                skipped = True
-                continue
-            if part.get("type") == "text" and role in ("user", "assistant"):
-                events.append(_entry(role, _when(stamp), part.get("text", "")))
-            elif part.get("type") == "tool" and isinstance(part.get("state"), dict):
-                state = part["state"]
-                events.append(_entry("tool", _when(stamp), state.get("input", ""), str(part.get("tool", "Tool"))))
-                if "output" in state or "error" in state or state.get("status") == "error":
-                    label = "Failed" if state.get("status") == "error" else "Tool result"
-                    events.append(_entry("result", _when(stamp), state.get("output", state.get("error", "")), label))
+        events, skipped = _opencode_events(rows)
         return {
             "groups": _group(events[-MAX_EVENTS:]),
             "partial": skipped or len(rows) > PAGE_PARTS,
