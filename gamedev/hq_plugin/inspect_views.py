@@ -8,6 +8,7 @@ from django.views.decorators.http import require_GET
 from hq_sdk.pages import page_context
 from hq_sdk.web import capability_required
 
+from ..inspect_transcript import codex_transcript, opencode_transcript
 from ..opencode_inspect import list_opencode_sessions, opencode_source, read_opencode_session
 from ..session_inspect import codex_root, list_codex_sessions, read_codex_session
 from .models import Run
@@ -50,16 +51,24 @@ def inspect(request):
 @capability_required("gamedev.traces.read")
 @require_GET
 def session_detail(request, provider, key):
+    cursor = request.GET.get("before")
+    if cursor is not None and len(cursor) > 113:
+        raise Http404("Invalid transcript position.")
     if provider == "codex":
+        if cursor is not None and (not cursor.isascii() or not cursor.isdecimal() or len(cursor) > 16):
+            raise Http404("Invalid transcript position.")
+        before = int(cursor) if cursor is not None else None
         session = read_codex_session(codex_root(), key)
+        transcript = codex_transcript(codex_root(), key, before=before) if session else None
         template = "gamedev_hq/inspect_session.html"
         name = "Codex"
-        description = "Structural events only; conversation and tool content are hidden."
+        description = "Recorded conversation and tool activity from your local session."
     elif provider == "opencode":
         session = read_opencode_session(opencode_source(), key)
+        transcript = opencode_transcript(opencode_source(), key, before=cursor) if session else None
         template = "gamedev_hq/inspect_opencode.html"
         name = "OpenCode"
-        description = "Activity metadata only; conversation and tool content are hidden."
+        description = "Recorded conversation and tool activity from your local session."
     else:
         raise Http404("Choose a supported agent session source.")
     if session is None:
@@ -71,6 +80,7 @@ def session_detail(request, provider, key):
             {
                 **page_context(f"{name} session", description),
                 "session": session,
+                "transcript": transcript,
             },
         )
     )

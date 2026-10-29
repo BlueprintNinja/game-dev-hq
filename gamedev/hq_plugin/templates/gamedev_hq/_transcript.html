@@ -1,0 +1,22 @@
+<section aria-labelledby="transcript-title">
+  <h2 id="transcript-title">Transcript</h2>
+  <p>Conversation and tool content is visible to authorized workspace users. Common credential patterns are obscured, but sensitive information may still appear.</p>
+  {% if not transcript %}<p>Transcript content is unavailable for this session.</p>
+  {% else %}
+    {% if transcript.partial %}<p>Partial view: some records were unavailable, malformed, or outside the reading limits.</p>{% endif %}
+    <div class="activity-transcript">
+      {% for group in transcript.groups %}
+      <section class="activity-transcript-turn" aria-label="Conversation group {{ forloop.counter }}">
+      <h3>Conversation group {{ forloop.counter }}</h3>
+      {% for event in group %}
+      <details class="activity-transcript-entry" data-kind="{{ event.kind }}" open>
+        <summary><strong>{% if event.kind == 'user' %}User{% elif event.kind == 'assistant' %}Assistant{% elif event.kind == 'summary' %}Reasoning summary{% elif event.kind == 'result' %}Tool result{% else %}Tool call{% endif %}</strong>{% if event.label %} · {{ event.label }}{% endif %} <time>{{ event.stamp }}</time></summary>
+        <pre>{{ event.content }}</pre>
+      </details>
+      {% endfor %}
+      </section>
+      {% empty %}<p>No supported transcript content was recorded in the selected window.</p>{% endfor %}
+    </div>
+    {% if transcript.older %}<p><a href="?before={{ transcript.older }}">Earlier activity</a></p>{% endif %}
+  {% endif %}
+</section>

@@ -1,6 +1,7 @@
 {% extends "page.html" %}
 {% block page %}
 <p><a href="{% url 'gamedev:inspect' %}">Back to Inspect</a></p>
+{% include "gamedev_hq/_transcript.html" %}
 <section class="card">
   <h2>Codex {{ session.id }}</h2>
   <p>Started {{ session.started }} · Last file change {{ session.updated }}</p>
@@ -16,6 +17,6 @@
     <li><strong>{{ event.stamp }} · {{ event.name }}</strong>{% if event.detail %} · {{ event.detail }}{% endif %}</li>
     {% empty %}<li>No supported events recorded.</li>{% endfor %}
   </ol>
-  <p>For privacy, this view omits prompts, file paths, commands, tool arguments and results, and reasoning text. A tool result alone does not establish whether an action succeeded.</p>
+  <p>A tool result alone does not establish whether an action succeeded.</p>
 </section>
 {% endblock %}
