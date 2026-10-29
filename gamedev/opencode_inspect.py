@@ -1,13 +1,13 @@
 """Opt-in OpenCode session metadata; never retrieve message bodies or tool content."""
 
-from contextlib import closing
-from datetime import UTC, datetime
-from hashlib import sha256
-from pathlib import Path
 import os
 import re
 import sqlite3
 import time
+from contextlib import closing
+from datetime import UTC, datetime
+from hashlib import sha256
+from pathlib import Path
 
 from .agent_inventory import enrolled
 
@@ -84,7 +84,7 @@ def list_opencode_sessions(source, *, now=None):
         return None
     db, _ = source
     sessions = {}
-    for identifier, stamp, role in records:
+    for identifier, stamp, _role in records:
         if identifier not in sessions:
             if len(sessions) >= MAX_SESSIONS:
                 continue
