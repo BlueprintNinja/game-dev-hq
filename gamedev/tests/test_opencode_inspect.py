@@ -4,6 +4,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,7 +20,7 @@ class OpenCodeInspectTests(unittest.TestCase):
             foreign = base / "workspace-other"
             foreign.mkdir()
             db = base / "sessions.db"
-            with sqlite3.connect(db) as cx:
+            with closing(sqlite3.connect(db)) as cx:
                 cx.executescript(
                     "CREATE TABLE session(id TEXT,directory TEXT); "
                     "CREATE TABLE message(session_id TEXT,time_created INTEGER,data TEXT);"
