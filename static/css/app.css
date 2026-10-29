@@ -371,6 +371,16 @@ a:hover code { color: var(--accent); text-decoration: underline; }
 /* A command or a file: its lines as written, scrolled inside its block, which
    is never wider than the box it sits in. */
 pre { max-width: 100%; background: var(--code-bg); color: var(--code-ink); padding: var(--space-7) var(--space-8); border-radius: var(--radius); overflow-x: auto; font-size: var(--text-sm); line-height: 1.55; }
+
+/* A chronological conversation uses color as a secondary role cue. */
+.activity-transcript { display: grid; gap: var(--space-5); }
+.activity-transcript-turn { display: grid; gap: var(--space-5); min-width: 0; }
+.activity-transcript-entry { min-width: 0; padding: var(--space-5) var(--space-6); border-inline-start: 4px solid var(--line-strong); background: var(--surface-2); }
+.activity-transcript-entry[data-kind="assistant"], .activity-transcript-entry[data-kind="summary"] { border-inline-start-color: var(--cat-automation); background: color-mix(in srgb, var(--cat-automation) 12%, var(--surface)); }
+.activity-transcript-entry[data-kind="tool"], .activity-transcript-entry[data-kind="result"] { border-inline-start-color: var(--cat-homelab); background: color-mix(in srgb, var(--cat-homelab) 12%, var(--surface)); }
+.activity-transcript-entry summary { cursor: pointer; overflow-wrap: anywhere; }
+.activity-transcript-entry time { color: var(--muted); font-size: var(--text-xs); }
+.activity-transcript-entry pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; box-sizing: border-box; }
 ::selection { background: var(--selection); color: var(--ink); }
 pre ::selection { color: var(--code-ink); }
 

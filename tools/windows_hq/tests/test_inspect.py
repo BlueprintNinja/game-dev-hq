@@ -41,3 +41,23 @@ class InspectViewsTests(TestCase):
             self.assertEqual(self.client.get("/game-dev/inspect/").status_code, 403)
             self.assertEqual(self.client.get(f"/game-dev/inspect/codex/{'a' * 24}/").status_code, 403)
         self.assertEqual(self.client.get("/game-dev/inspect/other/invalid/").status_code, 404)
+
+    def test_transcript_is_escaped_and_never_cached(self):
+        session = {"id": "example", "started": "time", "updated": "time", "events": [], "counts": []}
+        transcript = {
+            "groups": [[{"kind": "user", "stamp": "time", "label": "", "content": "<script>alert(1)</script>"}]],
+            "older": 120,
+        }
+        with (
+            mock.patch("gamedev.hq_plugin.inspect_views.read_codex_session", return_value=session),
+            mock.patch("gamedev.hq_plugin.inspect_views.codex_transcript", return_value=transcript),
+        ):
+            response = self.client.get(f"/game-dev/inspect/codex/{'a' * 24}/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Cache-Control"], "private, no-store")
+        self.assertContains(response, "&lt;script&gt;alert(1)&lt;/script&gt;")
+        self.assertNotContains(response, "<script>alert(1)</script>")
+        self.assertContains(response, 'href="?before=120"')
+
+    def test_invalid_cursor_rejected(self):
+        self.assertEqual(self.client.get(f"/game-dev/inspect/codex/{'a' * 24}/?before=invalid").status_code, 404)

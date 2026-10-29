@@ -11,13 +11,16 @@ implementation is reused.
 - Explicitly enrolled local Codex JSONL files appear in a separate,
   unlinked list. Each session detail page includes only selected structural
   event categories, timestamps, recognized tool names and a bounded timeline.
-- No prompts, reasoning text, commands, arguments, outputs, raw logs,
-  working directories or secrets appear in this session UI.
+- Session detail pages show recorded user and assistant text, tool inputs and
+  outputs, and available Codex reasoning summaries to authorized readers.
+  Encrypted reasoning and system messages are not shown. Recognizable common
+  credentials are obscured, but redaction cannot detect every secret; treat
+  the page as sensitive and use it only on a private single-operator workspace.
 - Inspect never executes commands or edits source control, Lore, UEFN or
   project files. It cannot establish gameplay correctness or completion.
 - OpenCode local session IDs, timestamps, message roles, tool states, and
   execution-step boundaries appear when the database and workspace root are
-  enrolled. No message bodies, tool arguments, or output are selected.
+  enrolled. Its detail page also reads bounded text and tool input/output.
 
 ## Local enrollment
 
@@ -32,14 +35,18 @@ the last 3 MiB and 160 structural events per session. Older or larger
 histories are explicitly incomplete. A file's last modification time is
 not proof its agent is running. Session detail URLs contain opaque
 fingerprints resolved from the bounded file list, never arbitrary file paths.
+The transcript's Earlier activity link reads previous bounded windows;
+individual unusually large records can still be omitted or truncated.
 
 For OpenCode enrollment, also configure GAMEDEV_INSPECT_OPENCODE_DB as an
 absolute path to its local SQLite session database, and
 GAMEDEV_INSPECT_OPENCODE_ROOT as an absolute path to the allowed workspace.
 Both are required: session directory paths outside the enrolled root are
 excluded. The OpenCode reader is SQLite query-only, fetches up to 10,000
-recent message-metadata rows, and lists up to 80 session IDs. It never
-SELECTs message.data itself; SQL extracts only roles and timestamps.
+recent message-metadata rows, and lists up to 80 session IDs. Detail pages
+also read bounded part records for the selected enrolled session.
+OpenCode pages use recorded time and part identity as their boundary so new
+parts appended while browsing do not shift the previously selected boundary.
 
 Access requires the existing gamedev.traces.read capability and the normal
 authenticated workstation session. Responses use private, no-store.

@@ -1,6 +1,7 @@
 {% extends "page.html" %}
 {% block page %}
 <p><a href="{% url 'gamedev:inspect' %}">Back to Inspect</a></p>
+{% include "gamedev_hq/_transcript.html" %}
 <section class="card">
   <h2>OpenCode {{ session.id }}</h2>
   <p>{{ session.source }}. This source is not automatically linked to an HQ task, run, or Phoenix trace.</p>
@@ -13,6 +14,6 @@
     <li><strong>{{ event.stamp }} · {{ event.name }}</strong> · {{ event.detail }}</li>
   {% empty %}<li>No supported metadata found.</li>{% endfor %}
   </ol>
-  <p>Prompt text, reasoning, commands, arguments, tool results, files, and other message contents are not inspected or displayed.</p>
+  <p>Only activity present in the recorded session is shown.</p>
 </section>
 {% endblock %}

@@ -7,7 +7,7 @@
   {% if not codex_enrolled %}
   <p>Not enrolled. On the private workstation, set <code>GAMEDEV_INSPECT_CODEX_ROOT</code> to an absolute path ending in the Codex sessions directory. No local session history is read until this is configured.</p>
   {% else %}
-  <p>Up to 80 recent session files from the last 14 UTC dates. Sessions may be unrelated to Game Dev HQ. File activity does not mean an agent is currently running. Prompt text, reasoning, commands, tool arguments and results are hidden.</p>
+  <p>Up to 80 recent session files from the last 14 UTC dates. Sessions may be unrelated to Game Dev HQ. File activity does not mean an agent is currently running. Session pages show recorded conversation and tool content.</p>
   <ul class="list-rows">
   {% for session in sessions %}
     <li><a href="{% url 'gamedev:inspect_session' 'codex' session.key %}">Codex session {{ session.id }}</a> · Last file change {{ session.updated }} · Started {{ session.started }}</li>
@@ -35,7 +35,7 @@
   {% elif not opencode_available %}
     <p>The enrolled OpenCode session source could not be read. Verify the database, directory, and expected session schema.</p>
   {% else %}
-    <p>Session IDs, message counts, timestamps, message roles, tool states and execution-step boundaries are shown where available. Source enrollment is workspace-scoped. No message text or tool content is displayed, and sessions are not implicitly attributed to HQ tasks.</p>
+    <p>Session IDs, message counts and timestamps are shown here. Session pages show recorded conversation and tool content. Source enrollment is workspace-scoped, and sessions are not implicitly attributed to HQ tasks.</p>
     <ul class="list-rows">
     {% for session in opencode_sessions %}
       <li><a href="{% url 'gamedev:inspect_session' 'opencode' session.key %}">OpenCode session {{ session.id }}</a> · Last message {{ session.updated }} · {{ session.messages }} messages in the bounded window</li>
