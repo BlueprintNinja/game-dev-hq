@@ -90,9 +90,9 @@ class InspectSessionTests(unittest.TestCase):
 
     def test_bad_json_and_untrusted_tool_names(self):
         self.source.write_text(
-            "{bad}\n" + json.dumps(
-                {"type": "response_item", "payload": {"type": "function_call", "name": "echo /secret"}}
-            ) + "\n",
+            "{bad}\n"
+            + json.dumps({"type": "response_item", "payload": {"type": "function_call", "name": "echo /secret"}})
+            + "\n",
             encoding="utf-8",
         )
         session = list_codex_sessions(self.root, today=self.date)[0]

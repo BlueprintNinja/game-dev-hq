@@ -15,9 +15,9 @@ implementation is reused.
   working directories or secrets appear in this session UI.
 - Inspect never executes commands or edits source control, Lore, UEFN or
   project files. It cannot establish gameplay correctness or completion.
-- OpenCode local session IDs, timestamps, and message-role timelines appear
-  when both its database and workspace root are enrolled. No message bodies,
-  tool arguments, or output are selected.
+- OpenCode local session IDs, timestamps, message roles, tool states, and
+  execution-step boundaries appear when the database and workspace root are
+  enrolled. No message bodies, tool arguments, or output are selected.
 
 ## Local enrollment
 
@@ -48,8 +48,8 @@ this metadata could disclose the existence and timing of unrelated work.
 
 ## Future work
 
-- Expand OpenCode event classification beyond message-role summaries once
-  the event schema has been verified without ingesting content.
+- Expand OpenCode event classification when more structured evidence is
+  available without ingesting content.
 - Correlate Codex/OpenCode sessions to HQ tasks only when an explicit stable
   session identifier was recorded by the run supervisor, not via timestamps
   or similar-looking prompts.

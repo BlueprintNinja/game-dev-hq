@@ -42,7 +42,12 @@ def _day_files(root, date):
         for path in day.iterdir():
             if len(files) >= MAX_SESSION_FILES * 3:
                 break
-            if path.name.startswith("rollout-") and path.suffix == ".jsonl" and not path.is_symlink() and path.is_file():
+            if (
+                path.name.startswith("rollout-")
+                and path.suffix == ".jsonl"
+                and not path.is_symlink()
+                and path.is_file()
+            ):
                 actual = path.resolve(strict=True)
                 if actual.is_relative_to(root):
                     files.append((path.stat().st_mtime, actual))
@@ -69,6 +74,7 @@ def recent_session_files(root, *, today=None):
     records.sort(key=lambda x: x[0], reverse=True)
     return [path for _, path in records[:MAX_SESSION_FILES]]
 
+
 def _safe(value):
     if not isinstance(value, str) or not NAME.fullmatch(value):
         return "Other tool"
@@ -81,7 +87,9 @@ def _safe(value):
 
 def _stamp(value):
     """Only accept ISO timestamps, never arbitrary log strings."""
-    if isinstance(value, str) and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)", value):
+    if isinstance(value, str) and re.fullmatch(
+        r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)", value
+    ):
         return value[:32]
     return "Unknown"
 
@@ -89,7 +97,7 @@ def _stamp(value):
 def _parse_metadata_line(line):
     try:
         event = json.loads(line)
-    except (ValueError, UnicodeError):
+    except ValueError, UnicodeError:
         return None
     if not isinstance(event, dict) or event.get("type") != "session_meta":
         return None
@@ -117,8 +125,9 @@ def _metadata(path):
                 if metadata is not None:
                     return metadata
     except OSError:
-        pass
+        return {"id": "Unreported", "started": "Unknown"}
     return {"id": "Unreported", "started": "Unknown"}
+
 
 def list_codex_sessions(root, *, today=None):
     records = []
@@ -128,13 +137,15 @@ def list_codex_sessions(root, *, today=None):
         except OSError:
             continue
         meta = _metadata(path)
-        records.append({
-            "key": session_key(path),
-            "id": meta["id"],
-            "started": meta["started"],
-            "updated": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(timespec="seconds"),
-            "bytes": stat.st_size,
-        })
+        records.append(
+            {
+                "key": session_key(path),
+                "id": meta["id"],
+                "started": meta["started"],
+                "updated": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(timespec="seconds"),
+                "bytes": stat.st_size,
+            }
+        )
     return records
 
 
@@ -173,7 +184,7 @@ def _parse_event(line):
         return None
     try:
         return json.loads(line)
-    except (ValueError, UnicodeError):
+    except ValueError, UnicodeError:
         return None
 
 
@@ -200,7 +211,7 @@ def _read_events(path):
                 name, detail = label
                 counts[name] += 1
                 events.append({"stamp": _stamp(event.get("timestamp")), "name": name, "detail": detail})
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
     return {
         "events": list(events),
@@ -221,8 +232,12 @@ def read_codex_session(root, key, *, today=None):
         return None
     meta = _metadata(path)
     return {
-        "key": key, "id": meta["id"], "started": meta["started"],
+        "key": key,
+        "id": meta["id"],
+        "started": meta["started"],
         "updated": datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(timespec="seconds"),
-        "events": result["events"], "counts": result["counts"], "partial": result["partial"],
+        "events": result["events"],
+        "counts": result["counts"],
+        "partial": result["partial"],
         "source": "Local Codex JSONL; read-only metadata, no external correlation implied",
     }

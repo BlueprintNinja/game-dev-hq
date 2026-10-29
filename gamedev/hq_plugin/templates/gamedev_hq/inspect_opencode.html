@@ -4,9 +4,10 @@
 <section class="card">
   <h2>OpenCode {{ session.id }}</h2>
   <p>{{ session.source }}. This source is not automatically linked to an HQ task, run, or Phoenix trace.</p>
-  {% if session.partial %}<p>Partial view: the message inventory exceeded its bounded limit. Only recent message metadata appears.</p>{% endif %}
+  {% if session.partial %}<p>Partial view: a history or event limit was reached. Only recent activity metadata appears.</p>{% endif %}
+  {% if not session.parts_available %}<p>Tool and execution-step metadata is unavailable for this session.</p>{% endif %}
   <p>{{ session.messages }} messages in the selected bounded history. Messages do not prove that a tool action or gameplay step succeeded.</p>
-  <h3>Recent message timeline</h3>
+  <h3>Recent activity timeline</h3>
   <ol>
   {% for event in session.events %}
     <li><strong>{{ event.stamp }} · {{ event.name }}</strong> · {{ event.detail }}</li>

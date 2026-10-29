@@ -35,7 +35,7 @@
   {% elif not opencode_available %}
     <p>The enrolled OpenCode session source could not be read. Verify the database, directory, and expected session schema.</p>
   {% else %}
-    <p>Only session IDs, message counts, timestamps and message-role metadata are inspected. Source enrollment is workspace-scoped. No message text or tool content is displayed, and sessions are not implicitly attributed to HQ tasks.</p>
+    <p>Session IDs, message counts, timestamps, message roles, tool states and execution-step boundaries are shown where available. Source enrollment is workspace-scoped. No message text or tool content is displayed, and sessions are not implicitly attributed to HQ tasks.</p>
     <ul class="list-rows">
     {% for session in opencode_sessions %}
       <li><a href="{% url 'gamedev:inspect_session' 'opencode' session.key %}">OpenCode session {{ session.id }}</a> · Last message {{ session.updated }} · {{ session.messages }} messages in the bounded window</li>

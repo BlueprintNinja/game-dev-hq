@@ -13,7 +13,7 @@
   <h3>Recent event timeline</h3>
   <ol>
     {% for event in session.events %}
-    <li><strong>{{ event.stamp }} · {{ event.name }}</strong>{% if event.detail %} — {{ event.detail }}{% endif %}</li>
+    <li><strong>{{ event.stamp }} · {{ event.name }}</strong>{% if event.detail %} · {{ event.detail }}{% endif %}</li>
     {% empty %}<li>No supported events recorded.</li>{% endfor %}
   </ol>
   <p>For privacy, this view omits prompts, file paths, commands, tool arguments and results, and reasoning text. A tool result alone does not establish whether an action succeeded.</p>

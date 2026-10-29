@@ -59,7 +59,7 @@ def session_detail(request, provider, key):
         session = read_opencode_session(opencode_source(), key)
         template = "gamedev_hq/inspect_opencode.html"
         name = "OpenCode"
-        description = "Message metadata only; conversation and tool content are hidden."
+        description = "Activity metadata only; conversation and tool content are hidden."
     else:
         raise Http404("Choose a supported agent session source.")
     if session is None:

@@ -57,7 +57,7 @@ def _read(source, *, now=None):
 
             cx.set_progress_handler(bounded, 1000)
             data = list(cx.execute(query, (threshold, MAX_MESSAGES)))
-    except (sqlite3.Error, OSError, ValueError):
+    except sqlite3.Error, OSError, ValueError:
         return None
     records = []
     for identifier, directory, timestamp, role in data:
@@ -74,7 +74,7 @@ def _read(source, *, now=None):
 def _when(timestamp):
     try:
         return datetime.fromtimestamp(timestamp / 1000, UTC).isoformat(timespec="seconds")
-    except (ValueError, OSError, OverflowError):
+    except ValueError, OSError, OverflowError:
         return "Unknown"
 
 
@@ -89,11 +89,42 @@ def list_opencode_sessions(source, *, now=None):
             if len(sessions) >= MAX_SESSIONS:
                 continue
             sessions[identifier] = {
-                "key": _session_key(db, identifier), "id": identifier,
-                "updated": _when(stamp), "messages": 0,
+                "key": _session_key(db, identifier),
+                "id": identifier,
+                "updated": _when(stamp),
+                "messages": 0,
             }
         sessions[identifier]["messages"] += 1
     return list(sessions.values())
+
+
+def _parts(db, identifier):
+    """Read only fixed event fields; never retrieve tool inputs or outputs."""
+    query = """SELECT time_created, json_extract(data, '$.type'),
+                      json_extract(data, '$.state.status')
+               FROM part WHERE session_id = ?
+               ORDER BY time_created DESC LIMIT ?"""
+    try:
+        with closing(sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)) as cx:
+            cx.execute("PRAGMA query_only=ON")
+            cx.set_progress_handler(lambda: 1, 2000000)
+            rows = list(cx.execute(query, (identifier, MAX_EVENTS + 1)))
+    except sqlite3.Error, OSError, ValueError:
+        return [], False, False
+    names = {"step-start": "Execution step started", "step-finish": "Execution step finished"}
+    events = []
+    for stamp, kind, status in rows[:MAX_EVENTS]:
+        if isinstance(stamp, bool) or not isinstance(stamp, int):
+            continue
+        if kind == "tool":
+            name = "Tool failure" if status == "error" else "Tool activity"
+            detail = status if status in ("pending", "running", "completed", "error") else "Unknown status"
+        elif isinstance(kind, str) and kind in names:
+            name, detail = names[kind], ""
+        else:
+            continue
+        events.append((stamp, {"stamp": _when(stamp), "name": name, "detail": detail}))
+    return events, len(rows) > MAX_EVENTS, True
 
 
 def read_opencode_session(source, key, *, now=None):
@@ -109,15 +140,24 @@ def read_opencode_session(source, key, *, now=None):
     identifier = matched[0][0]
     selected = [(stamp, role) for _, stamp, role in reversed(matched)]
     events = [
-        {
-            "stamp": _when(stamp),
-            "name": "Assistant response" if role == "assistant" else "Message",
-            "detail": role,
-        }
+        (
+            stamp,
+            {"stamp": _when(stamp), "name": "Assistant response" if role == "assistant" else "Message", "detail": role},
+        )
         for stamp, role in selected[-MAX_EVENTS:]
     ]
+    parts, parts_partial, parts_available = _parts(db, identifier)
+    events.extend(parts)
+    events.sort(key=lambda event: event[0])
     return {
-        "events": events, "key": key, "id": identifier, "messages": len(selected),
-        "partial": len(selected) > MAX_EVENTS or len(records) >= MAX_MESSAGES,
+        "events": [event for _, event in events[-MAX_EVENTS:]],
+        "key": key,
+        "id": identifier,
+        "messages": len(selected),
+        "partial": len(selected) > MAX_EVENTS
+        or len(records) >= MAX_MESSAGES
+        or parts_partial
+        or len(events) > MAX_EVENTS,
+        "parts_available": parts_available,
         "source": "OpenCode local SQLite (content hidden); read-only metadata, no HQ correlation implied",
     }

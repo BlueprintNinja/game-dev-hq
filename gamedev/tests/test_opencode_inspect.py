@@ -23,11 +23,25 @@ class OpenCodeInspectTests(unittest.TestCase):
             with closing(sqlite3.connect(db)) as cx:
                 cx.executescript(
                     "CREATE TABLE session(id TEXT,directory TEXT); "
-                    "CREATE TABLE message(session_id TEXT,time_created INTEGER,data TEXT);"
+                    "CREATE TABLE message(session_id TEXT,time_created INTEGER,data TEXT); "
+                    "CREATE TABLE part(session_id TEXT,time_created INTEGER,data TEXT);"
                 )
                 cx.executemany(
                     "INSERT INTO session VALUES (?,?)",
                     [("ses_111", str(root)), ("ses_222", str(foreign))],
+                )
+                cx.executemany(
+                    "INSERT INTO part VALUES (?,?,?)",
+                    [
+                        ("ses_111", 10500, json.dumps({"type": "step-start", "text": "SUPERSECRET"})),
+                        ("ses_111", 10550, json.dumps({"type": ["invalid"], "text": "SUPERSECRET"})),
+                        (
+                            "ses_111",
+                            10600,
+                            json.dumps({"type": "tool", "state": {"status": "error", "output": "SUPERSECRET"}}),
+                        ),
+                        ("ses_222", 10700, json.dumps({"type": "tool", "state": {"status": "error"}})),
+                    ],
                 )
                 cx.executemany(
                     "INSERT INTO message VALUES (?,?,?)",
@@ -44,7 +58,11 @@ class OpenCodeInspectTests(unittest.TestCase):
             self.assertEqual(sessions[0]["messages"], 2)
             timeline = read_opencode_session((db, root), sessions[0]["key"], now=12)
             self.assertEqual(timeline["id"], "ses_111")
-            self.assertEqual(len(timeline["events"]), 2)
+            self.assertEqual(
+                [event["name"] for event in timeline["events"]],
+                ["Assistant response", "Execution step started", "Tool failure", "Message"],
+            )
+            self.assertTrue(timeline["parts_available"])
             self.assertNotIn("SUPERSECRET", repr(sessions) + repr(timeline))
             self.assertNotIn(str(root), repr(sessions) + repr(timeline))
             self.assertIsNone(read_opencode_session((db, root), "../../etc/passwd", now=12))
