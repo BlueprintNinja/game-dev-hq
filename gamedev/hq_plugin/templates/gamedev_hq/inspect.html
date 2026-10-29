@@ -28,5 +28,21 @@
   {% endfor %}
   </ul>
 </section>
-<p>OpenCode's external session history is not yet part of Inspect. Its existing telemetry collector provides aggregate usage only, not message-level navigation.</p>
+<section class="card">
+  <h2>Local OpenCode sessions</h2>
+  {% if not opencode_enrolled %}
+    <p>Not enrolled. Set <code>GAMEDEV_INSPECT_OPENCODE_DB</code> to the read-only local OpenCode session database and <code>GAMEDEV_INSPECT_OPENCODE_ROOT</code> to the allowed workspace folder.</p>
+  {% elif not opencode_available %}
+    <p>The enrolled OpenCode session source could not be read. Verify the database, directory, and expected session schema.</p>
+  {% else %}
+    <p>Only session IDs, message counts, timestamps and message-role metadata are inspected. Source enrollment is workspace-scoped. No message text or tool content is displayed, and sessions are not implicitly attributed to HQ tasks.</p>
+    <ul class="list-rows">
+    {% for session in opencode_sessions %}
+      <li><a href="{% url 'gamedev:inspect_opencode' session.key %}">OpenCode session {{ session.id }}</a> · Last message {{ session.updated }} · {{ session.messages }} messages in the bounded window</li>
+    {% empty %}
+      <li>No matching session messages were found in the enrolled workspace and bounded window.</li>
+    {% endfor %}
+    </ul>
+  {% endif %}
+</section>
 {% endblock %}
