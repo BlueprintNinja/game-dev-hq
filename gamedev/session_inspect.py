@@ -4,13 +4,13 @@ Never retain or render prompts, arguments, tool outputs, reasoning, working
 paths, or raw transcript text. Sessions do not prove game verification.
 """
 
+import json
+import os
+import re
 from collections import Counter, deque
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
-import json
-import os
-import re
 
 MAX_SESSION_FILES = 80
 MAX_TAIL_BYTES = 3 * 1024 * 1024
@@ -31,8 +31,28 @@ def session_key(path):
     return sha256(str(path.resolve()).encode("utf-8")).hexdigest()[:24]
 
 
+def _day_files(root, date):
+    year = root / f"{date:%Y}"
+    month = year / f"{date:%m}"
+    day = month / f"{date:%d}"
+    try:
+        if year.is_symlink() or month.is_symlink() or day.is_symlink() or not day.is_dir():
+            return []
+        files = []
+        for path in day.iterdir():
+            if len(files) >= MAX_SESSION_FILES * 3:
+                break
+            if path.name.startswith("rollout-") and path.suffix == ".jsonl" and not path.is_symlink() and path.is_file():
+                actual = path.resolve(strict=True)
+                if actual.is_relative_to(root):
+                    files.append((path.stat().st_mtime, actual))
+        return files
+    except OSError:
+        return []
+
+
 def recent_session_files(root, *, today=None):
-    """Bound filesystem discovery: only 14 day folders; no symlink traversal."""
+    """Bound filesystem discovery to 14 day directories without following links."""
     if root is None:
         return []
     root = Path(root)
@@ -45,25 +65,9 @@ def recent_session_files(root, *, today=None):
     today = today or datetime.now(UTC).date()
     records = []
     for days_ago in range(14):
-        date = today - timedelta(days=days_ago)
-        year = safe_root / f"{date:%Y}"
-        month = year / f"{date:%m}"
-        day = month / f"{date:%d}"
-        try:
-            if year.is_symlink() or month.is_symlink() or day.is_symlink() or not day.is_dir():
-                continue
-            for path in day.iterdir():
-                if len(records) >= MAX_SESSION_FILES * 3:
-                    break
-                if path.name.startswith("rollout-") and path.suffix == ".jsonl" and not path.is_symlink() and path.is_file():
-                    actual = path.resolve(strict=True)
-                    if actual.is_relative_to(safe_root):
-                        records.append((path.stat().st_mtime, actual))
-        except OSError:
-            continue
+        records.extend(_day_files(safe_root, today - timedelta(days=days_ago)))
     records.sort(key=lambda x: x[0], reverse=True)
     return [path for _, path in records[:MAX_SESSION_FILES]]
-
 
 def _safe(value):
     if not isinstance(value, str) or not NAME.fullmatch(value):
@@ -82,6 +86,22 @@ def _stamp(value):
     return "Unknown"
 
 
+def _parse_metadata_line(line):
+    try:
+        event = json.loads(line)
+    except (ValueError, UnicodeError):
+        return None
+    if not isinstance(event, dict) or event.get("type") != "session_meta":
+        return None
+    payload = event.get("payload")
+    payload = payload if isinstance(payload, dict) else {}
+    identifier = payload.get("id", "")
+    return {
+        "id": identifier if isinstance(identifier, str) and SESSION_ID.fullmatch(identifier) else "Unreported",
+        "started": _stamp(payload.get("timestamp") or event.get("timestamp")),
+    }
+
+
 def _metadata(path):
     try:
         with path.open("rb") as source:
@@ -93,23 +113,12 @@ def _metadata(path):
                 consumed += len(line)
                 if len(line) > MAX_LINE_BYTES or not line.endswith(b"\n"):
                     break
-                try:
-                    event = json.loads(line)
-                except (ValueError, UnicodeError):
-                    continue
-                if not isinstance(event, dict) or event.get("type") != "session_meta":
-                    continue
-                payload = event.get("payload")
-                payload = payload if isinstance(payload, dict) else {}
-                identifier = payload.get("id", "")
-                return {
-                    "id": identifier if isinstance(identifier, str) and SESSION_ID.fullmatch(identifier) else "Unreported",
-                    "started": _stamp(payload.get("timestamp") or event.get("timestamp")),
-                }
-    except (OSError, ValueError):
+                metadata = _parse_metadata_line(line)
+                if metadata is not None:
+                    return metadata
+    except OSError:
         pass
     return {"id": "Unreported", "started": "Unknown"}
-
 
 def list_codex_sessions(root, *, today=None):
     records = []
@@ -159,17 +168,20 @@ def _label(entry):
     return None
 
 
-def read_codex_session(root, key, *, today=None):
-    """Resolve an opaque key only against the enrolled bounded file inventory."""
-    if not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{24}", key):
-        return None
-    file_path = next((p for p in recent_session_files(root, today=today) if session_key(p) == key), None)
-    if file_path is None:
+def _parse_event(line):
+    if len(line) > MAX_LINE_BYTES or not line.endswith(b"\n"):
         return None
     try:
-        stat = file_path.stat()
-        with file_path.open("rb") as source:
-            offset = max(0, stat.st_size - MAX_TAIL_BYTES)
+        return json.loads(line)
+    except (ValueError, UnicodeError):
+        return None
+
+
+def _read_events(path):
+    try:
+        with path.open("rb") as source:
+            size = path.stat().st_size
+            offset = max(0, size - MAX_TAIL_BYTES)
             source.seek(offset)
             if offset:
                 source.readline(MAX_LINE_BYTES + 1)
@@ -181,12 +193,7 @@ def read_codex_session(root, key, *, today=None):
                 if not line:
                     break
                 scanned += 1
-                if len(line) > MAX_LINE_BYTES or not line.endswith(b"\n"):
-                    continue
-                try:
-                    event = json.loads(line)
-                except (ValueError, UnicodeError):
-                    continue
+                event = _parse_event(line)
                 label = _label(event)
                 if label is None:
                     continue
@@ -195,11 +202,27 @@ def read_codex_session(root, key, *, today=None):
                 events.append({"stamp": _stamp(event.get("timestamp")), "name": name, "detail": detail})
     except (OSError, ValueError):
         return None
-    meta = _metadata(file_path)
+    return {
+        "events": list(events),
+        "counts": sorted(counts.items()),
+        "partial": offset > 0 or scanned >= 15000 or sum(counts.values()) > MAX_EVENTS,
+    }
+
+
+def read_codex_session(root, key, *, today=None):
+    """Resolve opaque keys against the enrolled bounded inventory, never a URL path."""
+    if not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{24}", key):
+        return None
+    path = next((p for p in recent_session_files(root, today=today) if session_key(p) == key), None)
+    if path is None:
+        return None
+    result = _read_events(path)
+    if result is None:
+        return None
+    meta = _metadata(path)
     return {
         "key": key, "id": meta["id"], "started": meta["started"],
-        "updated": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(timespec="seconds"),
-        "events": list(events), "counts": sorted(counts.items()),
-        "partial": offset > 0 or scanned >= 15000 or sum(counts.values()) > MAX_EVENTS,
+        "updated": datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(timespec="seconds"),
+        "events": result["events"], "counts": result["counts"], "partial": result["partial"],
         "source": "Local Codex JSONL; read-only metadata, no external correlation implied",
     }
