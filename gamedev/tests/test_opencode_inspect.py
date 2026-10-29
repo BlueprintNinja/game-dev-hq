@@ -37,6 +37,7 @@ class OpenCodeInspectTests(unittest.TestCase):
                         ("ses_222", 12000, json.dumps({"role": "assistant", "text": "SUPERSECRET"})),
                     ],
                 )
+                cx.commit()
             self.assertIsNone(list_opencode_sessions(None, now=12))
             sessions = list_opencode_sessions((db, root), now=12)
             self.assertEqual(len(sessions), 1)
