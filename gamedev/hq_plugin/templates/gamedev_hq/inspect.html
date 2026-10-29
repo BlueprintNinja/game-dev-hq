@@ -10,7 +10,7 @@
   <p>Up to 80 recent session files from the last 14 UTC dates. Sessions may be unrelated to Game Dev HQ. File activity does not mean an agent is currently running. Prompt text, reasoning, commands, tool arguments and results are hidden.</p>
   <ul class="list-rows">
   {% for session in sessions %}
-    <li><a href="{% url 'gamedev:inspect_codex' session.key %}">Codex session {{ session.id }}</a> · Last file change {{ session.updated }} · Started {{ session.started }}</li>
+    <li><a href="{% url 'gamedev:inspect_session' 'codex' session.key %}">Codex session {{ session.id }}</a> · Last file change {{ session.updated }} · Started {{ session.started }}</li>
   {% empty %}
     <li>No readable sessions found within the enrolled directory and bounded window.</li>
   {% endfor %}
@@ -38,7 +38,7 @@
     <p>Only session IDs, message counts, timestamps and message-role metadata are inspected. Source enrollment is workspace-scoped. No message text or tool content is displayed, and sessions are not implicitly attributed to HQ tasks.</p>
     <ul class="list-rows">
     {% for session in opencode_sessions %}
-      <li><a href="{% url 'gamedev:inspect_opencode' session.key %}">OpenCode session {{ session.id }}</a> · Last message {{ session.updated }} · {{ session.messages }} messages in the bounded window</li>
+      <li><a href="{% url 'gamedev:inspect_session' 'opencode' session.key %}">OpenCode session {{ session.id }}</a> · Last message {{ session.updated }} · {{ session.messages }} messages in the bounded window</li>
     {% empty %}
       <li>No matching session messages were found in the enrolled workspace and bounded window.</li>
     {% endfor %}
